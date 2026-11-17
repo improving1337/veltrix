@@ -128,4 +128,32 @@ class SessionAdminTests(unittest.IsolatedAsyncioTestCase):
         blocker.set()
         await self.manager.task
 
+    async def test_inspect_is_read_only_and_preserves_retry_deadline(self):
+        from telethon import functions
+        self.source.client.is_connected=lambda:True
+        self.source.client=type('Inspectable',(),{
+            'session':self.source.client.session,
+            'is_connected':lambda obj:True,
+            '__call__':AsyncMock(return_value=NS(authorizations=[NS(current=True,device_model='Test',app_name='Panel',date_created=datetime.now(timezone.utc)),NS(current=False)]))})()
+        self.security.state={'accounts':{'imported':{'next_sessions_check':9999999999,'session_count':1}}}
+        response=await self.manager.inspect(Request({'name':'imported'}))
+        self.assertEqual(response.status,200)
+        import json
+        result=json.loads(response.text)
+        self.assertEqual(result['count'],2)
+        self.assertEqual(len(result['authorizations']),2)
+        self.assertEqual(self.security.state['accounts']['imported']['next_sessions_check'],9999999999)
+        self.assertEqual(self.security.info('imported')['session_count'],2)
+        calls=self.source.client.__call__.await_args_list
+        self.assertEqual(len(calls),1)
+        self.assertIsInstance(calls[0].args[0],functions.account.GetAuthorizationsRequest)
+
+    async def test_inspect_failure_does_not_fabricate_fresh_result(self):
+        self.source.client=type('Broken',(),{'is_connected':lambda obj:True,'__call__':AsyncMock(side_effect=TimeoutError())})()
+        self.security.state={'accounts':{'imported':{'session_count':2,'sessions_checked_at':123}}}
+        response=await self.manager.inspect(Request({'name':'imported'}))
+        self.assertEqual(response.status,503)
+        self.assertEqual(self.security.info('imported')['session_count'],2)
+        self.assertEqual(self.security.info('imported')['sessions_checked_at'],123)
+
 if __name__=='__main__':unittest.main()

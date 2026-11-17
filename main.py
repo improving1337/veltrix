@@ -104,6 +104,7 @@ ACCOUNT_PHOTO_TTL = 4 * 60
 # Shared bound for startup, automatic retries, and newly imported accounts.
 ACCOUNT_CONNECT_SEMAPHORE = asyncio.Semaphore(4)
 ACCOUNT_RETRY_DELAYS = (10, 25, 60, 120, 300)
+SESSION_ADMIN = None
 SECURITY = account_security.AccountSecurity(BASE_DIR, lambda: ACCOUNTS)
 
 
@@ -301,7 +302,8 @@ def ser_account(a):
             "error_kind": a.error_kind,
             "last_error": a.last_error,
             "next_retry_at": a.next_retry_at,
-            "security": SECURITY.info(a.name)}
+            "security": SECURITY.info(a.name),
+            "session_owned": SESSION_ADMIN.owned(a) if SESSION_ADMIN else False}
 
 
 def _cached_profile_meta(acc):
@@ -2685,7 +2687,7 @@ def load_password():
 
 
 async def main():
-    global PANEL_PASSWORD
+    global PANEL_PASSWORD, SESSION_ADMIN
     print("[START] Скрипт запущен.", flush=True)
     TEMPLATE_AVATARS.mkdir(exist_ok=True)
     sort_incoming()
@@ -2718,6 +2720,7 @@ async def main():
         invalidate_account_profile(source)
 
     sessions = session_admin.SessionAdmin(BASE_DIR, lambda: ACCOUNTS, SECURITY, connect_new_accounts, retire_session)
+    SESSION_ADMIN = sessions
     sessions.register(app)
     deploy.on_created = lambda name: sessions.mark_owned(ACCOUNTS[name]) if name in ACCOUNTS else None
 

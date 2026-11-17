@@ -52,7 +52,10 @@ class SessionAdmin:
 
     async def inventory(self, request):
         rows = []
+        selected = request.query.get('name')
         for account in list(self.accounts().values()):
+            if selected is not None and account.name != selected:
+                continue
             record = self.records.setdefault(account.name, {'received_at': time.time()})
             me = account.me
             working = bool(me and account.client.is_connected())
@@ -82,6 +85,37 @@ class SessionAdmin:
                 self.save()
             except Exception:
                 pass
+
+    async def inspect(self, request):
+        data = await request.json()
+        name = data.get('name') if isinstance(data, dict) else None
+        if not isinstance(name, str) or not name:
+            return web.json_response({'error': 'Укажите аккаунт'}, status=400)
+        async with self.security.lock:
+            account = self.accounts().get(name)
+            if account is None:
+                return web.json_response({'error': 'Аккаунт не найден'}, status=404)
+            if not account.me or not account.client.is_connected():
+                return web.json_response({'error': 'Аккаунт не подключён'}, status=409)
+            try:
+                result = await self.call(account.client(functions.account.GetAuthorizationsRequest()))
+                auths = result.authorizations
+                if not any(a.current for a in auths):
+                    raise RuntimeError('CurrentAuthorizationMissing')
+            except Exception as exc:
+                return web.json_response({'error': 'Проверка Telegram не выполнена: '+type(exc).__name__}, status=503)
+            checked = time.time()
+            record = self.security.state.setdefault('accounts', {}).setdefault(name, {})
+            record.update(session_count=len(auths), sessions_checked_at=checked,
+                          session_status='Осталась только текущая сессия' if len(auths)==1 else 'Есть другие авторизации Telegram')
+            self.security.save()
+            return web.json_response({'name': name, 'count': len(auths), 'owned': self.owned(account),
+                                      'checked_at': checked,
+                                      'authorizations': [{'current': bool(a.current),
+                                          'device': getattr(a, 'device_model', '') or '',
+                                          'app': getattr(a, 'app_name', '') or '',
+                                          'created_at': a.date_created.isoformat() if getattr(a, 'date_created', None) else None}
+                                          for a in auths]}, headers={'Cache-Control': 'no-store'})
 
     async def cleanup_client(self, item):
         try:
@@ -282,6 +316,7 @@ class SessionAdmin:
 
     def register(self, app):
         app.router.add_get('/api/2fa', self.inventory)
+        app.router.add_post('/api/2fa/check', self.inspect)
         app.router.add_post('/api/2fa/reissue', self.start)
         app.router.add_post('/api/2fa/reissue-one', self.start_one)
         app.router.add_post('/api/2fa/password', self.password)

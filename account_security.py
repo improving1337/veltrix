@@ -58,7 +58,7 @@ class AccountSecurity:
         # Explicit allowlist: no password ever leaves this module.
         return {key: record.get(key) for key in (
             "two_factor_enabled", "two_factor_status", "session_count", "session_status",
-            "next_sessions_check", "next_2fa_check", "checked_at", "error")}
+            "next_sessions_check", "next_2fa_check", "checked_at", "sessions_checked_at", "error")}
 
     async def request(self, operation):
         return await asyncio.wait_for(operation, 45)
@@ -115,6 +115,7 @@ class AccountSecurity:
                     record["session_count"] = len(auths)
                 if len(auths) != 1 or not auths[0].current:
                     raise RuntimeError("OnlyCurrentSessionNotConfirmed")
+                record["sessions_checked_at"] = self.clock()
                 record["session_status"] = "Осталась только текущая сессия"
                 record["next_sessions_check"] = now + 86400
             except errors.FloodWaitError as exc:
