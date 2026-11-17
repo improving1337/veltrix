@@ -537,6 +537,7 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 }
 @media(max-width:1249px){.profile-layout{display:flex;flex-direction:column;gap:14px}.profile-column{display:contents}.profile-media{grid-column:auto}}
 
+.auto-emoji-options{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0}.auto-emoji-choice{display:inline-flex;align-items:center;gap:7px;border:1px solid #34343f;border-radius:8px;padding:8px 11px;background:#171820;font-size:19px}.auto-emoji-choice input{width:14px;height:14px;margin:0;accent-color:#8c75e8}#auto-reaction-prompt{width:100%;resize:vertical;min-height:100px;font-size:13px}
 </style>
 <style id="veltrix-theme">
 /* VELTRIX UI — graphite dashboard treatment adapted from the supplied Ember
@@ -994,7 +995,13 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
    <div class="auto-head"><div><h3>Публикации · независимый мониторинг 24 часа</h3><small>Каждый новый пост получает свои графики, прогресс и анализ DeepSeek</small></div><small id="auto-post-count" class="auto-post-count">0 активных</small></div>
    <div id="auto-posts" class="auto-post-list"><div class="auto-post-empty">Новых публикаций пока нет. Мониторинг ждёт следующий пост.</div></div>
    <button id="auto-post-archive-toggle" class="btn ghost auto-post-archive" type="button" hidden>Показать завершённые</button>
-   <p class="auto-note">Графики показывают изменения публичной статистики между замерами каждые 45 секунд. История до первого замера недоступна.</p>
+   <p class="auto-note">Графики показывают изменения публичной статистики между замерами замеры каждые 10 минут · поиск каждые 10 секунд. История до первого замера недоступна.</p>
+  </div>
+  <div class="auto-panel" id="auto-policy-panel"><div class="auto-head"><div><h3>Реакции и промпт канала</h3><small>Настройки сохраняются отдельно для выбранного канала</small></div></div>
+   <div id="auto-emoji-options" class="auto-emoji-options"></div>
+   <label class="fld"><span>Промпт для анализа публикаций</span><textarea id="auto-reaction-prompt" rows="4" maxlength="6000" placeholder="Как выбирать реакции по содержанию публикации"></textarea></label>
+   <p class="auto-note">Количество реакций — цель плана, без уменьшения по «интенсивности». Одна разрешённая реакция преобладает. Ошибки Telegram и нехватка аккаунтов могут уменьшить выполненное количество.</p>
+   <p class="auto-note">Просмотры: цель выбирается для каждого поста в диапазоне ±20% от настройки, ограничивается доступными аккаунтами и сохраняется между перезапусками.</p>
   </div>
   <div class="auto-panel"><div class="auto-head"><div><h3>Профиль просмотров · 24 часа</h3><small>Перетаскивай вершины колонок или используй стрелки клавиатуры</small></div><div><button id="auto-default" class="btn ghost" style="width:auto">По умолчанию</button></div></div>
    <div id="auto-plot" class="auto-plot" aria-label="24 редактируемых столбца с долями просмотров"></div><div id="auto-hours" class="auto-hours"></div><div class="auto-note" id="auto-sum">Сумма: 100%</div>
@@ -2831,6 +2838,9 @@ $("#up-go").onclick=upStart;
 upPoll();
 
 /* --- Автоматическая: мониторинг и опциональное выполнение плана --- */
+const AUTO_EMOJI=['❤️','👍','👎','🔥','😭','🤬','😍','💔','🤡','💩'];
+function autoPolicyFields(d){const root=$('#auto-emoji-options');root.replaceChildren();for(const emoji of AUTO_EMOJI){const label=el('label','auto-emoji-choice'),input=el('input');input.type='checkbox';input.value=emoji;input.checked=(d.allowed_reactions||AUTO_EMOJI).includes(emoji);input.onchange=()=>{AUTO.dirty=true;};label.append(input,document.createTextNode(emoji));root.append(label);}$('#auto-reaction-prompt').value=d.reaction_prompt||'';}
+$('#auto-reaction-prompt').oninput=()=>{AUTO.dirty=true;};
 const AUTO={data:null,values:[34,15,9,7,5,4,3,2,2,2,1,1,2,2,1,1,1,2,1,1,1,1,1,1],timer:null,drag:null,dirty:false,selectedId:null,lockSelection:false,showArchive:false,raw:null,serverClockOffsetMs:0};
 function autoStatus(text,kind=''){const e=$('#auto-message');e.textContent=text;e.className='status '+kind}
 function autoApportion(total,weights){
@@ -2984,9 +2994,9 @@ function autoCards(d){
   const all=d.posts||[],running=all.filter(p=>p.status==='active'),finished=all.filter(p=>p.status!=='active');
   $('#auto-post-count').textContent=`Активных: ${running.length} · завершённых: ${finished.length}`;
   if(!all.length){root.append(el('div','auto-post-empty',d.active?'Ожидание нового поста. Старые публикации не обрабатываются.':'Начни мониторинг, чтобы отслеживать каждую новую публикацию 24 часа.'));}
-  const archived=$('#auto-post-archive-toggle');archived.hidden=!finished.length;
+  const archived=$('#auto-post-archive-toggle');archived.hidden=true;
   archived.textContent=AUTO.showArchive?'Скрыть завершённые':`Показать завершённые (${finished.length})`;
-  const visible=running.concat(AUTO.showArchive?finished.slice(0,30):[]);
+  const visible=running.concat(finished.slice(0,2));
   for(const p of visible){
     const card=el('article','auto-post-card'+(p.post_id===AUTO.selectedId?' selected':''));
     const head=el('div','auto-post-title'),left=el('div','auto-post-left');
@@ -2997,7 +3007,7 @@ function autoCards(d){
     const published=p.post_date?new Date(p.post_date).toLocaleString('ru-RU'):'Дата неизвестна';
     card.append(el('div','auto-post-summary',`${published} · ${p.post_text?p.post_text.slice(0,180):'Публикация без текста'}`));
     const stats=el('div','auto-post-stats');
-    for(const [label,value] of [['Просмотры',p.views],['Реакции',p.actual_reactions],['Репосты',p.forwards],['Замеры',p.sample_count]]){
+    for(const [label,value] of [['Просмотры',p.views],['Реакции',p.actual_reactions],['Репосты',p.forwards],['Замеры',p.sample_count],['Цель просмотров',p.view_target]]){
       const item=el('span','');item.append(el('b','',value==null?'—':Number(value).toLocaleString('ru-RU')),' '+label.toLowerCase());stats.append(item);
     }
     card.append(stats);
@@ -3027,7 +3037,7 @@ function autoCards(d){
     }else ai.textContent='DeepSeek: '+(s.message||'анализ недоступен');
     card.append(ai);root.append(card);
   }
-  if(!running.length&&finished.length&&!AUTO.showArchive)root.append(el('div','auto-post-empty','Новых публикаций за последние 24 часа нет. Архив доступен по кнопке ниже.'));
+
   autoTickCountdowns();
 }
 $('#auto-post-archive-toggle').onclick=()=>{AUTO.showArchive=!AUTO.showArchive;if(AUTO.raw)autoCards(AUTO.raw)};
@@ -3048,7 +3058,7 @@ function autoRender(d,full=false){
   AUTO.data=selected;
   $('#auto-channel').value=full?d.channel||'':$('#auto-channel').value;
   $('#auto-dot').className='auto-dot '+(d.error?'error':d.active?'active':'');
-  $('#auto-live-text').textContent=d.active?(d.error?'Мониторинг: ошибка подключения':`Мониторинг активен · ${d.active_posts_count||0} постов · ${d.execute_plan?'выполнение плана включено':'выполнение выключено'} · каждые 45 секунд`):'Мониторинг остановлен';
+  $('#auto-live-text').textContent=d.active?(d.error?'Мониторинг: ошибка подключения':`Мониторинг активен · ${d.active_posts_count||0} постов · ${d.execute_plan?'выполнение плана включено':'выполнение выключено'} · замеры каждые 10 минут · поиск каждые 10 секунд`):'Мониторинг остановлен';
   $('#auto-last').textContent=posts.length?`#${posts[0].post_id}`:(d.baseline_post_id?`#${d.baseline_post_id} (исходный)`:'В канале нет постов');
   $('#auto-realviews').textContent=selected.views==null?'—':Number(selected.views).toLocaleString('ru-RU');
   $('#auto-checked').textContent=d.checked_at?new Date(d.checked_at).toLocaleTimeString('ru-RU'):'—';
@@ -3063,7 +3073,7 @@ function autoRender(d,full=false){
   else if(d.active&&!posts.length)autoStatus('Канал подключён. Ожидаем новую публикацию; исходный пост не обрабатывается.','ok');
   else if(d.active)autoStatus(`Параллельный мониторинг: ${d.active_posts_count||0} активных публикаций. Новые посты не прерывают предыдущие.`, 'ok');
   else autoStatus('Мониторинг остановлен. Сохранённые данные остаются доступными.');
-  if(full){AUTO.values=(d.hours||AUTO.values).slice();AUTO.dirty=false;autoGraph();$('#auto-sum').textContent='Сумма: 100%';}
+  if(full){autoPolicyFields(d);AUTO.values=(d.hours||AUTO.values).slice();AUTO.dirty=false;autoGraph();$('#auto-sum').textContent='Сумма: 100%';}
   autoRanges(d);
   autoCards(d);
   const s=selected.suggestion,rec=$('#auto-ai');rec.replaceChildren();
@@ -3127,12 +3137,14 @@ function autoMultiForms(d,force=false){
       slider.dataset.key=key;slider.oninput=()=>{amount.textContent=slider.value;row.dataset.dirty='1'};
       block.append(hdr,slider);return block;
     };
-    const viewBlock=makeRange('max_views','Просмотры');
+    const viewBlock=makeRange('max_views','Просмотры · базовое число');
+    const spread=el('small','auto-note'),viewSlider=viewBlock.querySelector('input[type=range]'),rangeChange=viewSlider.oninput;
+    const updateSpread=()=>{const base=+viewSlider.value;spread.textContent='На пост: '+Math.min(count,Math.ceil(base*.8))+'–'+Math.min(count,Math.floor(base*1.2))+' · ±20%';};viewSlider.oninput=()=>{rangeChange();updateSpread();};updateSpread();viewBlock.append(spread);
     const viewToggle=el('label','');viewToggle.className='auto-views-toggle';
     const viewCheck=el('input','');viewCheck.type='checkbox';viewCheck.checked=c.views_enabled!==false;viewCheck.dataset.key='views_enabled';
     viewCheck.onchange=()=>{row.dataset.dirty='1'};
     viewToggle.append(viewCheck,document.createTextNode('Добавлять просмотры'));viewBlock.append(viewToggle);
-    const reactionBlock=makeRange('max_reactions','Максимум реакций');
+    const reactionBlock=makeRange('max_reactions','Реакций на пост');
     const planToggle=el('label','auto-plan-toggle');
     const planCheck=el('input','');planCheck.type='checkbox';planCheck.checked=c.execute_plan===true;
     planCheck.onchange=()=>{row.dataset.dirty='1'};
@@ -3157,7 +3169,8 @@ function autoMultiForms(d,force=false){
         autoMultiStatus('Канал удалён из списка. История на сервере сохранена.','ok');
       }catch(e){autoMultiStatus(e.message,'err')}finally{remove.disabled=false}
     };
-    buttons.append(save,remove);row.append(buttons);root.append(row);
+    const policy=el('button','btn ghost','Реакции / промпт');policy.type='button';policy.onclick=()=>{AUTO_MULTI.selectedChannelId=c.id;autoMultiShowDetails(true);autoRender(c,true);$('#auto-detail-channel').textContent=autoMultiChannelName(c.channel);$('#auto-policy-panel').scrollIntoView({behavior:'smooth',block:'center'});};
+    buttons.append(save,policy,remove);row.append(buttons);root.append(row);
   }
   const add=el('div','auto-multi-row add-row'),link=el('div','auto-multi-link');
   const input=el('input','');input.type='url';input.placeholder='https://t.me/channel — добавить канал';input.autocomplete='off';
@@ -3174,9 +3187,10 @@ function autoMultiCards(d){
   for(const c of d.channels||[])for(const p of c.posts||[])all.push({channel:c,post:p});
   all.sort((a,b)=>Date.parse(b.post.post_date||'')-Date.parse(a.post.post_date||'')||b.post.post_id-a.post.post_id);
   const active=all.filter(x=>x.post.status==='active');
-  $('#auto-multi-count').textContent=`${d.channel_count||0} каналов · ${active.length} активных · ${all.length} постов`;
+  $('#auto-multi-count').textContent=`${d.channel_count||0} каналов · ${active.length} активных · ${active.length+Math.min(2,all.length-active.length)} постов`;
   if(!all.length){root.append(el('div','auto-post-empty','Добавь ссылку на канал. Новые посты будут показываться здесь после их публикации.'));return;}
-  for(const {channel:c,post:p} of all.slice(0,100)){
+  const visible=active.concat(all.filter(x=>x.post.status!=='active').slice(0,2));
+  for(const {channel:c,post:p} of visible){
     const card=el('article','auto-post-card auto-multi-card');
     const head=el('div','auto-post-title'),left=el('div','auto-post-left');
     left.append(el('strong','',`${autoMultiChannelName(c.channel)} · #${p.post_id}`),el('span','auto-post-pill'+(p.status==='active'?'':' done'),p.status==='active'?'Мониторинг':'Завершён'));
@@ -3189,7 +3203,7 @@ function autoMultiCards(d){
     };
     head.append(left,more);card.append(head);
     const stats=el('div','auto-post-stats');
-    for(const [name,value] of [['просмотры',p.views],['реакции',p.actual_reactions],['репосты',p.forwards],['замеры',p.sample_count]]){
+    for(const [name,value] of [['просмотры',p.views],['реакции',p.actual_reactions],['репосты',p.forwards],['замеры',p.sample_count],['цель просмотров',p.view_target]]){
       const item=el('span','');item.append(el('b','',value==null?'—':Number(value).toLocaleString('ru-RU')),' '+name);stats.append(item);
     }
     card.append(stats);
@@ -3246,7 +3260,7 @@ $('#auto-default').onclick=()=>{AUTO.values=[34,15,9,7,5,4,3,2,2,2,1,1,2,2,1,1,1
 $('#auto-save').onclick=async()=>{
   const c=autoMultiSelected();if(!c)return;
   try{
-    const d=await api('/api/automatic/channels/'+c.id+'/config',{method:'POST',json:{hours:AUTO.values,max_views:+$('#auto-views').value,max_reactions:+$('#auto-reactions').value,execute_plan:$('#auto-execute').checked}});
+    const d=await api('/api/automatic/channels/'+c.id+'/config',{method:'POST',json:{hours:AUTO.values,max_views:+$('#auto-views').value,max_reactions:+$('#auto-reactions').value,execute_plan:$('#auto-execute').checked,allowed_reactions:[...$('#auto-emoji-options').querySelectorAll('input:checked')].map(input=>input.value),reaction_prompt:$('#auto-reaction-prompt').value}});
     autoMultiRender(d,true);autoStatus('Настройки выбранного канала сохранены','ok');
   }catch(e){autoStatus(e.message,'err')}
 };

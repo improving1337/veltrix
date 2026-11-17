@@ -183,6 +183,8 @@ class Hub:
             'max_reactions': payload.get('max_reactions', mon.state['max_reactions']),
             'execute_plan': payload.get('execute_plan', mon.state['execute_plan']),
             'views_enabled': payload.get('views_enabled', mon.state['views_enabled']),
+            'allowed_reactions': payload.get('allowed_reactions', mon.state['allowed_reactions']),
+            'reaction_prompt': payload.get('reaction_prompt', mon.state['reaction_prompt']),
         }))
         return web.json_response(self.snapshot())
 
