@@ -38,6 +38,7 @@ import template_library
 import account_profile_manager
 import account_music_manager
 import account_deploy
+import session_admin
 import account_security
 
 # ============== НАСТРОЙКИ ==============
@@ -2701,10 +2702,30 @@ async def main():
     deploy.register(app)
     SECURITY.register(app)
 
+    async def retire_session(source):
+        # Called only after the independent replacement is saved and connected.
+        destination = BASE_DIR/'security'/'retired'/source.name
+        destination.mkdir(parents=True, mode=0o700, exist_ok=True)
+        await asyncio.wait_for(source.client.disconnect(), 10)
+        source.client.session.close()
+        for folder, suffix in ((ACCOUNT_DIR, '.json'), (SESSION_DIR, '.session'), (SESSION_DIR, '.session-journal')):
+            path = folder/(source.name+suffix)
+            if path.exists():
+                shutil.move(str(path), destination/(path.name+'.'+secrets.token_hex(4)))
+        ACCOUNTS.pop(source.name, None)
+        for key in [k for k, value in INDEX.items() if value is source]:
+            INDEX.pop(key, None)
+        invalidate_account_profile(source)
+
+    sessions = session_admin.SessionAdmin(BASE_DIR, lambda: ACCOUNTS, SECURITY, connect_new_accounts, retire_session)
+    sessions.register(app)
+    deploy.on_created = lambda name: sessions.mark_owned(ACCOUNTS[name]) if name in ACCOUNTS else None
+
     async def background(app):
         async def expire_logins():
             while True:
                 await deploy.cleanup()
+                await sessions.cleanup()
                 await asyncio.sleep(30)
         tasks = [asyncio.create_task(SECURITY.run(), name="account-security"),
                  asyncio.create_task(expire_logins(), name="login-cleanup")]
@@ -2712,6 +2733,7 @@ async def main():
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await sessions.close()
         await deploy.shutdown()
 
     app.cleanup_ctx.append(background)

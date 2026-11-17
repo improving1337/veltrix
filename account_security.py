@@ -45,6 +45,7 @@ class AccountSecurity:
         self.state = read_json(self.state_path)
         self.passwords = read_json(self.directory / "password_index.json")
         self.pending = read_json(self.pending_path)
+        self.suspended = set()
         self.accounts = accounts
         self.clock = clock
         self.lock = asyncio.Lock()
@@ -68,7 +69,7 @@ class AccountSecurity:
             await self._check(account)
 
     async def _check(self, account):
-        if account.me is None or self.accounts().get(account.name) is not account:
+        if account.name in self.suspended or account.me is None or self.accounts().get(account.name) is not account:
             return
         record = self.state.setdefault("accounts", {}).setdefault(account.name, {})
         identity = str(account.me.id)

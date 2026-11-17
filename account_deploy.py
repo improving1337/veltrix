@@ -39,6 +39,7 @@ class AccountDeploy:
         self.connect_new = connect_new
         self.client_factory = client_factory
         self.clock = clock
+        self.on_created = None
         self.pending = {}
         self.lock = asyncio.Lock()
 
@@ -173,6 +174,8 @@ class AccountDeploy:
         self.pending.pop(token)
         shutil.rmtree(item["directory"], ignore_errors=True)
         added, connected = await self.connect_new()
+        if self.on_created:
+            self.on_created(name)
         return web.json_response({"stage": "done", "account": name, "added": added, "connected": connected})
 
     async def cancel(self, request):

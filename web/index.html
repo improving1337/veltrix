@@ -904,6 +904,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
 <button type="button" id="t-accounts" class="v-nav-item on" title="Profiles"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="v-nav-label">Profiles</span></button>
 <button type="button" id="t-examples" class="v-nav-item" title="Identity"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><circle cx="12" cy="10" r="3"/><path d="M7.5 18a4.5 4.5 0 0 1 9 0"/></svg><span class="v-nav-label">Identity</span></button>
 <button type="button" id="t-upload" class="v-nav-item" title="Deploy"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17v3h16v-3"/><path d="m12 16 0-13M7 8l5-5 5 5"/></svg><span class="v-nav-label">Deploy</span></button>
+<button type="button" id="t-twofa" class="v-nav-item" title="2FA"><span class="v-nav-label">◉ 2FA</span></button>
 <button type="button" id="t-messages" class="v-nav-item" title="Inbox"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8Z"/></svg><span class="v-nav-label">Inbox</span><span id="ub" class="badge" hidden></span></button>
 <div class="veltrix-toolkit-parent"><button type="button" id="t-orders" class="v-nav-item" title="Toolkit"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18a2 2 0 0 0 3 3l5.3-5.3a5 5 0 0 0 6.4-6.4L14 13l-3-3 3.7-3.7Z"/></svg><span class="v-nav-label">Toolkit</span></button><button id="toolkit-expand" class="v-nav-expand" aria-label="Развернуть услуги" aria-expanded="false" aria-controls="toolkit-services"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button></div><div id="toolkit-services" class="v-submenu" hidden></div>
 <button type="button" id="t-miniapp" class="v-nav-item" title="Mini App"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="v-nav-label">Mini App</span></button>
@@ -1022,6 +1023,12 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
  <section id="v-cs3bet" class="view">
   <div class="accwrap"><div id="cb-root"></div></div>
  </section>
+ <section id="v-twofa" class="view"><div class="accwrap"><div class="opanel" style="padding:24px;overflow:auto;width:100%">
+ <h2>2FA · Сессии аккаунтов</h2><p class="status">Зелёный — создана панелью, оранжевый — импортирована, красный — не подключена. Время по МСК. Происхождение не означает исключительный доступ: старые авторизации должны быть отозваны.</p>
+ <button id="twofa-reissue" class="btn">Перевыпустить внешние сессии</button> <button id="twofa-refresh" class="btn ghost">Обновить</button>
+ <div id="twofa-status" class="status" role="status"></div>
+ <table style="width:100%;text-align:left;border-collapse:separate;border-spacing:12px"><thead><tr><th>Статус</th><th>Номер / аккаунт</th><th>Пароль 2FA</th><th>Дата авторизации</th><th>Происхождение</th><th>Когда получена</th><th>Перевыпуск</th></tr></thead><tbody id="twofa-rows"></tbody></table>
+ </div></div></section>
  <section id="v-upload" class="view">
   <div class="accwrap"><div class="chcol btcol">
    <h2>Загрузка</h2>
@@ -1113,7 +1120,7 @@ function avatar(src,label,size=44){
 const avUrl=a=>`/api/accounts/${enc(a.name)}/avatar?v=${a.avatar_ver}`;
 const chatAv=(acc,id)=>`/api/accounts/${enc(acc)}/chats/${id}/avatar`;
 
-const VELTRIX_NAMES={accounts:'Profiles',examples:'Identity',upload:'Deploy',messages:'Inbox',orders:'Toolkit',miniapp:'Mini App',cs3bet:'CS3BET',automatic:'Autopilot'};
+const VELTRIX_NAMES={accounts:'Profiles',examples:'Identity',upload:'Deploy',twofa:'2FA',messages:'Inbox',orders:'Toolkit',miniapp:'Mini App',cs3bet:'CS3BET',automatic:'Autopilot'};
 function veltrixCloseMobile(){document.body.classList.remove('v-menu-open');$('#veltrix-mobile-backdrop').hidden=true}
 function showTab(t){
   // A category always reopens at its home screen, never at a nested service.
@@ -1132,7 +1139,7 @@ function showTab(t){
   $('#veltrix-breadcrumb').textContent=VELTRIX_NAMES[t]||'VELTRIX';
   document.title=(VELTRIX_NAMES[t]||'Control')+' — VELTRIX';
   veltrixCloseMobile();
-  for(const n of["accounts","messages","orders","miniapp","upload","examples","cs3bet","automatic"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
+  for(const n of["accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
 }
 $("#t-accounts").onclick=()=>showTab("accounts");
 $("#t-messages").onclick=()=>{showTab("messages");refreshInbox()};
@@ -2602,6 +2609,35 @@ document.addEventListener("pointerdown",e=>{OR.pressing=!!(e.target.closest&&e.t
 ["pointerup","pointercancel"].forEach(t=>document.addEventListener(t,()=>setTimeout(()=>{OR.pressing=false},80)));
 
 /* ---------- загрузка ---------- */
+const twofaDate=value=>value?new Date(typeof value==='number'?value*1000:value).toLocaleString('ru-RU',{timeZone:'Europe/Moscow',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).replace(',',''):'—';
+let twofaBusy=false;
+async function twofaLoad(){
+ if(twofaBusy)return;twofaBusy=true;
+ try{const data=await api('/api/2fa'),rows=$('#twofa-rows');rows.replaceChildren();
+ $('#twofa-reissue').disabled=!!data.job?.running;
+ $('#twofa-status').textContent=data.job?(data.job.running?'Перевыпуск выполняется последовательно…':`Обработка завершена: ${data.job.done}, ошибок: ${data.job.errors}`):'';
+ if(!data.protection_enabled)$('#twofa-status').textContent+=' Фоновая защита приостановлена: включите её в Deploy для отзыва старых авторизаций.';
+ for(const item of data.items){
+  const row=el('tr'),lamp=el('span','','●');lamp.style.color=!item.working?'#f87171':item.owned?'#4ade80':'#fb923c';
+  lamp.title=!item.working?'Не подключена':item.owned?'Создана панелью':'Импортирована';
+  const status=el('td');status.append(lamp);row.append(status);
+  row.append(el('td','',item.phone||item.name));
+  const password=el('td');
+  if(item.password){const value=el('span','','••••••••'),show=el('button','btn ghost','Показать');show.onclick=()=>{const hidden=value.textContent==='••••••••';value.textContent=hidden?item.password:'••••••••';show.textContent=hidden?'Скрыть':'Показать';};password.append(value,show);}else password.textContent='Не создан панелью';
+  row.append(password,el('td','',twofaDate(item.session_date)),el('td','',item.owned?'Своя':'Внешняя'),el('td','',twofaDate(item.received_at)));
+  const operation=el('td','',item.status||'—');
+  if(item.needs_password){const input=el('input');input.type='password';input.autocomplete='off';input.placeholder='Текущий пароль 2FA';const submit=el('button','btn','Продолжить');submit.onclick=async()=>{submit.disabled=true;try{await api('/api/2fa/password',{method:'POST',json:{name:item.name,password:input.value}});input.value='';twofaBusy=false;twofaLoad();}catch(error){$('#twofa-status').textContent=error.message;submit.disabled=false;}};operation.append(input,submit);}
+  row.append(operation);rows.append(row);
+ }
+ }catch(error){$('#twofa-status').textContent=error.message;}finally{twofaBusy=false;}
+}
+$('#t-twofa').onclick=()=>{showTab('twofa');twofaLoad();};
+$('#twofa-refresh').onclick=twofaLoad;
+$('#twofa-reissue').onclick=async()=>{
+ if(!confirm('Создать независимые сессии для всех подключённых внешних аккаунтов? После проверки новой сессии исходные файлы будут убраны в закрытый архив на сервере, а фоновая защита попытается отозвать старые авторизации с учётом ограничений Telegram.'))return;
+ try{await api('/api/2fa/reissue',{method:'POST'});setTimeout(twofaLoad,300);}catch(error){$('#twofa-status').textContent=error.message;}
+};
+setInterval(()=>{if(S.tab==='twofa'&&!document.querySelector('#twofa-rows input:focus'))twofaLoad();},5000);
 function securitySummary(s){
   const parts=[s.two_factor_status||'2FA: ожидает проверки',s.session_count==null?'Сессии: ожидает проверки':`Сессий: ${s.session_count}`];
   if(s.session_status)parts.push(s.session_status);
