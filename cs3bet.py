@@ -734,7 +734,7 @@ def make_handlers(get_clients, app=None, account_ids=None):
                 fail(f"{why}. Ответ на ставку не получен — она могла пройти. Проверь баланс, прежде чем повторять.")
             fail(f"{why}. Ставка не отправлена.")
 
-    async def place_bet(name, client, stake, picks, state):
+    async def place_bet(name, client, stake, picks, state, accept_odds=False, market_provider=None):
         async with _lock(_bet_locks, name):   # защита от двойного клика
             p_status, p_body = await call(name, client, "GET", "/api/profile")
             bal = numeric(nested(p_body, "data", "user", "balance")) if p_status == 200 else None
@@ -745,8 +745,10 @@ def make_handlers(get_clients, app=None, account_ids=None):
             if not stake.is_finite() or stake < MIN_STAKE or stake > MAX_STAKE or stake > bal:
                 fail(f"Ставка {stake}, текущий баланс {bal}; допустима сумма 100–50000, не больше баланса")
             # Свежие данные по выбранным матчам прямо перед ставкой
-            current = {m["id"]: m for m in await fetch_matches(name, client, {mid for mid, _, _ in picks})}
+            market = await market_provider(name, client) if market_provider else await fetch_matches(name, client, {mid for mid, _, _ in picks})
+            current = {m["id"]: m for m in market}
             legs, combined = [], Decimal("1")
+            quoted_odds = {}
             for mid, side, seen_odds in picks:
                 m = current.get(mid)
                 if not m or m["status"] != "betting_open":
@@ -755,14 +757,17 @@ def make_handlers(get_clients, app=None, account_ids=None):
                 if now is None:
                     fail(f"Не удалось проверить коэффициент в матче {m['team_a']} — {m['team_b']}")
                 now = Decimal(str(now))
-                if seen_odds is not None and abs(now - seen_odds) >= Decimal("0.005"):
+                if not accept_odds and seen_odds is not None and abs(now - seen_odds) >= Decimal("0.005"):
                     fail(f"Коэффициент изменился: {m['team_a']} — {m['team_b']} (было {seen_odds}, стало {now}). Обнови список.")
                 combined *= now
+                quoted_odds[mid] = str(now)
                 legs.append({"match_id": mid, "type_id": 1, "specifiers": {}, "outcome_external_id": side})
 
             if combined > MAX_ODDS:
                 fail(f"Общий коэффициент {combined} превышает максимум 30")
             await login(name, client)        # токен/связь с Telegram — до отправки, ставка ещё не ушла
+            state["coefficient"] = str(combined)
+            state["quoted_odds"] = quoted_odds
             if state.get("on_send"):
                 state["on_send"]()
             state["sent"] = True
@@ -883,10 +888,30 @@ def make_handlers(get_clients, app=None, account_ids=None):
         async def bulk_fetch(name, client):
             async with priority():
                 return await fetch_matches(name, client)
+        market_cache = {'at': 0, 'items': None}
+        market_lock = asyncio.Lock()
+        async def bulk_market(name, client):
+            async with market_lock:
+                if market_cache['items'] is None or time.monotonic()-market_cache['at'] >= 15:
+                    items = await fetch_matches(name, client)
+                    market_cache.update(at=time.monotonic(), items=items)
+                return market_cache['items']
         async def bulk_submit(name, client, stake, picks, state):
             async with priority():
-                return await place_bet(name, client, stake, picks, state)
-        bulk = BulkGame(Path(__file__).resolve().parent, get_clients, STATE, bulk_fetch, bulk_submit, account_ids)
+                for attempt in range(2):
+                    response = await place_bet(name, client, stake, picks, state, accept_odds=True, market_provider=bulk_market)
+                    body = json.loads(response.text)
+                    raw = body.get('response') or {}
+                    text = str(body.get('error') or '').lower()
+                    odds_rejected = (not body.get('ok') and raw.get('success') is False and body.get('status') in (400,422)
+                                     and any(word in text for word in ('odds','coefficient','коэффициент')))
+                    if attempt == 0 and odds_rejected:
+                        # Explicit rejection confirms no accepted bet; refreshing is safe.
+                        market_cache.update(at=0, items=None)
+                        state['sent'] = False
+                        continue
+                    return response
+        bulk = BulkGame(Path(__file__).resolve().parent, get_clients, STATE, bulk_fetch, bulk_submit, account_ids, parallelism=3, continue_on_error=True)
         bulk.register(app)
         app['cs3bet_bulk'] = bulk
 

@@ -210,7 +210,7 @@ def build_plan(matches, accounts, max_variants=20):
             'worst_total_balance':str(min(amount(i['total_balance']) for i in scenarios)),
             'best_total_balance':str(max(amount(i['total_balance']) for i in scenarios))}
 
-RESUMABLE = {'error', 'not_run', 'skipped'}
+RESUMABLE = {'error', 'not_run', 'skipped', 'rejected'}
 
 def error_message(exc):
     if isinstance(exc, web.HTTPException):
@@ -248,7 +248,9 @@ def requote_item(item, matches):
 
 
 class BulkGame:
-    def __init__(self, root, clients, state, fetch_matches, submit, identities=None):
+    def __init__(self, root, clients, state, fetch_matches, submit, identities=None, parallelism=1, continue_on_error=False):
+        self.parallelism = max(1,min(3,int(parallelism)))
+        self.continue_on_error = continue_on_error
         self.clients, self.state = clients, state
         self.fetch_matches, self.submit = fetch_matches, submit
         self.identities = identities or (lambda:{})
@@ -320,31 +322,79 @@ class BulkGame:
         return web.json_response(self.job)
 
     async def run(self):
-        try:
-            for item in self.job['items']:
-                if item['state'] != 'queue':continue
-                if self.job['stop_requested']:break
+        queue = [item for item in self.job['items'] if item['state']=='queue']
+        halt = asyncio.Event()
+        async def worker():
+            while queue and not halt.is_set() and not self.job['stop_requested']:
+                item = queue.pop(0)
                 client=self.clients().get(item['account'])
                 if client is None or (hasattr(client,'is_connected') and not client.is_connected()):
-                    item.update(state='skipped',note='Аккаунт отключён');self.save();break
+                    item.update(state='skipped',note='Аккаунт отключён');self.save()
+                    if not self.continue_on_error:halt.set()
+                    continue
                 item['state']='checking';self.save()
-                def on_send():item.update(state='sending');self.save()
-                state={'sent':False,'on_send':on_send}
-                try:
-                    result=await self.submit(item['account'],client,amount(item['stake']),
-                                             [(l['match_id'],l['side'],amount(l['odds'])) for l in item['legs']],state)
-                    body=json.loads(result.text)
-                    item.update(state='ok' if body.get('ok') else 'unknown',note='Принято' if body.get('ok') else 'Результат требует ручной проверки')
-                except asyncio.CancelledError:
-                    item['state']='unknown' if state['sent'] else 'not_run';raise
-                except Exception as exc:
-                    item.update(state='unknown' if state['sent'] else 'error',note=error_message(exc))
+                state={'sent':False}
+                def on_send():
+                    item['state']='sending'
+                    if state.get('coefficient'):
+                        item.setdefault('planned_coefficient',item['coefficient'])
+                        item['coefficient']=state['coefficient']
+                        item['potential']=str(payout(amount(item['stake'])*amount(item['coefficient'])))
+                        item['winner_balance']=str(amount(item['remaining'])+amount(item['potential']))
+                        for leg in item['legs']:
+                            leg['odds']=state.get('quoted_odds',{}).get(leg['match_id'],leg['odds'])
+                    self.save()
+                state['on_send']=on_send
+                for attempt in range(2):
+                    try:
+                        result=await self.submit(item['account'],client,amount(item['stake']),
+                                                 [(l['match_id'],l['side'],amount(l['odds'])) for l in item['legs']],state)
+                        body=json.loads(result.text)
+                        raw=body.get('response') or {}
+                        if not isinstance(raw,dict):raw={}
+                        definite = (not body.get('ok') and isinstance(raw,dict) and
+                                    ((body.get('status') in (200,201) and raw.get('success') is False) or (body.get('status') in (400,401,403,404,405,409,422,429) and (raw.get('success') is False or raw.get('error') or raw.get('message')))))
+                        item.update(state='ok' if body.get('ok') else 'rejected' if definite else 'unknown',
+                                    note='Принято' if body.get('ok') else str(body.get('error') or raw.get('message') or raw.get('error') or 'Результат требует ручной проверки')[:600])
+                        break
+                    except asyncio.CancelledError:
+                        item['state']='unknown' if state['sent'] else 'not_run';raise
+                    except Exception as exc:
+                        # Retry only an operation known not to have submitted a bet.
+                        transient = not isinstance(exc,web.HTTPException) and not isinstance(exc,ValueError)
+                        if not state['sent'] and transient and attempt == 0 and self.continue_on_error:
+                            item['note']='Повтор проверки до отправки: '+error_message(exc);self.save()
+                            await asyncio.sleep(max(1,int(getattr(exc,'retry_after',0) or 1)))
+                            continue
+                        item.update(state='unknown' if state['sent'] else 'error',note=error_message(exc));break
                 self.save()
-                if item['state'] in ('unknown','error'):break  # Odds/balance changed or result ambiguous: stop the batch.
+                if item['state'] in ('unknown','error','rejected') and not self.continue_on_error:halt.set()
+        tasks=[asyncio.create_task(worker()) for _ in range(self.parallelism)]
+        try:
+            await asyncio.gather(*tasks)
         finally:
+            for task in tasks:
+                if not task.done():task.cancel()
+            await asyncio.gather(*tasks,return_exceptions=True)
             for item in self.job['items']:
                 if item['state']=='queue':item['state']='not_run'
             self.job['running']=False;self.save()
+
+    async def confirm_manual(self, request):
+        data=await request.json()
+        async with self.lock:
+            if not self.job or data.get('job_id')!=self.job['id']:
+                return web.json_response({'error':'Очередь не найдена'},status=404)
+            if self.job['running']:return web.json_response({'error':'Сначала остановите очередь'},status=409)
+            item=next((i for i in self.job['items'] if i['account']==data.get('account')),None)
+            if not item or item['state']!='unknown' or data.get('confirmed') is not True:
+                return web.json_response({'error':'Нужно явное подтверждение неизвестной отправки'},status=409)
+            item.update(state='ok',manual_verified=True,manual_verified_at=time.time(),
+                        note='Ставка подтверждена пользователем в истории игры, не API')
+            if not any(i['state']=='unknown' and i['account']==item['account'] for i in self.job['items']):
+                self.unknown_accounts.discard(item['account'])
+            self.save()
+            return web.json_response({'ok':True})
 
     async def requote(self, request):
         data=await request.json()
@@ -418,6 +468,7 @@ class BulkGame:
         app.router.add_post('/api/cs3bet/bulk/plan',self.preview)
         app.router.add_post('/api/cs3bet/bulk/start',self.start)
         app.router.add_post('/api/cs3bet/bulk/resume',self.resume)
+        app.router.add_post('/api/cs3bet/bulk/confirm-manual',self.confirm_manual)
         app.router.add_post('/api/cs3bet/bulk/requote',self.requote)
         app.router.add_post('/api/cs3bet/bulk/stop',self.stop)
         app.router.add_get('/api/cs3bet/bulk',self.status)

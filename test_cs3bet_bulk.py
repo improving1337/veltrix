@@ -213,9 +213,57 @@ class BulkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status,409)
 
 
+    async def test_parallel_queue_continues_after_explicit_rejection(self):
+        self.bulk.parallelism=3;self.bulk.continue_on_error=True
+        active=0;maximum=0;sent=[]
+        async def submit(name,client,stake,picks,state):
+            nonlocal active,maximum
+            active+=1;maximum=max(maximum,active);sent.append(name)
+            await asyncio.sleep(.005);active-=1
+            if len(sent)==1:return web.json_response({'ok':False,'status':400,'error':'Отклонено: лимит','response':{'success':False}})
+            return web.json_response({'ok':True})
+        # Use account identity rather than completion order for deterministic rejection.
+        async def guarded(name,client,stake,picks,state):
+            result=await submit(name,client,stake,picks,state)
+            if name=='acc00':return web.json_response({'ok':False,'status':400,'error':'Отклонено: лимит','response':{'success':False}})
+            return result
+        self.bulk.submit=guarded;plan=await self.plan();await self.bulk.start(Request({'plan_id':plan['id']}));await self.bulk.task
+        self.assertEqual(maximum,3)
+        self.assertEqual(len(sent),len(set(sent)))
+        self.assertEqual(len(sent),8)
+        self.assertEqual(self.bulk.job['items'][0]['state'],'rejected')
+        self.assertEqual(sum(i['state']=='ok' for i in self.bulk.job['items']),7)
+        self.assertNotIn('acc00',self.bulk.unknown_accounts)
+
+    async def test_server_error_after_send_remains_unknown_without_retry(self):
+        self.bulk.parallelism=3;self.bulk.continue_on_error=True
+        async def failed(name,client,stake,picks,state):
+            state['sent']=True;state['on_send']()
+            return web.json_response({'ok':False,'status':500,'response':{'success':False,'error':'Internal error'}})
+        self.bulk.submit=AsyncMock(side_effect=failed)
+        plan=await self.plan();await self.bulk.start(Request({'plan_id':plan['id']}));await self.bulk.task
+        self.assertEqual(self.bulk.submit.await_count,8)
+        self.assertTrue(all(i['state']=='unknown' for i in self.bulk.job['items']))
+
+    async def test_manual_confirmation_does_not_submit_again(self):
+        async def ambiguous(name,client,stake,picks,state):
+            state['sent']=True;state['on_send']();raise TimeoutError()
+        self.bulk.submit=AsyncMock(side_effect=ambiguous);plan=await self.plan()
+        await self.bulk.start(Request({'plan_id':plan['id']}));await self.bulk.task
+        account=self.bulk.job['items'][0]['account'];calls=self.bulk.submit.await_count
+        response=await self.bulk.confirm_manual(Request({'job_id':plan['id'],'account':account,'confirmed':False}))
+        self.assertEqual(response.status,409)
+        response=await self.bulk.confirm_manual(Request({'job_id':plan['id'],'account':account,'confirmed':True}))
+        self.assertEqual(response.status,200)
+        self.assertEqual(self.bulk.submit.await_count,calls)
+        self.assertEqual(self.bulk.job['items'][0]['state'],'ok')
+        self.assertTrue(self.bulk.job['items'][0]['manual_verified'])
+        self.assertNotIn(account,self.bulk.unknown_accounts)
+
+
 
 class LiveLimitValidationTests(unittest.IsolatedAsyncioTestCase):
-    async def exercise(self,stake,odds=2,balance=100000,seen=None):
+    async def exercise(self,stake,odds=2,balance=100000,seen=None,bulk=False):
         calls=[]
         async def api(name,client,method,path,payload=None):
             calls.append((method,path,payload))
@@ -224,6 +272,16 @@ class LiveLimitValidationTests(unittest.IsolatedAsyncioTestCase):
             if '/detail' in path:return 200,{'success':True,'data':{}}
             return 200,{'success':True}
         with patch('cs3bet.call',side_effect=api),patch('cs3bet.login',new=AsyncMock()),patch('cs3bet.set_balance'),patch('cs3bet.extract_coefficients',return_value=(Decimal(str(odds)),Decimal(str(odds)))):
+            if bulk:
+                with patch('cs3bet.BulkGame') as factory:
+                    cs3bet.make_handlers(lambda:{'test':object()},web.Application())
+                submit=factory.call_args.args[4]
+                state={'sent':False}
+                try:
+                    response=await submit('test',object(),Decimal(stake),[(i,'1',Decimal(str(seen))) for i in (1,2)],state)
+                    await submit('another',object(),Decimal(stake),[(i,'1',Decimal(str(seen))) for i in (1,2)],{'sent':False})
+                except web.HTTPException as exc:response=exc
+                return response,calls
             bet=cs3bet.make_handlers(lambda:{'test':object()})[3]
             try:
                 response=await bet(Request({'stake':stake,'legs':[{'match_id':i,'side':'1','odds':seen} for i in [1,2]]}))
@@ -240,6 +298,15 @@ class LiveLimitValidationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(response.text)['stake'],50000)
         self.assertEqual(sum(method=='POST' for method,_,_ in calls),1)
         response,calls=await self.exercise('1000',odds=3,seen=2)
+        self.assertEqual(response.status,400)
+        self.assertFalse(any(method=='POST' for method,_,_ in calls))
+
+    async def test_bulk_accepts_current_prices_and_coalesces_market_reads(self):
+        response,calls=await self.exercise('1000',odds=2,seen=2.05,bulk=True)
+        self.assertEqual(response.status,200)
+        self.assertEqual(json.loads(response.text)['coefficient'],4)
+        self.assertEqual(sum(path=='/api/matches/active' for _,path,_ in calls),1)
+        response,calls=await self.exercise('1000',odds=6,seen=2.05,bulk=True)
         self.assertEqual(response.status,400)
         self.assertFalse(any(method=='POST' for method,_,_ in calls))
 
