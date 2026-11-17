@@ -189,11 +189,12 @@ class SessionAdmin:
         self.security.state.setdefault('accounts', {}).pop(new.name, None)
         self.security.save()
 
-    async def run(self):
-        self.job = {'running': True, 'done': 0, 'errors': 0}
+    async def run(self, name=None):
+        self.job = {'running': True, 'done': 0, 'errors': 0, 'account': name}
         try:
-            for source in list(self.accounts().values()):
-                if self.owned(source) or not source.me:
+            sources = list(self.accounts().values()) if name is None else [self.accounts().get(name)]
+            for source in sources:
+                if source is None or self.accounts().get(source.name) is not source or self.owned(source) or not source.me:
                     continue
                 try:
                     async with self.security.lock:
@@ -212,12 +213,36 @@ class SessionAdmin:
         finally:
             self.job['running'] = False
 
-    async def start(self, request):
+    async def start(self, request, single=False):
+        try:
+            data = await request.json() if getattr(request, 'can_read_body', True) else {}
+        except (ValueError, TypeError):
+            return web.json_response({'error': 'Некорректный запрос'}, status=400)
+        if not isinstance(data, dict):
+            return web.json_response({'error': 'Некорректный запрос'}, status=400)
+        if single and 'name' not in data:
+            return web.json_response({'error': 'Укажите аккаунт'}, status=400)
+        name = data.get('name')
+        if 'name' in data and (not isinstance(name, str) or not name.strip()):
+            return web.json_response({'error': 'Укажите аккаунт'}, status=400)
         async with self.lock:
             if self.task and not self.task.done():
                 return web.json_response({'error': 'Перевыпуск уже выполняется'}, status=409)
-            self.task = asyncio.create_task(self.run())
+            if name is not None:
+                source = self.accounts().get(name)
+                if source is None:
+                    return web.json_response({'error': 'Аккаунт не найден'}, status=404)
+                if not source.me:
+                    return web.json_response({'error': 'Аккаунт не подключён'}, status=409)
+                if self.owned(source):
+                    return web.json_response({'error': 'Сессия уже создана панелью'}, status=409)
+                if name in self.pending:
+                    return web.json_response({'error': 'Продолжите текущий вход, введя пароль 2FA'}, status=409)
+            self.task = asyncio.create_task(self.run(name))
         return web.json_response({'started': True})
+
+    async def start_one(self, request):
+        return await self.start(request, single=True)
 
     async def password(self, request):
         data = await request.json()
@@ -258,4 +283,5 @@ class SessionAdmin:
     def register(self, app):
         app.router.add_get('/api/2fa', self.inventory)
         app.router.add_post('/api/2fa/reissue', self.start)
+        app.router.add_post('/api/2fa/reissue-one', self.start_one)
         app.router.add_post('/api/2fa/password', self.password)

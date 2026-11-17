@@ -86,4 +86,46 @@ class SessionAdminTests(unittest.IsolatedAsyncioTestCase):
         self.retire.assert_awaited_once()
         self.assertEqual(self.security.suspended,set())
 
+    async def test_single_selection_never_processes_other_accounts(self):
+        other=NS(name='other',me=NS(id=456),client=self.source.client)
+        self.accounts['other']=other
+        self.manager.replace=AsyncMock()
+        response=await self.manager.start_one(Request({'name':'other'}))
+        self.assertEqual(response.status,200)
+        await self.manager.task
+        self.manager.replace.assert_awaited_once_with(other)
+        self.assertEqual(self.manager.job['account'],'other')
+
+    async def test_invalid_selection_never_falls_back_to_bulk(self):
+        for data,status in [({'name':'missing'},404),({'name':''},400),({'name':None},400),([],400)]:
+            response=await self.manager.start(Request(data))
+            self.assertEqual(response.status,status)
+            self.assertIsNone(self.manager.task)
+
+    async def test_single_endpoint_requires_explicit_account(self):
+        response=await self.manager.start_one(Request({}))
+        self.assertEqual(response.status,400)
+        self.assertIsNone(self.manager.task)
+
+    async def test_bulk_still_processes_all_external_accounts(self):
+        other=NS(name='other',me=NS(id=456),client=self.source.client)
+        self.accounts['other']=other
+        self.manager.replace=AsyncMock()
+        response=await self.manager.start(Request({}))
+        self.assertEqual(response.status,200)
+        await self.manager.task
+        self.assertEqual([call.args[0].name for call in self.manager.replace.await_args_list],['imported','other'])
+
+    async def test_parallel_reissue_rejected(self):
+        import asyncio
+        blocker=asyncio.Event()
+        self.manager.replace=AsyncMock(side_effect=lambda source: None)
+        async def wait(source):await blocker.wait()
+        self.manager.replace.side_effect=wait
+        await self.manager.start(Request({'name':'imported'}))
+        response=await self.manager.start(Request({'name':'imported'}))
+        self.assertEqual(response.status,409)
+        blocker.set()
+        await self.manager.task
+
 if __name__=='__main__':unittest.main()

@@ -2626,6 +2626,10 @@ async function twofaLoad(){
   if(item.password){const value=el('span','','••••••••'),show=el('button','btn ghost','Показать');show.onclick=()=>{const hidden=value.textContent==='••••••••';value.textContent=hidden?item.password:'••••••••';show.textContent=hidden?'Скрыть':'Показать';};password.append(value,show);}else password.textContent='Не создан панелью';
   row.append(password,el('td','',twofaDate(item.session_date)),el('td','',item.owned?'Своя':'Внешняя'),el('td','',twofaDate(item.received_at)));
   const operation=el('td','',item.status||'—');
+  const reissue=el('button','btn ghost','Перевыпустить сессию');reissue.type='button';
+  reissue.disabled=!!data.job?.running||item.owned||!item.working||item.needs_password;
+  reissue.title=item.owned?'Сессия уже создана панелью':!item.working?'Сначала подключите аккаунт':item.needs_password?'Введите текущий пароль 2FA':'Обработать только этот аккаунт';
+  reissue.onclick=()=>twofaStart(item.name,item.phone||item.name);operation.append(reissue);
   if(item.needs_password){const input=el('input');input.type='password';input.autocomplete='off';input.placeholder='Текущий пароль 2FA';const submit=el('button','btn','Продолжить');submit.onclick=async()=>{submit.disabled=true;try{await api('/api/2fa/password',{method:'POST',json:{name:item.name,password:input.value}});input.value='';twofaBusy=false;twofaLoad();}catch(error){$('#twofa-status').textContent=error.message;submit.disabled=false;}};operation.append(input,submit);}
   row.append(operation);rows.append(row);
  }
@@ -2633,10 +2637,13 @@ async function twofaLoad(){
 }
 $('#t-twofa').onclick=()=>{showTab('twofa');twofaLoad();};
 $('#twofa-refresh').onclick=twofaLoad;
-$('#twofa-reissue').onclick=async()=>{
- if(!confirm('Создать независимые сессии для всех подключённых внешних аккаунтов? После проверки новой сессии исходные файлы будут убраны в закрытый архив на сервере, а фоновая защита попытается отозвать старые авторизации с учётом ограничений Telegram.'))return;
- try{await api('/api/2fa/reissue',{method:'POST'});setTimeout(twofaLoad,300);}catch(error){$('#twofa-status').textContent=error.message;}
-};
+async function twofaStart(name,label){
+ const target=name===undefined?'всех подключённых внешних аккаунтов':`только аккаунта ${label}`;
+ if(!confirm(`Создать независимую сессию для ${target}? После проверки новой сессии исходные файлы будут убраны в закрытый архив на сервере, а фоновая защита попытается отозвать старые авторизации с учётом ограничений Telegram.`))return;
+ const buttons=[$('#twofa-reissue'),...$('#twofa-rows').querySelectorAll('button')];buttons.forEach(button=>button.disabled=true);
+ try{await api(name===undefined?'/api/2fa/reissue':'/api/2fa/reissue-one',{method:'POST',json:name===undefined?{}:{name}});setTimeout(twofaLoad,300);}catch(error){await twofaLoad();$('#twofa-status').textContent=error.message;}
+}
+$('#twofa-reissue').onclick=()=>twofaStart();
 setInterval(()=>{if(S.tab==='twofa'&&!document.querySelector('#twofa-rows input:focus'))twofaLoad();},5000);
 function securitySummary(s){
   const parts=[s.two_factor_status||'2FA: ожидает проверки',s.session_count==null?'Сессии: ожидает проверки':`Сессий: ${s.session_count}`];
