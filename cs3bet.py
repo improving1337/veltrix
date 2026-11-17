@@ -37,6 +37,7 @@ from urllib.parse import parse_qs, urlparse
 import aiohttp
 from aiohttp import web
 from cs3bet_bulk import BulkGame, MAX_STAKE, MAX_ODDS
+from account_security import private_json, read_json
 
 BOT_USERNAME = os.getenv("CS3_BOT_USERNAME", "cs3bet_bot").strip().lstrip("@")
 API_BASE = os.getenv("CS3_API_BASE", "https://app.cs3newsbet.com").rstrip("/")
@@ -49,6 +50,8 @@ MIN_STAKE = Decimal("100")
 TEMPLATE_FILE = Path(__file__).resolve().parent / "cs3bet_template.json"
 RATE_MAX = int(os.getenv("CS3_RATE_MAX", "50"))     # макс. запросов к API за окно (лимит сервера ~60/мин)
 RATE_WINDOW = 60.0
+REFERRAL_PARAM = 'ref_6J74EAKP'
+REFERRALS_FILE = Path(__file__).resolve().parent / 'cs3bet_referrals.json'
 TOKEN_TTL = 20 * 60          # сек, потом логинимся заново
 STATE_FILE = Path(__file__).resolve().parent / "cs3bet_state.json"
 PAUSE_429 = 10               # сек паузы при 429 в фоновом обходе (повторяется, пока не пройдёт)
@@ -227,6 +230,50 @@ async def _raw_request(method, path, headers, payload):
         return r.status, body
 
 
+def webview_identity(url):
+    parsed = urlparse(url)
+    if parsed.scheme != 'https' or not parsed.hostname:
+        raise RuntimeError('Telegram вернул небезопасную ссылку мини-аппа')
+    params = {**parse_qs(parsed.query), **parse_qs(parsed.fragment)}
+    init_data = params.get('tgWebAppData', [None])[0]
+    try:
+        user = json.loads(parse_qs(init_data or '').get('user', [''])[0])
+        identity = int(user['id'])
+    except (ValueError, TypeError, KeyError):
+        raise RuntimeError('В ссылке Telegram нет подтверждения выбранного аккаунта') from None
+    return init_data, identity
+
+
+async def own_user_id(client):
+    identity = getattr(client, '_self_id', None)
+    if identity is None:
+        me = await client.get_me()
+        identity = getattr(me, 'id', None)
+    if identity is None:
+        raise RuntimeError('Не удалось определить Telegram-аккаунт')
+    return int(identity)
+
+
+async def miniapp_url(name, client):
+    """Return Telegram-signed launch data, never a generic t.me link or a cached token."""
+    await login(name, client)
+    from presence import ensure_connected
+    from telethon.tl.functions.messages import RequestMainWebViewRequest
+    from telethon.errors import FloodWaitError
+    await ensure_connected(client)
+    try:
+        async with _tg_sem:
+            identity = await own_user_id(client)
+            bot = await client.get_entity(BOT_USERNAME)
+            result = await client(RequestMainWebViewRequest(peer=bot, bot=bot, platform='web'))
+    except FloodWaitError as exc:
+        raise RateLimited(exc.seconds, flood=True)
+    _, actual = webview_identity(result.url)
+    if actual != identity:
+        raise RuntimeError('Telegram вернул ссылку другого аккаунта; открытие отменено')
+    return result.url, identity
+
+
 async def login(name, client, force=False):
     async with _lock(_login_locks, name):
         cached = _tokens.get(name)
@@ -240,8 +287,12 @@ async def login(name, client, force=False):
             try:
                 await ensure_connected(client)          # клиент мог отвалиться — переподключаем
                 async with _tg_sem:
+                    identity = await own_user_id(client)
+                    referrals = read_json(REFERRALS_FILE)
+                    known = str(identity) in referrals or STATE.get(name, {}).get('balance') is not None
+                    start_param = None if known else REFERRAL_PARAM
                     bot = await client.get_entity(BOT_USERNAME)
-                    webview = await client(RequestMainWebViewRequest(peer=bot, bot=bot, platform="web"))
+                    webview = await client(RequestMainWebViewRequest(peer=bot, bot=bot, platform="web", start_param=start_param))
                 break
             except FloodWaitError as e:
                 raise RateLimited(e.seconds, flood=True)
@@ -253,15 +304,21 @@ async def login(name, client, force=False):
                 except Exception:
                     pass
                 await asyncio.sleep(1)
-        init_data = parse_qs(urlparse(webview.url).fragment, keep_blank_values=True).get("tgWebAppData", [None])[0]
-        if not init_data:
-            raise RuntimeError("Не удалось получить tgWebAppData")
+        init_data, actual = webview_identity(webview.url)
+        if actual != identity:
+            raise RuntimeError('Telegram вернул данные другого аккаунта; авторизация отменена')
+        if start_param and parse_qs(init_data).get('start_param', [None])[0] != start_param:
+            raise RuntimeError('Telegram не включил реферальный параметр; регистрация не отправлена')
         status, body = await raw_request("POST", "/api/auth/login", payload={"init_data": init_data})
         token = nested(body, "data", "access_token")
         if status == 429:
             raise RateLimited(body.get("_retry_after", 0))
         if status != 200 or not body.get("success") or not token:
             raise RuntimeError(f"Ошибка авторизации: HTTP {status}")
+        records = read_json(REFERRALS_FILE)
+        records.setdefault(str(identity), {'initialized_at': time.time(), 'start_param': start_param,
+                                           'account': name})
+        private_json(REFERRALS_FILE, records)
         _tokens[name] = (token, time.time())
         return token
 
@@ -593,6 +650,17 @@ def make_handlers(get_clients, app=None, account_ids=None):
                 raise err
         return items
 
+    async def open_app(request):
+        name, client = client_for(request)
+        try:
+            async with priority():
+                url, identity = await miniapp_url(name, client)
+        except RateLimited as exc:
+            return web.json_response({'error': f'Подождите {exc.retry_after} сек. из-за ограничения Telegram/API'}, status=429)
+        except Exception as exc:
+            return web.json_response({'error': str(exc)[:250]}, status=400)
+        return web.json_response({'url': url, 'account_id': str(identity)}, headers={'Cache-Control': 'no-store'})
+
     async def express_stats(request):
         name, client = client_for(request)
         try:
@@ -811,6 +879,7 @@ def make_handlers(get_clients, app=None, account_ids=None):
                                             "total": _cycle["total"], "round": _cycle["round"]}})
 
     if app is not None:
+        app.router.add_post('/api/cs3bet/open/{acc}', open_app)
         async def bulk_fetch(name, client):
             async with priority():
                 return await fetch_matches(name, client)

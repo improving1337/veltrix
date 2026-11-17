@@ -539,6 +539,7 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 
 .auto-emoji-options{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0}.auto-emoji-choice{display:inline-flex;align-items:center;gap:7px;border:1px solid #34343f;border-radius:8px;padding:8px 11px;background:#171820;font-size:19px}.auto-emoji-choice input{width:14px;height:14px;margin:0;accent-color:#8c75e8}#auto-reaction-prompt{width:100%;resize:vertical;min-height:100px;font-size:13px}
 .bulk-game-matches{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;margin:16px 0}.bulk-game-match{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #30313b;border-radius:8px;font-size:12px}.bulk-game-match input{width:15px;height:15px;flex:none}.bulk-game-match span{flex:1}.bulk-game-table{width:100%;min-width:950px;border-collapse:collapse;font-size:12px}.bulk-game-table th,.bulk-game-table td{padding:10px;text-align:left;border-bottom:1px solid #30313b}.bulk-game-table th{color:#9894a5}#bulk-game-variants{max-width:160px}
+#v-cs3bet .cbrow{grid-template-columns:minmax(190px,1fr) minmax(130px,.7fr) minmax(170px,.9fr) auto auto auto!important}#v-cs3bet .cbopen{width:auto!important;min-width:75px}@media(max-width:1050px){#v-cs3bet .cbrow{grid-template-columns:repeat(3,minmax(0,1fr))!important}}@media(max-width:650px){#v-cs3bet .cbrow{grid-template-columns:repeat(2,minmax(0,1fr))!important}#v-cs3bet .cbinfo{grid-column:1/-1}}
 </style>
 <style id="veltrix-theme">
 /* VELTRIX UI — graphite dashboard treatment adapted from the supplied Ember
@@ -1264,6 +1265,7 @@ function cbList(){
     const st=el("div","status");st.style.margin="2px 0 0";
     info.append(n,b,st);
     const go=el("button","btn","Сделать ставку");go.onclick=()=>cbOpenBet(a.name,i+1);
+    const open=el("button","btn ghost cbopen","Открыть");open.type="button";open.onclick=()=>cbOpenMiniapp(a,open,st);
     const tb=el("button","btn ghost cbtpl","Шаблон");tb.disabled=!CB.tpl.length;
     tb.onclick=()=>cbTplBet(a.name,i+1,tb,st);
     const bets=el("div","cbbet"),bc=el("div"),bp=el("div"),bcn=el("b","","…"),bpn=el("b","","…");
@@ -1271,7 +1273,7 @@ function cbList(){
     const rw=el("div","cbrw"),rd=el("div"),rl=el("div"),rm=el("div","rwm"),dsp=el("b","","…"),wsp=el("b","","…");
     rd.append("Ежедневная награда: ",dsp);rl.append("Колесо: ",wsp);rw.append(rd,rl,rm);
     CB.rwEls[a.name]={d:dsp,w:wsp,m:rm};
-    row.append(info,bets,rw,tb,go);root.append(row);rows[a.name]=b;CB.rowEls[a.name]=row;
+    row.append(info,bets,rw,tb,open,go);root.append(row);rows[a.name]=b;CB.rowEls[a.name]=row;
   });
   const paint=CB.paint=(name)=>{const b=CB.rows[name],d=CB.bal[name];if(!b||!d)return;
     if(d.balance==null){b.className="cbb err";b.textContent="Баланс: не удалось получить"+(d.error?` (${d.error})`:"")}
@@ -1289,6 +1291,15 @@ function cbApplyHide(name){
   const d=CB.bal[name],zero=!!d&&d.balance!=null&&Number(d.balance)===0;
   row.hidden=CB.hideZero&&zero;
   if(CB.eyeSync)CB.eyeSync();
+}
+async function cbOpenMiniapp(account,button,status){
+ const popup=window.open('about:blank','_blank');if(popup)popup.opener=null;
+ if(!popup){status.textContent='Разрешите всплывающие окна для панели и нажмите «Открыть» снова.';status.className='status err';return;}
+ button.disabled=true;status.className='status';status.textContent='Получаю персональную ссылку Telegram…';
+ try{const result=await api('/api/cs3bet/open/'+enc(account.name),{method:'POST'});
+  if(String(result.account_id)!==String(account.id)||!result.url||!result.url.startsWith('https://'))throw new Error('Аккаунт в ссылке не совпадает; открытие отменено');
+  popup.location.replace(result.url);status.textContent='Ссылка открыта для '+(account.phone?'+'+account.phone:account.name)+'.';
+ }catch(error){popup.close();status.className='status err';status.textContent=error.message;}finally{button.disabled=false;}
 }
 /* Mass allocation of non-monetary game points: preview before any action. */
 const CB_BULK={plan:null,timer:null};
@@ -1363,7 +1374,7 @@ async function cbSync(){
       else if(x.ts&&CB.betEls[name]&&!CB.betStats[name])cbApplyExpressStats(name,{count:null,potential:null,error:x.error||"нет данных"});
       if(x.rw)cbRwSet(name,x.rw);
       const e=CB.rwEls[name];
-      if(e&&x.msg&&x.msg_ts&&Date.now()/1000-x.msg_ts<3600){e.m.className="rwm "+(x.msg_ok?"ok":"err");e.m.textContent=x.msg}
+      if(e){e.m.className="rwm err";e.m.textContent=x.msg&&x.msg_ok===false&&x.msg_ts&&Date.now()/1000-x.msg_ts<3600?x.msg:"";}
       if(CB.paint&&S.tab==="cs3bet"&&!CB.acc)CB.paint(name);
     }
     const c=r.cycle;
