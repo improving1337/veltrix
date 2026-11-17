@@ -36,6 +36,7 @@ from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 from aiohttp import web
+from cs3bet_bulk import BulkGame, MAX_STAKE, MAX_ODDS
 
 BOT_USERNAME = os.getenv("CS3_BOT_USERNAME", "cs3bet_bot").strip().lstrip("@")
 API_BASE = os.getenv("CS3_API_BASE", "https://app.cs3newsbet.com").rstrip("/")
@@ -102,7 +103,7 @@ def numeric(value):
         return None
     try:
         number = Decimal(str(value).replace(",", "."))
-        return number if number > 0 else None
+        return number if number.is_finite() and number > 0 else None
     except (InvalidOperation, ValueError):
         return None
 
@@ -531,7 +532,7 @@ async def poller_loop(get_clients):
 
 
 # ---------------- хендлеры ----------------
-def make_handlers(get_clients):
+def make_handlers(get_clients, app=None, account_ids=None):
     def client_for(request):
         name = request.match_info["acc"]
         client = get_clients().get(name)
@@ -559,7 +560,7 @@ def make_handlers(get_clients):
         set_balance(name, user.get("balance"))
         return web.json_response({"balance": user.get("balance")})
 
-    async def fetch_matches(name, client):
+    async def fetch_matches(name, client, selected_ids=None):
         status, resp = await call(name, client, "GET", "/api/matches/active")
         if status != 200 or not resp.get("success"):
             raise RuntimeError(f"Не удалось получить матчи: HTTP {status}")
@@ -582,6 +583,8 @@ def make_handlers(get_clients):
                     "odds_b": float(odds_b) if odds_b else None,
                     "status": merged.get("status")}
 
+        if selected_ids is not None:
+            matches = [m for m in matches if m.get('id', m.get('match_id')) in selected_ids or str(m.get('id', m.get('match_id'))) in {str(i) for i in selected_ids}]
         res = await asyncio.gather(*(one(m) for m in matches), return_exceptions=True)
         items = [r for r in res if isinstance(r, dict)]
         if matches and not items:     # все запросы упали — это не «матчей нет», а ошибка (лимит, обрыв связи)
@@ -627,8 +630,10 @@ def make_handlers(get_clients):
                 stake = Decimal(stake_raw.replace(",", "."))
             except (InvalidOperation, ValueError):
                 fail("Неверная сумма ставки")
-            if stake < MIN_STAKE:
+            if not stake.is_finite() or stake < MIN_STAKE:
                 fail(f"Минимальная ставка — {MIN_STAKE} монет")
+            if stake > MAX_STAKE:
+                fail("Максимальная ставка — 50000 монет")
             if stake != stake.quantize(Decimal("0.01")):
                 fail("Сумма — максимум 2 знака после запятой")
         raw_legs = data.get("legs") or []
@@ -663,16 +668,16 @@ def make_handlers(get_clients):
 
     async def place_bet(name, client, stake, picks, state):
         async with _lock(_bet_locks, name):   # защита от двойного клика
-            if stake is None:              # 100% баланса, берём актуальный прямо сейчас
-                p_status, p_body = await call(name, client, "GET", "/api/profile")
-                bal = numeric(nested(p_body, "data", "user", "balance")) if p_status == 200 else None
-                if bal is None:
-                    fail("Не удалось получить баланс")
-                stake = bal.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
-                if stake < MIN_STAKE:
-                    fail(f"Баланс {stake} меньше минимальной ставки {MIN_STAKE}")
+            p_status, p_body = await call(name, client, "GET", "/api/profile")
+            bal = numeric(nested(p_body, "data", "user", "balance")) if p_status == 200 else None
+            if bal is None:
+                fail("Не удалось получить положительный актуальный баланс")
+            if stake is None:
+                stake = min(bal.quantize(Decimal("0.01"), rounding=ROUND_DOWN), MAX_STAKE)
+            if not stake.is_finite() or stake < MIN_STAKE or stake > MAX_STAKE or stake > bal:
+                fail("Недостаточно баланса или сумма вне лимита 100–50000 монет")
             # Свежие данные по выбранным матчам прямо перед ставкой
-            current = {m["id"]: m for m in await fetch_matches(name, client)}
+            current = {m["id"]: m for m in await fetch_matches(name, client, {mid for mid, _, _ in picks})}
             legs, combined = [], Decimal("1")
             for mid, side, seen_odds in picks:
                 m = current.get(mid)
@@ -687,7 +692,11 @@ def make_handlers(get_clients):
                 combined *= now
                 legs.append({"match_id": mid, "type_id": 1, "specifiers": {}, "outcome_external_id": side})
 
+            if combined > MAX_ODDS:
+                fail("Общий коэффициент превышает максимум 30")
             await login(name, client)        # токен/связь с Telegram — до отправки, ставка ещё не ушла
+            if state.get("on_send"):
+                state["on_send"]()
             state["sent"] = True
             if len(legs) == 1:
                 kind = "single"
@@ -706,6 +715,8 @@ def make_handlers(get_clients):
                 payload = {"stake": float(stake), "legs": legs}
                 status, result = await call(name, client, "POST", path, payload)
             ok = 200 <= status < 300 and bool(result.get("success"))
+            if ok:
+                set_balance(name, float(bal-stake))
             return web.json_response({
                 "ok": ok, "kind": kind, "status": status, "stake": float(stake), "coefficient": float(round(combined, 4)),
                 "potential": float(round(stake * combined, 2)), "response": result,
@@ -799,13 +810,25 @@ def make_handlers(get_clients):
                                   "cycle": {"current": _cycle["current"], "index": _cycle["index"],
                                             "total": _cycle["total"], "round": _cycle["round"]}})
 
+    if app is not None:
+        async def bulk_fetch(name, client):
+            async with priority():
+                return await fetch_matches(name, client)
+        async def bulk_submit(name, client, stake, picks, state):
+            async with priority():
+                return await place_bet(name, client, stake, picks, state)
+        bulk = BulkGame(Path(__file__).resolve().parent, get_clients, STATE, bulk_fetch, bulk_submit, account_ids)
+        bulk.register(app)
+        app['cs3bet_bulk'] = bulk
+
     return (balance, express_stats, matches, bet, template_get, template_set, promo, rewards_state,
             rewards_collect, state_get)
 
 
-def register_all(app, get_clients):
+def register_all(app, get_clients, account_ids=None):
+    state_load()
     (balance, express_stats, matches, bet, template_get, template_set, promo, rewards_state,
-     rewards_collect, state_get) = make_handlers(get_clients)
+     rewards_collect, state_get) = make_handlers(get_clients, app, account_ids)
 
     async def start_poller(app):
         app["cs3bet_poller"] = asyncio.create_task(poller_loop(get_clients))

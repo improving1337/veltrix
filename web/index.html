@@ -538,6 +538,7 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 @media(max-width:1249px){.profile-layout{display:flex;flex-direction:column;gap:14px}.profile-column{display:contents}.profile-media{grid-column:auto}}
 
 .auto-emoji-options{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0}.auto-emoji-choice{display:inline-flex;align-items:center;gap:7px;border:1px solid #34343f;border-radius:8px;padding:8px 11px;background:#171820;font-size:19px}.auto-emoji-choice input{width:14px;height:14px;margin:0;accent-color:#8c75e8}#auto-reaction-prompt{width:100%;resize:vertical;min-height:100px;font-size:13px}
+.bulk-game-matches{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;margin:16px 0}.bulk-game-match{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #30313b;border-radius:8px;font-size:12px}.bulk-game-match input{width:15px;height:15px;flex:none}.bulk-game-match span{flex:1}.bulk-game-table{width:100%;min-width:950px;border-collapse:collapse;font-size:12px}.bulk-game-table th,.bulk-game-table td{padding:10px;text-align:left;border-bottom:1px solid #30313b}.bulk-game-table th{color:#9894a5}#bulk-game-variants{max-width:160px}
 </style>
 <style id="veltrix-theme">
 /* VELTRIX UI — graphite dashboard treatment adapted from the supplied Ember
@@ -1289,6 +1290,59 @@ function cbApplyHide(name){
   row.hidden=CB.hideZero&&zero;
   if(CB.eyeSync)CB.eyeSync();
 }
+/* Mass allocation of non-monetary game points: preview before any action. */
+const CB_BULK={plan:null,timer:null};
+const CB_BULK_STATES={queue:'Очередь',checking:'Проверка',sending:'Отправка',ok:'Принято',unknown:'Нужно проверить',error:'Ошибка до отправки',not_run:'Не выполнено',skipped:'Пропущено'};
+async function cbBulkView(){
+ CB.mode='bulk';clearTimeout(CB_BULK.timer);CB_BULK.plan=null;
+ const root=$('#cb-root');root.replaceChildren();
+ const header=el('div','sectionhead'),title=el('div');title.append(el('h2','','Массовая ставка · игровые монеты'),el('p','subline','Предпросмотр распределения, затем отдельное подтверждение запуска.'));
+ const refreshJob=el('button','ui-btn','Обновить выполнение');refreshJob.onclick=cbBulkPoll;header.append(refreshJob);
+ const back=el('button','ui-btn','← Шаблоны');back.onclick=()=>{clearTimeout(CB_BULK.timer);cbOpenTpl();};header.append(title,back);root.append(header);
+ const panel=el('div','profile-card'),note=el('div','status','Лимиты: коэффициент каждого экспресса ≤30, ставка 100–50 000 монет. Для точного перебора выберите от 2 до 12 матчей. План выбирает поднабор с полным покрытием его бинарных исходов. Это не покрытие всех событий и не перевод монет между аккаунтами. Общий банк может уменьшиться.'),matches=el('div','bulk-game-matches'),options=el('label','fld'),limit=el('input');
+ limit.type='number';limit.min='4';limit.max='64';limit.value='20';limit.id='bulk-game-variants';options.append(el('span','','Максимум вариантов экспресса (4–64)'),limit);
+ const build=el('button','ui-btn ui-primary','Рассчитать распределение');build.id='bulk-game-build';const status=el('div','status');status.id='bulk-game-status';
+ const preview=el('div');preview.id='bulk-game-preview';const job=el('div');job.id='bulk-game-job';
+ panel.append(note,options,matches,build,status);root.append(panel,preview,job);
+ try{const result=await api(`/api/cs3bet/matches/${enc(CB.acc)}`);const open=(result.items||[]).filter(m=>m.status==='betting_open');
+  if(!open.length)matches.append(el('div','status','Нет открытых событий'));
+  for(const match of open){const label=el('label','bulk-game-match'),check=el('input');check.type='checkbox';check.value=match.id;check.checked=open.length<=12;check.onchange=()=>{CB_BULK.plan=null;preview.replaceChildren();};label.append(check,el('span','',`${match.team_a} — ${match.team_b}`),el('b','',`${match.odds_a??'—'} / ${match.odds_b??'—'}`));matches.append(label);}
+ }catch(error){status.textContent=error.message;}
+ limit.oninput=()=>{CB_BULK.plan=null;preview.replaceChildren();};
+ build.onclick=async()=>{
+  build.disabled=true;preview.replaceChildren();CB_BULK.plan=null;status.textContent='Получаю коэффициенты и рассчитываю покрытие…';
+  try{const data=await api('/api/cs3bet/bulk/plan',{method:'POST',json:{max_variants:Number(limit.value),match_ids:[...matches.querySelectorAll('input:checked')].map(input=>+input.value)}});
+   if(CB.mode!=='bulk')return;CB_BULK.plan=data;status.textContent='Предпросмотр готов. Ставки ещё не отправлены.';cbBulkPreview(preview,data);
+  }catch(error){status.textContent=error.message;}finally{build.disabled=false;}
+ };
+ cbBulkPoll();
+}
+function cbBulkPreview(root,plan){
+ root.replaceChildren();const box=el('div','profile-card');box.style.marginTop='16px';
+ box.append(el('h3','','Распределение'),el('div','status',`Матчей в экспрессе: ${plan.selected_matches.length} · исходов: ${plan.variant_count} · аккаунтов: ${plan.account_count} · ставка всего: ${plan.total_stake} · остаток: ${plan.reserve}`));
+ box.append(el('div','status',`Крупнейший баланс в сценариях: ${plan.worst_largest_balance}–${plan.best_largest_balance}. Общий банк после расчёта: ${plan.worst_total_balance}–${plan.best_total_balance}; исходный банк: ${plan.initial_total}. Это расчёт для завершённых бинарных событий без отмен и изменения правил.`));
+ if(Number(plan.worst_total_balance)<Number(plan.initial_total))box.append(el('div','status err','В худшем расчётном исходе общий банк уменьшается на '+(Number(plan.initial_total)-Number(plan.worst_total_balance)).toFixed(2)+' монет. Концентрация выигрыша не означает рост общей суммы.'));
+ box.append(el('div','status',`Вошли матчи: ${plan.selected_matches.join(', ')}. Не вошли: ${plan.unused_matches.concat(plan.ignored_matches).join(', ')||'нет'}. Пропущено аккаунтов: ${plan.skipped_accounts.length}. Неизвестные результаты прошлой отправки исключены: ${(plan.blocked_unknown_accounts||[]).length}.`));
+ box.append(el('div','status','Баланс взят из последнего обхода аккаунтов; дата показана в строках. Перед отправкой проверяются свежие баланс и коэффициенты. При изменении условий или неоднозначном ответе обработка остановится. Дополнительные круги дают больше победителей, но не переносят их выигрыш на один аккаунт.'));
+ const scroll=el('div','sessions-scroll'),table=el('table','bulk-game-table'),head=el('tr');for(const text of ['Аккаунт / баланс проверен','Баланс','Ставка','Вариант / круг','Экспресс','Коэффициент','Выплата / баланс победителя'])head.append(el('th','',text));table.append(head);
+ for(const item of plan.items){const row=el('tr');for(const value of [item.account+' · '+twofaDate(item.balance_ts),item.balance,item.stake,`${item.variant} / ${item.round}`,item.legs.map(leg=>(leg.side==='1'?leg.team_a:leg.team_b)||`${leg.match_id}:${leg.side}`).join(' + '),Number(item.coefficient).toFixed(4),`${item.potential} / ${item.winner_balance}`])row.append(el('td','',value));table.append(row);}scroll.append(table);box.append(scroll);
+ const start=el('button','ui-btn ui-primary','Подтвердить и запустить план');start.id='bulk-game-start';start.style.marginTop='16px';
+ start.onclick=async()=>{if(CB_BULK.plan?.id!==plan.id)return;if(!confirm(`Отправить ${plan.account_count} ставок на ${plan.total_stake} игровых монет? Полный проигрыш части аккаунтов возможен. Коэффициенты и баланс будут перепроверены. План нельзя запустить повторно.`))return;start.disabled=true;
+  try{await api('/api/cs3bet/bulk/start',{method:'POST',json:{plan_id:plan.id}});CB_BULK.plan=null;cbBulkPoll();}catch(error){$('#bulk-game-status').textContent=error.message;start.disabled=false;cbBulkPoll();}};box.append(start);root.append(box);
+}
+async function cbBulkPoll(){
+ clearTimeout(CB_BULK.timer);if(CB.mode!=='bulk'||S.tab!=='cs3bet')return;
+ try{const result=await api('/api/cs3bet/bulk'),root=$('#bulk-game-job');if(!root)return;root.replaceChildren();const job=result.job;if(job){
+  const box=el('div','profile-card');box.style.marginTop='16px';const counts={};for(const item of job.items)counts[item.state]=(counts[item.state]||0)+1;
+  box.append(el('h3','',job.running?'Отправка плана':'Обработка завершена'),el('div','status',Object.entries(counts).map(([k,v])=>`${CB_BULK_STATES[k]||k}: ${v}`).join(' · ')));
+  if(counts.not_run||counts.error||counts.skipped)box.append(el('div','status err','План выполнен не полностью: покрытие из предпросмотра не подтверждено.'));
+  if(job.interrupted||counts.unknown)box.append(el('div','status err','Есть прерывание или неподтверждённая отправка. Автоматических повторов нет; проверьте историю ставок в игре.'));
+  for(const item of job.items)box.append(el('div','status',`${item.account} · вариант ${item.variant} · ${CB_BULK_STATES[item.state]||item.state}${item.note?' · '+item.note:''}`));
+  if(job.running){const stop=el('button','ui-btn','Остановить после текущей отправки');stop.onclick=async()=>{await api('/api/cs3bet/bulk/stop',{method:'POST'});cbBulkPoll();};box.append(stop);}root.append(box);
+  if(job.running)CB_BULK.timer=setTimeout(cbBulkPoll,2000);
+ }}catch(error){const status=$('#bulk-game-status');if(status)status.textContent=error.message;}
+}
+
 /* ---- Данные приходят с сервера ----
    Сервер сам по кругу обходит аккаунты (баланс, ставки, ежедневная, колесо), сохраняет результат в файл
    и забирает созревшие награды. Страница только читает готовое — лишних запросов к API CS3BET нет. */
@@ -1388,7 +1442,7 @@ function cbPromo(){
 async function cbTplBet(name,num,btn,st){
   if(btn.disabled)return;
   const d=CB.bal[name],balTxt=d&&d.balance!=null?fmtBal(d.balance):"весь баланс";
-  if(!confirm(`Аккаунт ${num}: поставить ${balTxt} (100% баланса) на шаблон?\n\n${cbTplText()}`))return;
+  if(!confirm(`Аккаунт ${num}: поставить ${balTxt} (не более 50 000 монет) на шаблон?\n\n${cbTplText()}`))return;
   const all=[...document.querySelectorAll(".cbtpl")];
   btn.disabled=true;st.className="status";st.textContent="Делаю ставку…";
   try{
@@ -1428,13 +1482,13 @@ function cbBetView(){
   const tpl=CB.mode==="tpl",root=$("#cb-root");root.replaceChildren();
   const head=el("div","sectionhead"),hd=el("div");
   hd.append(el("h2","",tpl?"Шаблон":`Аккаунт ${CB.num}`),
-    el("p","subline",tpl?"Выбери событие или экспресс — сохраняется автоматически. Кнопка «Шаблон» у аккаунта ставит на него весь баланс":"Выбери исходы: один — обычная ставка, два и больше — экспресс"));
+    el("p","subline",tpl?"Выбери событие или экспресс — сохраняется автоматически. Кнопка «Шаблон» ставит до 50 000 монет с аккаунта":"Выбери исходы: один — обычная ставка, два и больше — экспресс"));
   const act=el("div");act.style.cssText="display:flex;gap:8px";
   const rl=el("button","btn ghost","Обновить матчи"),bk=el("button","btn ghost",tpl?"← Назад":"← К аккаунтам");
   for(const b of[rl,bk])b.style.cssText="width:auto;margin:0";
   rl.onclick=cbLoadMatches;bk.onclick=()=>{CB.gen++;cbList()};act.append(rl,bk);head.append(hd,act);
   const bar=el("div","cbbar"),sum=el("div","cbsum");sum.id="cb-sum";
-  if(tpl){bar.append(sum)}
+  if(tpl){const bulk=el('button','ui-btn ui-primary','Массовая ставка');bulk.id='cb-bulk-open';bulk.onclick=cbBulkView;bar.append(sum,bulk)}
   else{
     const lab=el("label","","СТАВКА"),inp=el("input");inp.id="cb-stake";inp.type="text";inp.inputMode="decimal";inp.placeholder="мин. 100";inp.value=CB.stake||"";
     inp.oninput=()=>{CB.stake=inp.value;cbSummary()};

@@ -2797,7 +2797,7 @@ async def main():
     channels.register(app, live_clients)
     multi.register_all(app, live_clients)
     unsub.register_all(app, live_clients)
-    cs3bet.register_all(app, live_clients)
+    cs3bet.register_all(app, live_clients, account_ids=lambda: {n: a.me.id for n, a in ACCOUNTS.items() if a.me is not None})
     presence.keeper.configure(live_clients, BASE_DIR / "presence.json")
     presence.register(app)
     presence.keeper.start()
