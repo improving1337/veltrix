@@ -67,7 +67,7 @@ class ReactionJoiner(PostBase):
         emoji = (extra or {}).get("emoji") or REACTIONS[0]
         if emoji != "random" and emoji not in REACTIONS:
             raise ValueError("Неизвестная реакция")
-        return await super().make_plan(link, count, dmin, dmax, {"emoji": emoji})
+        return await super().make_plan(link, count, dmin, dmax, {**(extra or {}), "emoji": emoji})
 
     @staticmethod
     async def _join(client, kind, key, extra=None):

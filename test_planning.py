@@ -1,0 +1,159 @@
+import asyncio
+import time
+import tempfile
+import unittest
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace as NS
+from unittest.mock import AsyncMock, patch
+
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+
+import automatic
+import channels
+import multi
+import plan_options
+import posts
+import unsub
+
+
+class ScheduleTests(unittest.TestCase):
+    def test_views_and_reactions_share_burst_and_migrate_without_repeating(self):
+        with tempfile.TemporaryDirectory() as directory:
+            clients = {str(n): object() for n in range(100)}
+            monitor = automatic.Monitor(Path(directory)/'state.json', lambda: clients)
+            monitor.state['hours'] = [34, 66]+[0]*22
+            published = datetime(2026, 11, 17, tzinfo=timezone.utc)
+            post = {'post_date': published.isoformat(), 'execution': {}}
+            for service, emojis in [('views', []), ('reactions', [('👍', 100)])]:
+                self.assertTrue(monitor.update_execution_plan(post, service, 100, emojis, published))
+                plan = post['execution'][service]
+                self.assertEqual(sum(datetime.fromisoformat(a['due']) < published+timedelta(seconds=30)
+                                     for a in plan['actions']), 17)
+                self.assertFalse(monitor.update_execution_plan(post, service, 100, emojis, published))
+                plan['actions'][0]['status'] = 'done'
+                done_account = plan['actions'][0]['account']
+                plan.pop('timing_version')
+                monitor.update_execution_plan(post, service, 100, emojis, published)
+                actions = post['execution'][service]['actions']
+                self.assertEqual(len(actions), 100)
+                self.assertEqual(sum(a['account'] == done_account for a in actions), 1)
+                self.assertEqual(sum(a['status'] == 'done' for a in actions), 1)
+
+    def test_deadline_exact_and_each_interval_jittered(self):
+        for count in [1, 2, 3, 5, 6, 21, 100]:
+            for _ in range(20):
+                items = [{} for i in range(count)]
+                plan_options.schedule(items, 28800)
+                self.assertEqual(items[-1]['at'], 28800)
+                self.assertAlmostEqual(sum(i['delay'] for i in items), 28800)
+                self.assertEqual(sorted(i['at'] for i in items), [i['at'] for i in items])
+                for item in items:
+                    deviation = abs(item['delay'] / (28800/count) - 1)
+                    if count > 1:
+                        self.assertGreaterEqual(deviation, .1 - 1e-10)
+                        self.assertLessEqual(deviation, .4 + 1e-10)
+
+    def test_first_30_seconds_half_of_first_hour(self):
+        published = datetime(2026, 11, 17, tzinfo=timezone.utc)
+        slots = [datetime.fromisoformat(s) for s in automatic.timed_slots(100, [34, 66]+[0]*22, published.isoformat(), published)]
+        self.assertEqual(len(slots), 100)
+        self.assertEqual(sum(s < published+timedelta(seconds=30) for s in slots), 17)
+        self.assertEqual(sum(s < published+timedelta(hours=1) for s in slots), 34)
+
+    def test_late_discovery_no_backdated_burst(self):
+        published = datetime(2026, 11, 17, tzinfo=timezone.utc)
+        now = published+timedelta(seconds=40)
+        slots = automatic.timed_slots(100, [34, 66]+[0]*22, published, now)
+        self.assertEqual(len(slots), 100)
+        self.assertTrue(all(datetime.fromisoformat(s) > now for s in slots))
+
+    def test_expired_deadline_rejected(self):
+        for value in [time.time()-1, float('nan'), float('inf'), 'bad']:
+            with self.assertRaises(ValueError):
+                plan_options.deadline(value)
+
+
+def client(age=None, broken=False):
+    c = NS(is_connected=lambda: True)
+    c.get_profile_photos = AsyncMock(side_effect=RuntimeError() if broken else None,
+                                    return_value=[] if age is None else [NS(date=datetime.now(timezone.utc)-timedelta(days=age))])
+    c.get_entity = AsyncMock(return_value=NS(title='Channel'))
+    c.get_messages = AsyncMock(return_value=NS(buttons=[[NS(text='Button')]]))
+    return c
+
+
+class EligibilityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_freshness_recent_old_absent_unknown(self):
+        clients = {'recent': client(2), 'old': client(8), 'no_photo': client(), 'unknown': client(broken=True)}
+        filtered = await plan_options.eligible(clients, {'freshness_days': 7})
+        self.assertEqual(set(filtered), {'old', 'no_photo'})
+        self.assertEqual(await plan_options.eligible(clients, {'freshness_days': 0}), clients)
+
+    async def test_noninteger_days_rejected(self):
+        for days in ['1.2', 1.2, -1, 36501]:
+            with self.assertRaises(ValueError):
+                await plan_options.eligible({}, {'freshness_days': days})
+
+    async def test_every_service_applies_options(self):
+        clients = {'recent': client(2), 'old': client(9)}
+        for cls in [channels.ChannelJoiner, posts.ViewsJoiner, posts.ReactionJoiner,
+                    multi.MultiJoiner, multi.ButtonsJoiner, multi.StartsJoiner, unsub.UnsubJoiner]:
+            joiner = cls(lambda: clients)
+            subscribed = {'old'} if cls is unsub.UnsubJoiner else set()
+            joiner._subscribed = AsyncMock(return_value=(subscribed, 0))
+            joiner._title = AsyncMock(return_value='Test')
+            link = 'https://t.me/example/123' if cls not in [channels.ChannelJoiner, unsub.UnsubJoiner, multi.StartsJoiner] else '@example'
+            finish = time.time()+28800
+            plan = await joiner.make_plan(link, 10, 0, 0,
+                                         {'freshness_days': 7, 'finish_at': finish, 'emoji': '👍'})
+            self.assertEqual([i['account'] for i in plan['items']], ['old'], cls.__name__)
+            self.assertEqual(plan['finish_at'], finish, cls.__name__)
+            self.assertGreater(plan['total'], 28790)
+
+    async def test_max_checks_real_service_pool_and_leaves_no_plan(self):
+        clients = {'recent': client(2), 'old': client(9), 'subscribed': client(10)}
+        class Joiner(channels.ChannelJoiner):
+            async def _title(self, *args):
+                return 'Test'
+            async def _subscribed(self, *args):
+                return {'subscribed'}, 0
+        app = web.Application()
+        joiner = channels.register(app, lambda: clients, prefix='test', joiner_cls=Joiner)
+        async with TestClient(TestServer(app)) as http:
+            response = await http.post('/api/test/available', json={'link': '@example', 'extra': {'freshness_days': 7}})
+            self.assertEqual(response.status, 200)
+            self.assertEqual(await response.json(), {'count': 1})
+            self.assertEqual(joiner.plans, {})
+
+    async def test_start_rebases_to_deadline_and_expired_plan_retained(self):
+        clients = {'a': client(), 'b': client()}
+        joiner = channels.ChannelJoiner(lambda: clients)
+        joiner._title = AsyncMock(return_value='Test')
+        joiner._subscribed = AsyncMock(return_value=(set(), 0))
+        joiner._run = AsyncMock()
+        plan = await joiner.make_plan('@example', 2, 0, 0, {'finish_at': time.time()+60})
+        job = (await joiner.start(plan['id']))['job']
+        self.assertAlmostEqual(job['started']+job['items'][-1]['at'], plan['finish_at'], places=2)
+        await joiner.jobs[plan['id']]['task']
+        plan = await joiner.make_plan('@example', 2, 0, 0, {'finish_at': time.time()+60})
+        joiner.plans[plan['id']]['finish_at'] = time.time()-1
+        with self.assertRaises(ValueError):
+            await joiner.start(plan['id'])
+        self.assertIn(plan['id'], joiner.plans)
+
+    async def test_exclude_keeps_deadline(self):
+        clients = {str(n): client() for n in range(5)}
+        joiner = channels.ChannelJoiner(lambda: clients)
+        joiner._title = AsyncMock(return_value='Test')
+        joiner._subscribed = AsyncMock(return_value=(set(), 0))
+        finish = time.time()+28800
+        plan = await joiner.make_plan('@example', 5, 0, 0, {'finish_at': finish})
+        plan = joiner.exclude(plan['id'], plan['items'][0]['account'])
+        self.assertEqual(len(plan['items']), 4)
+        self.assertAlmostEqual(plan['items'][-1]['at'], finish-time.time(), places=1)
+
+
+if __name__ == '__main__':
+    unittest.main()

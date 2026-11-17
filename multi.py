@@ -80,7 +80,7 @@ class MultiJoiner(ChannelJoiner):
             raise ValueError("«Задержка до» не может быть меньше «Задержка от»")
         for k in [k for k, v in self.plans.items() if time.time() - v["created"] > 600]:
             self.plans.pop(k, None)
-        alive = self._alive()
+        alive = await self.eligible(extra)
         if not alive:
             raise ValueError("Нет подключённых аккаунтов")
 
@@ -138,8 +138,7 @@ class MultiJoiner(ChannelJoiner):
                 "items": items, "total": at, "created": time.time(), "alive": len(alive),
                 "requested": requested, "already": already, "check_errors": check_errors, "steps": steps,
                 "extra": {"emoji": emoji, "channels": chans, "unique": unique}}
-        self.plans[pid] = plan
-        return self._public_plan(plan)
+        return self.store_plan(plan, extra)
 
     @staticmethod
     def _public_plan(p):
@@ -150,9 +149,10 @@ class MultiJoiner(ChannelJoiner):
     async def _run(self, job, kind, key):
         try:
             for it in job["items"]:
-                it["state"], it["until"] = "wait", time.time() + it["delay"]
+                delay = max(0, job["started"] + it["at"] - time.time()) if job.get("finish_at") else it["delay"]
+                it["state"], it["until"] = "wait", time.time() + delay
                 job["skip"].clear()
-                if await self._sleep(job, it["delay"]):
+                if await self._sleep(job, delay):
                     break  # нажали «Остановить»
                 it["state"], it["until"] = "active", None
                 client = self.get_clients().get(it["account"])
@@ -398,7 +398,7 @@ class ButtonsJoiner(ChannelJoiner):
             raise ValueError("«Задержка до» не может быть меньше «Задержка от»")
         for k in [k for k, v in self.plans.items() if time.time() - v["created"] > 600]:
             self.plans.pop(k, None)
-        alive = self._alive()
+        alive = await self.eligible(extra)
         if not alive:
             raise ValueError("Нет подключённых аккаунтов")
 
@@ -466,8 +466,7 @@ class ButtonsJoiner(ChannelJoiner):
         plan = {"id": pid, "link": link.strip(), "kind": "post", "key": key, "title": title, "items": items,
                 "total": at, "created": time.time(), "alive": len(eligible), "requested": requested,
                 "already": already, "check_errors": errors, "steps": [f"кнопка «{button}»"], "extra": None}
-        self.plans[pid] = plan
-        return self._public_plan(plan)
+        return self.store_plan(plan, extra)
 
     @staticmethod
     def _public_plan(p):

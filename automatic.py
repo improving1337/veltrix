@@ -216,8 +216,17 @@ def timed_slots(total, weights, published, now):
         start = max(now, published + timedelta(hours=h))
         stop = published + timedelta(hours=h + 1)
         seconds = max(0., (stop - start).total_seconds())
-        slots.extend((start + timedelta(seconds=seconds * (j + 1) / (count + 1))).isoformat()
-                     for j in range(count))
+        burst_end = published + timedelta(seconds=30)
+        if h == 0 and now < burst_end:
+            early = (count + 1) // 2
+            slots.extend((start + (burst_end - start) * ((j + 1) / (early + 1))).isoformat()
+                         for j in range(early))
+            later = count - early
+            slots.extend((burst_end + (stop - burst_end) * ((j + 1) / (later + 1))).isoformat()
+                         for j in range(later))
+        else:
+            slots.extend((start + timedelta(seconds=seconds * (j + 1) / (count + 1))).isoformat()
+                         for j in range(count))
     return sorted(slots)
 
 
@@ -561,7 +570,7 @@ class Monitor:
         task.add_done_callback(lambda t, pid=post_id:
             self.analysis_tasks.pop(pid, None) if self.analysis_tasks.get(pid) is t else None)
 
-    async def refresh(self):
+    async def refresh(self, sample_stats=True):
         async with self.lock:
             if not self.state['active'] or not self.state['channel']:
                 return
@@ -593,7 +602,7 @@ class Monitor:
                             and post_age_seconds(p, now_dt) is not None
                             and post_age_seconds(p, now_dt) < MONITOR_HOURS * 3600
                             and (not p['samples'] or p['samples'][-1]['at'] != now)]
-                if eligible:
+                if eligible and sample_stats:
                     await self.sample_existing(entity, eligible, now)
                 # Retain all still-active posts and recent finished ones.
                 if len(self.state['posts']) > MAX_STORED_POSTS:
@@ -698,14 +707,15 @@ class Monitor:
         reconciled = self.deduplicate_actions(prior)
         same_signature = prior.get('signature') == signature
         shuffled = service != 'reactions' or prior.get('reaction_mix_version') == 2
-        if same_signature and not reconciled and shuffled:
+        current_timing = prior.get('timing_version') == 2
+        if same_signature and not reconciled and shuffled and current_timing:
             return False
         fixed = [a for a in prior.get('actions', []) if a.get('status') not in ('pending', 'duplicate')]
         # When only upgrading the algorithm or eliminating duplicate aliases,
         # retain surviving pending due times. When changing profile/target,
         # redistribute only those that have not been attempted.
         pending = ([a for a in prior.get('actions', []) if a.get('status') == 'pending']
-                   if same_signature else [])
+                   if same_signature and current_timing else [])
         pending = sorted(pending, key=lambda a: a['due'])[:max(0, target - len(fixed))]
         reserved = {self.action_identity(a) for a in fixed + pending}
         candidates = [(name, client) for name, client in self.live_accounts().items()
@@ -732,7 +742,7 @@ class Monitor:
                 pending = pending[:len(labels)]
             for action, emoji in zip(sorted(pending, key=lambda a: a['due']), labels):
                 action['emoji'] = emoji
-        execution[service] = {'target': target, 'signature': signature,
+        execution[service] = {'target': target, 'signature': signature, 'timing_version': 2,
                               'actions': fixed + pending + [a for a in prior.get('actions', [])
                                                               if a.get('status') == 'duplicate'],
                               'reaction_mix_version': 2 if service == 'reactions' else None}
@@ -834,12 +844,28 @@ class Monitor:
         self.action_tasks.clear()
 
     async def loop(self):
+        async def dispatch_loop():
+            while self.state['active']:
+                try:
+                    await self.dispatch_actions()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logging.warning('Automatic dispatch: %s', type(exc).__name__)
+                await asyncio.sleep(.5)
+        dispatcher = asyncio.create_task(dispatch_loop())
+        last_sample = float('-inf')
         try:
             while self.state['active']:
-                await self.refresh()
-                await asyncio.sleep(POLL_SECONDS)
-        except asyncio.CancelledError:
-            raise
+                now = asyncio.get_running_loop().time()
+                sample = now - last_sample >= POLL_SECONDS
+                await self.refresh(sample_stats=sample)
+                if sample:
+                    last_sample = now
+                await asyncio.sleep(POLL_SECONDS if self.state.get('error') else 5)
+        finally:
+            dispatcher.cancel()
+            await asyncio.gather(dispatcher, return_exceptions=True)
 
     async def start(self, request):
         payload = await request.json()

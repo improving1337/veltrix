@@ -491,6 +491,7 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
  .auto-multi-row.add-row .btn{width:100%!important}
 }
 #ex-export{width:auto;margin:0;display:inline-flex;align-items:center;text-decoration:none;white-space:nowrap}
+.order-count-box{position:relative}.order-count-box .oinp{padding-right:78px}.order-max{position:absolute;right:6px;top:6px;bottom:6px;min-width:58px;border:1px solid #7961ed;border-radius:9px;background:linear-gradient(135deg,#6a4de3,#4933a7);color:#fff;font:inherit;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 9px #48318a40}.order-max:hover{filter:brightness(1.15)}.order-max:disabled{opacity:.5;cursor:wait}
 </style>
 <style id="veltrix-theme">
 /* VELTRIX UI — graphite dashboard treatment adapted from the supplied Ember
@@ -1041,7 +1042,6 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
    <label><input id="deploy-security-enabled" type="checkbox" disabled> Автоматически включать 2FA и оставлять только текущую сессию</label>
    <div class="status">Защита включена по умолчанию для всех подключённых аккаунтов. Другие устройства будут отключены. Уже установленный пароль 2FA не меняется. Новые пароли хранятся только на сервере в security/passwords.json. Если Telegram запретит завершение сессий, повтор состоится через 24 часа. Пауза останавливает следующие проверки.</div>
    <div id="deploy-security-status" class="status" role="status"></div>
-   <div id="deploy-security-accounts"></div>
    <h3>Загрузка по ссылкам</h3>
    <label class="fld"><span>Ссылки на архивы (Google Drive и др.) — по одной в строке, можно вставить сразу много</span>
     <textarea id="up-links" rows="8" wrap="off" placeholder="https://drive.google.com/file/d/.../view"></textarea></label>
@@ -1521,7 +1521,6 @@ function renderAccounts(){
       message.title=accountConnectionStatus(a);label.append(message);
     }
     name.append(avatar(a.connected?avUrl(a):null,fullName(a)||a.name,32),label);
-    if(a.security?.checked_at)label.append(el('small','acc-error',securitySummary(a.security)));
     const vals=[name,
       el('span','acc-cell',a.username?'@'+a.username:'—'),
       el('span','acc-cell',p.bio===null?'—':p.bio||'—'),
@@ -2410,7 +2409,7 @@ function renderNew(){
   const form=el("div","oform"),fh=el("div","ofh");fh.append(svcIcon(F.svc,36),el("span","",sv.name));form.append(fh);
   const body=el("div","ofb");
   const field=(icn,label,input,opt)=>{const w=el("div","ofield");w.append(lab(icn,label,opt),input);body.append(w);return input};
-  const inp=(key,props)=>{const i=el("input","oinp");Object.assign(i,props);i.value=F.v[key];i.oninput=()=>{F.v[key]=i.value;if(F.plan){cancelPlan();renderPlanBox()}};return i};
+  const inp=(key,props)=>{const i=el("input","oinp");Object.assign(i,props);i.value=F.v[key]??"";i.oninput=()=>{F.v[key]=i.value;if(F.plan){cancelPlan();renderPlanBox()}};return i};
   const link=field("link",sv.link,inp("link",{placeholder:sv.ph}));
   let emoji=null,chans=null;
   if(sv.emoji){
@@ -2446,24 +2445,53 @@ function renderNew(){
     cb.onchange=()=>{F.v.uniq=cb.checked;if(F.plan){cancelPlan();renderPlanBox()}};
     t.append(cb,sl,tx);const w=el("div","ofield");w.append(t,hint);body.append(w);
   }
-  const count=field("users","Количество аккаунтов",inp("count",{type:"number",min:"1"}));
+  const freshness=inp('freshness_days',{type:'number',min:'0',max:'36500',placeholder:'0 — без фильтра'});freshness.id='order-freshness';
+  field('clock','Свежесть аккаунтов, дней',freshness);
+  body.append(el('div','othint','Не использовать аккаунты, у которых аватарка менялась за последние указанные дни. Если дату проверить не удалось, аккаунт также исключается. 0 — без фильтра.'));
+  const extras=()=>{
+    const extra={freshness_days:F.v.freshness_days||0};
+    if(sv.emoji)extra.emoji=F.v.emoji;
+    if(sv.chans)extra.channels=(F.v.chans||[]).flatMap(x=>String(x).split(/[\s,;]+/)).map(x=>x.trim()).filter(Boolean);
+    if(sv.uniq)extra.unique=!!F.v.uniq;
+    return extra;
+  };
+  const count=inp('count',{type:'number',min:'1'});count.id='order-count';
+  const max=el('button','order-max','Max');max.type='button';max.id='order-max';max.title='Максимум аккаунтов с учётом ссылки, свежести и ограничений услуги';
+  const countBox=el('div','order-count-box');countBox.append(count,max);field('users','Количество аккаунтов',countBox);
+  max.onclick=async()=>{
+    max.disabled=true;const svc=F.svc,payload={link:F.v.link.trim(),extra:extras()},signature=JSON.stringify(payload);
+    try{const result=await api(`/api/${svc}/available`,{method:'POST',json:payload});
+      if(OR.form!==F||F.svc!==svc||JSON.stringify({link:F.v.link.trim(),extra:extras()})!==signature)return;
+      F.v.count=String(result.count);count.value=F.v.count;await cancelPlan();renderPlanBox();
+    }catch(error){errToast(error.message);}finally{max.disabled=false;}
+  };
   const row=el("div","ofrow");
   const suf=(i)=>{const w=el("div","osuf");w.append(i,el("span","","сек."));return w};
   const w1=el("div","ofield"),w2=el("div","ofield");
   w1.append(lab("clock","Задержка от"),suf(inp("dmin",{type:"number",min:"0"})));w2.append(lab("clock","Задержка до"),suf(inp("dmax",{type:"number",min:"0"})));
-  row.append(w1,w2);body.append(row);form.append(body);card.append(form);wrap.append(card);
+  row.append(w1,w2);
+  const finishToggle=el('label','otoggle'),finishCheck=el('input');finishCheck.type='checkbox';finishCheck.id='order-finish-enabled';finishCheck.checked=!!F.v.deadline;
+  finishToggle.append(finishCheck,el('span','otsl'),el('span','ottx','Задать время последнего аккаунта'));
+  const finish=inp('finish_at',{type:'datetime-local'});finish.id='order-finish';
+  const finishWrap=el('div','ofield');finishWrap.append(lab('clock','Последний аккаунт: дата и время (МСК)'),finish,
+    el('div','othint','Интервалы со случайным отклонением 10–40% от среднего. Последний аккаунт начнёт действие в указанное время; ответ Telegram может прийти позже.'));
+  const updateMode=()=>{row.hidden=!!F.v.deadline;finishWrap.hidden=!F.v.deadline;};
+  finishCheck.onchange=()=>{F.v.deadline=finishCheck.checked;updateMode();if(F.plan){cancelPlan();renderPlanBox();}};
+  body.append(finishToggle,finishWrap,row);updateMode();form.append(body);card.append(form);wrap.append(card);
 
   const out=el("div","oplanbox");out.id="or-plan";wrap.append(out);
   const go=el("button","orbig primary wide");go.id="or-go";go.append(ico("channels")," Построить план");
   const st=el("div","orst");st.id="or-st";
   go.onclick=async()=>{
     st.className="orst";st.textContent="Строю план…";go.disabled=true;await cancelPlan();
-    const extra={};
-    if(sv.emoji)extra.emoji=F.v.emoji;
-    if(sv.chans)extra.channels=(F.v.chans||[]).flatMap(x=>String(x).split(/[\s,;]+/)).map(x=>x.trim()).filter(Boolean);
-    if(sv.uniq)extra.unique=!!F.v.uniq;
+    const extra=extras();
     try{
-      F.plan=await api(`/api/${F.svc}/plan`,{method:"POST",json:{link:F.v.link.trim(),count:F.v.count,delay_from:F.v.dmin,delay_to:F.v.dmax,extra:Object.keys(extra).length?extra:undefined}});
+      if(F.v.deadline){
+        const timestamp=new Date(F.v.finish_at+'+03:00').getTime()/1000;
+        if(!Number.isFinite(timestamp)||timestamp<=Date.now()/1000)throw new Error('Выберите будущее время последнего аккаунта (МСК)');
+        extra.finish_at=timestamp;
+      }
+      F.plan=await api(`/api/${F.svc}/plan`,{method:"POST",json:{link:F.v.link.trim(),count:F.v.count,delay_from:F.v.deadline?0:F.v.dmin,delay_to:F.v.deadline?0:F.v.dmax,extra:Object.keys(extra).length?extra:undefined}});
       st.textContent="";renderPlanBox();
     }catch(e){st.className="orst err";st.textContent=e.message;F.plan=null;renderPlanBox()}
     go.disabled=false;
@@ -2491,6 +2519,7 @@ function renderPlanBox(){
   if(p.already&&p.already.length)box.append(el("div","orn ok",`${sv.already||"Уже подписаны, исключены из плана"}: ${p.already.length} из ${p.alive} акк. (${p.already.slice(0,8).join(", ")}${p.already.length>8?"…":""})`));
   if(p.requested&&p.requested>p.items.length)box.append(el("div","orn",`Запрошено ${p.requested}, но подходящих только ${p.items.length} — план построен на них`));
   if(p.check_errors)box.append(el("div","orn bad",`Не удалось проверить ${p.check_errors} акк. — они ${sv.chkExcl?"исключены из плана":"остались в плане"}`));
+  if(p.finish_at)box.append(el('div','orn','Последний аккаунт: '+new Date(p.finish_at*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК'));
   if(p.steps&&p.steps.length)box.append(el("div","orn","Каждый аккаунт: "+p.steps.join(" → ")));
   p.items.forEach((it,i)=>{
     const row=el("div","oitem queue"),ic=el("div","oist");ic.append(ico("clock"));
@@ -2628,8 +2657,6 @@ $('#deploy-session-go').onclick=async()=>{
 async function deploySecurityPoll(){
   try{const result=await api('/api/security');
     const toggle=$('#deploy-security-enabled');if(!toggle.matches(':focus'))toggle.checked=result.enabled;toggle.disabled=false;
-    const root=$('#deploy-security-accounts');root.replaceChildren();
-    for(const [name,state] of Object.entries(result.items)){root.append(el('div','status',name+': '+securitySummary(state)));}
     for(const account of S.accounts)if(result.items[account.name])account.security=result.items[account.name];
     if(S.tab==='accounts')renderAccounts();
     const detail=$('#account-security-detail');if(detail&&result.items[S.sel])detail.textContent=securitySummary(result.items[S.sel]);

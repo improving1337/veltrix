@@ -20,6 +20,8 @@ import re
 import time
 import uuid
 
+import plan_options
+
 
 def parse_link(link):
     """-> ('invite', hash) | ('public', username)"""
@@ -70,6 +72,20 @@ class ChannelJoiner:
     def _alive(self):
         return {n: c for n, c in self.get_clients().items() if c and c.is_connected()}
 
+    async def eligible(self, extra):
+        return await plan_options.eligible(self._alive(), extra)
+
+    def store_plan(self, plan, extra):
+        if not plan["items"]:
+            raise ValueError("Нет подходящих аккаунтов")
+        finish = plan_options.deadline((extra or {}).get("finish_at"))
+        if finish is not None:
+            plan_options.schedule(plan["items"], finish - time.time())
+            plan["finish_at"] = finish
+            plan["total"] = plan["items"][-1]["at"]
+        self.plans[plan["id"]] = plan
+        return self._public_plan(plan)
+
     async def make_plan(self, link, count, dmin, dmax, extra=None):
         kind, key = self.parse(link)
         try:
@@ -84,7 +100,7 @@ class ChannelJoiner:
             raise ValueError("«Задержка до» не может быть меньше «Задержка от»")
         for k in [k for k, v in self.plans.items() if time.time() - v["created"] > 600]:
             self.plans.pop(k, None)
-        alive = self._alive()
+        alive = await self.eligible(extra)
         if not alive:
             raise ValueError("Нет подключённых аккаунтов")
 
@@ -107,8 +123,7 @@ class ChannelJoiner:
         plan = {"id": pid, "link": link.strip(), "kind": kind, "key": key, "title": title,
                 "items": items, "total": at, "created": time.time(), "extra": extra,
                 "already": already, "alive": len(alive), "requested": requested, "check_errors": check_errors}
-        self.plans[pid] = plan
-        return self._public_plan(plan)
+        return self.store_plan(plan, extra)
 
     def _candidates(self, alive, subscribed):
         """-> (кого берём в план, кто исключён). Для подписки: берём тех, кто ещё не подписан."""
@@ -173,21 +188,31 @@ class ChannelJoiner:
         out = {k: p[k] for k in ("id", "link", "title", "total")}
         un = usernames()
         out["items"] = [{**i, "username": un.get(i["account"], "")} for i in p["items"]]
+        out["finish_at"] = p.get("finish_at")
         out.update(already=p.get("already", []), alive=p.get("alive", 0), requested=p.get("requested"), check_errors=p.get("check_errors", 0))
         return out
 
     # ---------- запуск ----------
     async def start(self, plan_id):
-        plan = self.plans.pop(plan_id, None)
+        plan = self.plans.get(plan_id)
         if not plan:
             raise ValueError("План устарел — построй его заново")
+        if plan.get("finish_at"):
+            finish = plan_options.deadline(plan["finish_at"])
+            duration = finish - time.time()
+            scale = duration / plan["total"]
+            for item in plan["items"]:
+                item["delay"] *= scale
+                item["at"] *= scale
+            plan["total"] = duration
+        self.plans.pop(plan_id)
         # храним максимум 10 завершённых задач
         done = [k for k, v in self.jobs.items() if v["status"] != "running"]
         for k in done[:-9] if len(done) > 9 else []:
             self.jobs.pop(k, None)
         job = {
             "id": plan["id"], "link": plan["link"], "title": plan["title"],
-            "status": "running", "total": plan["total"], "extra": plan.get("extra"), "started": time.time(),
+            "status": "running", "total": plan["total"], "finish_at": plan.get("finish_at"), "extra": plan.get("extra"), "started": time.time(),
             "items": [{"account": i["account"], "delay": i["delay"], "at": i["at"],
                        "state": "queue", "note": "", "until": None} for i in plan["items"]],
             "stop": asyncio.Event(), "skip": asyncio.Event(),
@@ -200,9 +225,10 @@ class ChannelJoiner:
     async def _run(self, job, kind, key):
         try:
             for it in job["items"]:
-                it["state"], it["until"] = "wait", time.time() + it["delay"]
+                delay = max(0, job["started"] + it["at"] - time.time()) if job.get("finish_at") else it["delay"]
+                it["state"], it["until"] = "wait", time.time() + delay
                 job["skip"].clear()
-                if await self._sleep(job, it["delay"]):
+                if await self._sleep(job, delay):
                     break  # нажали «Остановить»
                 it["state"], it["until"] = "active", None
                 client = self.get_clients().get(it["account"])
@@ -281,6 +307,10 @@ class ChannelJoiner:
         for i in items:
             at += i["delay"]
             i["at"] = at
+        if plan.get("finish_at"):
+            finish = plan_options.deadline(plan["finish_at"])
+            plan_options.schedule(items, finish - time.time())
+            at = items[-1]["at"]
         plan["items"], plan["total"] = items, at
         return self._public_plan(plan)
 
@@ -304,7 +334,8 @@ class ChannelJoiner:
                  for i in j["items"]]
         return {"id": j["id"], "link": j["link"], "title": j["title"], "status": j["status"],
                 "total": j["total"], "items": items, "error": j.get("error"),
-                "seq": j.get("seq"), "service": j.get("service", ""), "started": j.get("started"), "now": now}
+                "seq": j.get("seq"), "service": j.get("service", ""), "started": j.get("started"), "now": now,
+                "finish_at": j.get("finish_at")}
 
     def public_jobs(self):
         return {"jobs": [self._pub(j) for j in self.jobs.values()]}
@@ -333,6 +364,21 @@ def register(app, get_clients, prefix="channels", joiner_cls=None):
         d = await body(request)
         return await run(lambda: joiner.make_plan(d.get("link"), d.get("count"),
                                                   d.get("delay_from"), d.get("delay_to"), d.get("extra")))
+
+    async def available(request):
+        d = await body(request)
+        d["count"] = max(1, len(joiner._alive()))
+        async def calculate():
+            try:
+                result = await joiner.make_plan(d.get("link"), d["count"], 0, 0, d.get("extra"))
+            except ValueError as exc:
+                if str(exc).startswith(("Нет подходящих аккаунтов", "Все ", "Ни один из ",
+                                        "Нет аккаунтов, подписанных", "Нет подключённых аккаунтов")):
+                    return {"count": 0}
+                raise
+            joiner.cancel(result["id"])
+            return {"count": len(result["items"])}
+        return await run(calculate)
 
     async def start(request):
         d = await body(request)
@@ -371,6 +417,7 @@ def register(app, get_clients, prefix="channels", joiner_cls=None):
 
     app.add_routes([
         web.post(f"/api/{prefix}/plan", plan),
+        web.post(f"/api/{prefix}/available", available),
         web.post(f"/api/{prefix}/start", start),
         web.post(f"/api/{prefix}/stop", stop),
         web.post(f"/api/{prefix}/cancel", cancel),
