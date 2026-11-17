@@ -23,14 +23,18 @@ class Request:
 class PlannerTests(unittest.TestCase):
     def test_screenshot_full_coverage_under_caps_and_every_account_once(self):
         plan=build_plan(matches(),accounts(),20)
-        self.assertEqual(plan['variant_count'],16)
-        self.assertEqual(len(plan['selected_matches']),4)
+        self.assertEqual(plan['variant_count'],20)
+        self.assertEqual(plan['strategy'],'target_30')
+        self.assertTrue(plan['complete_coverage'])
+        self.assertTrue(plan['peak_preserved'])
+        self.assertGreater(Decimal(plan['highest_planned_coefficient']),Decimal('29.9'))
+        self.assertGreater(len({len(i['legs']) for i in plan['items']}),1)
         self.assertEqual(len({i['account'] for i in plan['items']}),25)
         for i,item in enumerate(plan['items']):
             self.assertLessEqual(Decimal(item['coefficient']),30)
             self.assertLessEqual(Decimal(item['stake']),50000)
-            self.assertEqual(item['variant'],i%16+1)
-            self.assertEqual(item['round'],i//16+1)
+            self.assertEqual(item['variant'],i%plan['variant_count']+1)
+            self.assertEqual(item['round'],i//plan['variant_count']+1)
             self.assertEqual(len({leg['match_id'] for leg in item['legs']}),len(item['legs']))
         maxima,totals=[],[]
         for outcome in itertools.product(('1','2'),repeat=8):
@@ -44,6 +48,31 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(min(maxima),Decimal(plan['worst_largest_balance']))
         self.assertEqual(max(maxima),Decimal(plan['best_largest_balance']))
         self.assertEqual(min(totals),Decimal(plan['worst_total_balance']))
+
+    def test_peak_equals_exhaustive_best_coupon(self):
+        plan=build_plan(matches(),accounts(),20)
+        best=Decimal(0)
+        for choices in itertools.product((-1,0,1),repeat=8):
+            if sum(side>=0 for side in choices)<2:continue
+            coefficient=Decimal(1)
+            for match,side in zip(matches(),choices):
+                if side>=0:coefficient*=Decimal(str(match['odds_a'] if side==0 else match['odds_b']))
+            if coefficient<=30:best=max(best,coefficient)
+        self.assertEqual(Decimal(plan['highest_possible_coefficient']),best)
+        self.assertEqual(Decimal(plan['items'][0]['coefficient']),best)
+        self.assertEqual(Decimal(plan['highest_planned_coefficient']),Decimal('29.9819520'))
+
+    def test_42_accounts_target_peak_and_verified_scenario_floor(self):
+        plan=build_plan(matches(),[{'name':str(i),'balance':50000} for i in range(42)],20)
+        self.assertEqual(plan['best_largest_balance'],'1499097.60')
+        self.assertGreaterEqual(Decimal(plan['worst_largest_balance']),Decimal('362406'))
+        self.assertEqual(plan['outcome_count'],256)
+        self.assertTrue(all(s['accounts']>=1 for s in plan['scenarios']))
+        self.assertEqual(Decimal(plan['items'][0]['stake']),50000)
+
+    def test_insufficient_budget_does_not_silently_drop_peak(self):
+        with self.assertRaises(ValueError):
+            build_plan(matches(),accounts(4),4)
 
     def test_cap_leaves_funds_and_excludes_unknown_small_duplicate(self):
         pool=accounts(6)+[{'name':'huge','balance':100000},{'name':'unknown','balance':None},{'name':'tiny','balance':99}]

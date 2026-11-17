@@ -1,8 +1,6 @@
 """Bounded, exhaustive scenario planner for non-monetary CS3BET game points."""
 import asyncio
-import itertools
 import json
-import math
 import time
 import uuid
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
@@ -72,36 +70,106 @@ def build_plan(matches, accounts, max_variants=20):
         raise ValueError('Выберите до 12 открытых матчей для точного перебора')
     if len(eligible) < 2:
         raise ValueError('Нужны хотя бы 2 открытых матча с двумя корректными коэффициентами')
-    best = None
-    limit = min(len(eligible), int(math.log2(min(len(pool), max_variants))))
-    for size in range(2, limit+1):
-        for subset in itertools.combinations(eligible, size):
-            worst = math.prod(max(m['odds']) for m in subset)
-            if worst > MAX_ODDS:
-                continue  # All possible binary outcomes must meet the cap, not just favourites.
-            variants = []
-            for sides in itertools.product((0,1), repeat=size):
-                coef = math.prod(m['odds'][side] for m,side in zip(subset,sides))
-                variants.append((coef,sides))
-            variants.sort()
-            # Largest funds go to the lowest multiplier in the first full coverage cycle.
-            floor = max(max(a['balance']-a['stake'] for a in pool),
-                        min(a['balance']-a['stake']+payout(a['stake']*coef)
-                        for a,(coef,_) in zip(pool,variants)))
-            peak = max(a['balance']-a['stake']+payout(a['stake']*coef)
-                       for a,(coef,_) in zip(pool,variants))
-            score = (floor, peak, size, tuple(-m['id'] for m in subset))
-            if best is None or score > best[0]:
-                best = (score, subset, variants)
-    if best is None:
-        raise ValueError('Нельзя полностью покрыть даже два матча при лимите ×30: выберите другой набор')
-    _, subset, variants = best
+    # Enumerate coupons with DIFFERENT match sets. Each coupon carries a bitmap
+    # of complete outcomes in which it wins. This checks coverage despite overlap.
+    n = len(eligible)
+    outcome_count = 1 << n
+    universe = (1 << outcome_count)-1
+    masks = [[sum(1 << outcome for outcome in range(outcome_count)
+                  if ((outcome >> index) & 1) == side) for side in (0,1)] for index in range(n)]
+    candidates = []
+    def enumerate_coupons(index, coefficient, legs, coverage):
+        if index == n:
+            if len(legs) >= 2:
+                candidates.append((coefficient, tuple(legs), coverage))
+                if len(candidates) > 100000:
+                    raise ValueError('Более 100000 допустимых купонов: выберите меньше матчей')
+            return
+        enumerate_coupons(index+1, coefficient, legs, coverage)
+        for side in (0,1):
+            value = coefficient * eligible[index]['odds'][side]
+            if value <= MAX_ODDS:
+                legs.append((index,side))
+                enumerate_coupons(index+1, value, legs, coverage & masks[index][side])
+                legs.pop()
+    enumerate_coupons(0, Decimal(1), [], universe)
+    if not candidates:
+        raise ValueError('Нет допустимых экспрессов при лимите ×30')
+    candidates.sort(key=lambda c:(c[0], c[2].bit_count()), reverse=True)
+    capacity = min(len(pool), max_variants, len(candidates))
+
+    def cover(threshold, force_peak=True):
+        choices = [i for i,c in enumerate(candidates) if c[0] >= threshold]
+        selected = [0] if force_peak else []
+        covered = candidates[0][2] if force_peak else 0
+        used = set(selected)
+        while covered != universe and len(selected) < capacity:
+            remaining = universe ^ covered
+            best_index = None
+            best_score = None
+            for i in choices:
+                if i in used:
+                    continue
+                coupon = candidates[i]
+                new = (coupon[2] & remaining).bit_count()
+                if new and (best_score is None or (new,coupon[0]) > best_score):
+                    best_score = (new,coupon[0]);best_index = i
+            if best_index is None:
+                return None
+            selected.append(best_index);used.add(best_index)
+            covered |= candidates[best_index][2]
+        return selected if covered == universe else None
+
+    chosen = None
+    # Peak payout is the primary goal. Prefer high-coefficient coverage too;
+    # greedy coverage is bounded and does not claim a globally optimal portfolio.
+    for ratio in ('1','.98','.95','.90','.85','.80','.75','.70','.60','.50','.35','0'):
+        chosen = cover(MAX_ODDS * Decimal(ratio))
+        if chosen is not None:
+            break
+    if chosen is None:
+        # With very few accounts the global peak coupon may make full coverage
+        # impossible. Prefer an explicitly disclosed coverage plan to a silent gap.
+        chosen = cover(Decimal(0), force_peak=False)
+    if chosen is None:
+        raise ValueError('Не удалось полностью покрыть исходы в этом числе вариантов; увеличьте предел или сократите матчи')
+    # Keep a full fixed-set coverage candidate as well. Adding the peak coupon
+    # must not needlessly destroy the previous floor when the budget can fit both.
+    groups_by_matches = {}
+    for i,coupon in enumerate(candidates):
+        key = tuple(index for index,side in coupon[1])
+        if (1 << len(key)) <= capacity:
+            groups_by_matches.setdefault(key, []).append(i)
+    fixed = None
+    fixed_score = None
+    for key, indices in groups_by_matches.items():
+        proposal = sorted(set(indices+[0]))
+        if len(indices) != 1 << len(key) or len(proposal) > capacity:
+            continue
+        score = min(candidates[i][0] for i in indices)
+        if fixed_score is None or score > fixed_score:
+            fixed_score, fixed = score, proposal
+    def coefficient_floor(indices):
+        return min(max(candidates[i][0] for i in indices if (candidates[i][2] >> outcome) & 1)
+                   for outcome in range(outcome_count))
+    if fixed is not None and (0 not in chosen or coefficient_floor(fixed) > coefficient_floor(chosen)):
+        chosen = fixed
+    if 0 not in chosen:
+        raise ValueError('Не удалось совместить пиковый купон и полное покрытие: увеличьте число вариантов/аккаунтов или выберите меньше матчей')
+    used = set(chosen)
+    for i in range(len(candidates)):
+        if len(chosen) >= capacity:
+            break
+        if i not in used:
+            chosen.append(i);used.add(i)
+    chosen.sort()  # Candidates are ordered by descending coefficient.
+    variants = [candidates[i] for i in chosen]
     items = []
     for index, account in enumerate(pool):
         variant = index % len(variants)
-        coef,sides = variants[variant]
-        legs=[{'match_id':m['id'],'side':str(side+1),'odds':str(m['odds'][side]),
-               'team_a':m.get('team_a',''),'team_b':m.get('team_b','')} for m,side in zip(subset,sides)]
+        coef, picks, _ = variants[variant]
+        legs = [{'match_id':eligible[i]['id'],'side':str(side+1),'odds':str(eligible[i]['odds'][side]),
+                 'team_a':eligible[i].get('team_a',''),'team_b':eligible[i].get('team_b','')} for i,side in picks]
         win = payout(account['stake']*coef)
         items.append({'account':account['name'],'variant':variant+1,'round':index//len(variants)+1,
                       'balance':str(account['balance']),'balance_ts':account.get('balance_ts'),
@@ -110,15 +178,28 @@ def build_plan(matches, accounts, max_variants=20):
                       'winner_balance':str(account['balance']-account['stake']+win),'legs':legs})
     reserve = sum((amount(i['remaining']) for i in items), Decimal(0))
     largest_reserve = max(amount(i['remaining']) for i in items)
+    groups = []
+    for index, (coef, picks, coverage) in enumerate(variants, 1):
+        group = [i for i in items if i['variant']==index]
+        groups.append((coverage,len(group),max(amount(i['winner_balance']) for i in group),
+                       sum((amount(i['potential']) for i in group),Decimal(0))))
     scenarios = []
-    for index,(coef,_) in enumerate(variants,1):
-        winners = [i for i in items if i['variant']==index]
-        scenarios.append({'variant':index,'accounts':len(winners),'coefficient':str(coef),
-                          'largest_balance':str(max(largest_reserve,max(amount(i['winner_balance']) for i in winners))),
-                          'total_balance':str(reserve+sum((amount(i['potential']) for i in winners),Decimal(0)))})
+    for outcome in range(outcome_count):
+        winning = [g for g in groups if (g[0] >> outcome) & 1]
+        if not winning:
+            raise ValueError('Обнаружен непокрытый исход; план не создан')
+        scenarios.append({'outcome':outcome,'accounts':sum(g[1] for g in winning),
+                          'largest_balance':str(max(largest_reserve,max(g[2] for g in winning))),
+                          'total_balance':str(reserve+sum((g[3] for g in winning),Decimal(0)))})
+    selected_ids = {leg['match_id'] for item in items for leg in item['legs']}
     return {'items':items,'scenarios':scenarios,'variant_count':len(variants),
-            'selected_matches':[m['id'] for m in subset],
-            'unused_matches':[m['id'] for m in eligible if m not in subset], 'ignored_matches':ignored,
+            'strategy':'target_30','target_coefficient':'30',
+            'highest_possible_coefficient':str(candidates[0][0]),
+            'highest_planned_coefficient':str(variants[0][0]),
+            'peak_preserved':0 in chosen,'complete_coverage':True,'outcome_count':outcome_count,
+            'coverage_matches':[m['id'] for m in eligible],
+            'selected_matches':[m['id'] for m in eligible if m['id'] in selected_ids],
+            'unused_matches':[m['id'] for m in eligible if m['id'] not in selected_ids], 'ignored_matches':ignored,
             'skipped_accounts':skipped,'account_count':len(items),
             'initial_total':str(sum((amount(i['balance']) for i in items),Decimal(0))),
             'total_stake':str(sum((amount(i['stake']) for i in items),Decimal(0))),
@@ -127,7 +208,6 @@ def build_plan(matches, accounts, max_variants=20):
             'best_largest_balance':str(max(amount(i['largest_balance']) for i in scenarios)),
             'worst_total_balance':str(min(amount(i['total_balance']) for i in scenarios)),
             'best_total_balance':str(max(amount(i['total_balance']) for i in scenarios))}
-
 
 class BulkGame:
     def __init__(self, root, clients, state, fetch_matches, submit, identities=None):
