@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.env
+.venv/
+Account/
+Session/
+Sorting/
+temp/
+security/
+template_avatars/
+panel_password.txt
+automatic_channels.json
+presence.json
+template_roster.json
+channels_count.json
+*.log
