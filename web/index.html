@@ -1302,7 +1302,7 @@ async function cbOpenMiniapp(account,button,status){
  }catch(error){popup.close();status.className='status err';status.textContent=error.message;}finally{button.disabled=false;}
 }
 /* Mass allocation of non-monetary game points: preview before any action. */
-const CB_BULK={plan:null,timer:null};
+const CB_BULK={plan:null,timer:null,quote:null};
 const CB_BULK_STATES={queue:'Очередь',checking:'Проверка',sending:'Отправка',ok:'Принято',unknown:'Нужно проверить',error:'Ошибка до отправки',not_run:'Не выполнено',skipped:'Пропущено'};
 async function cbBulkView(){
  CB.mode='bulk';clearTimeout(CB_BULK.timer);CB_BULK.plan=null;
@@ -1343,6 +1343,24 @@ function cbBulkPreview(root,plan){
  start.onclick=async()=>{if(CB_BULK.plan?.id!==plan.id)return;if(!confirm(`Отправить ${plan.account_count} ставок на ${plan.total_stake} игровых монет? Полный проигрыш части аккаунтов возможен. Коэффициенты и баланс будут перепроверены. План нельзя запустить повторно.`))return;start.disabled=true;
   try{await api('/api/cs3bet/bulk/start',{method:'POST',json:{plan_id:plan.id}});CB_BULK.plan=null;cbBulkPoll();}catch(error){$('#bulk-game-status').textContent=error.message;start.disabled=false;cbBulkPoll();}};box.append(start);root.append(box);
 }
+async function cbBulkResume(job,quote){
+ const changed=quote?' Пересчитанные коэффициенты и состав неотправленных купонов применятся после этого подтверждения.':'';
+ if(!confirm('Продолжить только неотправленные строки сохранённой очереди? Принятые и неизвестные отправки повторяться не будут.'+changed))return;
+ try{const body={job_id:job.id};if(quote)body.quote_id=quote.id;await api('/api/cs3bet/bulk/resume',{method:'POST',json:body});CB_BULK.quote=null;cbBulkPoll();}
+ catch(error){$('#bulk-game-status').textContent=error.message;}
+}
+function cbBulkQuoteBox(quote,job){
+ const box=el('div','profile-card');box.style.marginTop='12px';box.append(el('h3','','Пересчёт неотправленных купонов'),el('div','status','Принятые ставки не меняются. Суммы ставок прежние. Коэффициенты обновлены; закрытые события или события, выводящие купон за ×30, могут быть исключены из купона. Новых событий и противоположных исходов не добавляется. Старый предпросмотр итоговых сумм после пересчёта не актуален.'));
+ for(const change of quote.changes){
+  const label=el('div','status');
+  if(change.error){label.className='status err';label.textContent=change.account+': '+change.error;}
+  else{const removed=change.before.filter(old=>!change.legs.some(leg=>leg.match_id===old.match_id)).map(leg=>leg.match_id);
+   label.textContent=`${change.account} · ставка ${change.stake} · ×${Number(change.old_coefficient).toFixed(6)} → ×${Number(change.coefficient).toFixed(6)} · выплата ${change.potential} · `+change.legs.map(leg=>`${leg.side==='1'?leg.team_a:leg.team_b} (${leg.odds})`).join(' + ')+(removed.length?' · удалены события: '+removed.join(', '):'');}
+  box.append(label);
+ }
+ const apply=el('button','ui-btn ui-primary','Подтвердить пересчёт и продолжить');apply.disabled=quote.changes.some(c=>c.error)||!quote.changes.length;apply.onclick=()=>cbBulkResume(job,quote);box.append(apply);return box;
+}
+
 async function cbBulkPoll(){
  clearTimeout(CB_BULK.timer);if(CB.mode!=='bulk'||S.tab!=='cs3bet')return;
  try{const result=await api('/api/cs3bet/bulk'),root=$('#bulk-game-job');if(!root)return;root.replaceChildren();const job=result.job;if(job){
@@ -1351,6 +1369,14 @@ async function cbBulkPoll(){
   if(counts.not_run||counts.error||counts.skipped)box.append(el('div','status err','План выполнен не полностью: покрытие из предпросмотра не подтверждено.'));
   if(job.interrupted||counts.unknown)box.append(el('div','status err','Есть прерывание или неподтверждённая отправка. Автоматических повторов нет; проверьте историю ставок в игре.'));
   for(const item of job.items)box.append(el('div','status',`${item.account} · вариант ${item.variant} · ${CB_BULK_STATES[item.state]||item.state}${item.note?' · '+item.note:''}`));
+  if(!job.running&&job.items.some(item=>['error','not_run','skipped'].includes(item.state))){
+   const actions=el('div','ui-actions'),resume=el('button','ui-btn','Продолжить неотправленные'),requote=el('button','ui-btn','Пересчитать неотправленные');resume.id='bulk-game-resume';requote.id='bulk-game-requote';
+   resume.onclick=()=>cbBulkResume(job,null);
+   requote.onclick=async()=>{requote.disabled=true;try{CB_BULK.quote=await api('/api/cs3bet/bulk/requote',{method:'POST',json:{job_id:job.id}});cbBulkPoll();}catch(error){$('#bulk-game-status').textContent=error.message;requote.disabled=false;}};
+   actions.append(resume,requote);box.append(actions);
+   if(CB_BULK.quote?.job_id===job.id)box.append(cbBulkQuoteBox(CB_BULK.quote,job));
+  }
+  if(job.requoted_at)box.append(el('div','status','Неотправленные купоны пересчитаны. Прежние итоговые диапазоны из предпросмотра не подтверждают результат текущей очереди.'));
   if(job.running){const stop=el('button','ui-btn','Остановить после текущей отправки');stop.onclick=async()=>{await api('/api/cs3bet/bulk/stop',{method:'POST'});cbBulkPoll();};box.append(stop);}root.append(box);
   if(job.running)CB_BULK.timer=setTimeout(cbBulkPoll,2000);
  }}catch(error){const status=$('#bulk-game-status');if(status)status.textContent=error.message;}

@@ -1,5 +1,6 @@
 """Bounded, exhaustive scenario planner for non-monetary CS3BET game points."""
 import asyncio
+import itertools
 import json
 import time
 import uuid
@@ -209,6 +210,43 @@ def build_plan(matches, accounts, max_variants=20):
             'worst_total_balance':str(min(amount(i['total_balance']) for i in scenarios)),
             'best_total_balance':str(max(amount(i['total_balance']) for i in scenarios))}
 
+RESUMABLE = {'error', 'not_run', 'skipped'}
+
+def error_message(exc):
+    if isinstance(exc, web.HTTPException):
+        try:
+            body = json.loads(exc.text)
+            text = body.get('error') or body.get('message')
+        except (ValueError, AttributeError):
+            text = exc.text
+        return str(text or exc.reason)[:600]
+    return (str(exc) or type(exc).__name__)[:600]
+
+
+def requote_item(item, matches):
+    current = {m['id']:m for m in matches}
+    available = []
+    for original in item['legs']:
+        match = current.get(original['match_id'])
+        if not match or match.get('status') != 'betting_open':continue
+        try:odds=amount(match['odds_a'] if original['side']=='1' else match['odds_b'])
+        except (KeyError,ValueError):continue
+        if odds <= 1 or odds > MAX_ODDS:continue
+        available.append({**original,'odds':str(odds)})
+    best = None
+    for size in range(2,len(available)+1):
+        for subset in itertools.combinations(available,size):
+            coef = Decimal(1)
+            for leg in subset:coef *= amount(leg['odds'])
+            if coef <= MAX_ODDS and (best is None or coef > best[0]):best=(coef,list(subset))
+    if best is None:raise ValueError('Не осталось допустимого экспресса из хотя бы двух исходных событий')
+    coef,legs=best
+    stake=amount(item['stake'])
+    if stake < MIN_STAKE or stake > MAX_STAKE:raise ValueError('Исходная сумма вне лимита 100–50000')
+    return {'legs':legs,'coefficient':str(coef),'potential':str(payout(stake*coef)),
+            'winner_balance':str(amount(item['remaining'])+payout(stake*coef))}
+
+
 class BulkGame:
     def __init__(self, root, clients, state, fetch_matches, submit, identities=None):
         self.clients, self.state = clients, state
@@ -226,7 +264,7 @@ class BulkGame:
                 if item['state']=='sending':item['state']='unknown'
                 elif item['state'] in ('checking','queue'):item['state']='not_run'
             self.save()
-        self.plans={};self.task=None;self.lock=asyncio.Lock()
+        self.plans={};self.quotes={};self.task=None;self.lock=asyncio.Lock()
 
     def save(self):
         if self.job:
@@ -284,6 +322,7 @@ class BulkGame:
     async def run(self):
         try:
             for item in self.job['items']:
+                if item['state'] != 'queue':continue
                 if self.job['stop_requested']:break
                 client=self.clients().get(item['account'])
                 if client is None or (hasattr(client,'is_connected') and not client.is_connected()):
@@ -299,13 +338,71 @@ class BulkGame:
                 except asyncio.CancelledError:
                     item['state']='unknown' if state['sent'] else 'not_run';raise
                 except Exception as exc:
-                    item.update(state='unknown' if state['sent'] else 'error',note=type(exc).__name__)
+                    item.update(state='unknown' if state['sent'] else 'error',note=error_message(exc))
                 self.save()
                 if item['state'] in ('unknown','error'):break  # Odds/balance changed or result ambiguous: stop the batch.
         finally:
             for item in self.job['items']:
                 if item['state']=='queue':item['state']='not_run'
             self.job['running']=False;self.save()
+
+    async def requote(self, request):
+        data=await request.json()
+        async with self.lock:
+            if not self.job or data.get('job_id') != self.job['id']:
+                return web.json_response({'error':'Сохранённая очередь не найдена'},status=404)
+            if self.job['running']:return web.json_response({'error':'Сначала остановите очередь'},status=409)
+            clients=self.clients()
+            source=next(((n,c) for n,c in clients.items() if c and (not hasattr(c,'is_connected') or c.is_connected())),None)
+            if source is None:return web.json_response({'error':'Нет подключённого аккаунта для чтения матчей'},status=409)
+            try:matches=await self.fetch_matches(*source)
+            except Exception as exc:return web.json_response({'error':error_message(exc)},status=400)
+            changes=[]
+            for index,item in enumerate(self.job['items']):
+                if item['state'] not in RESUMABLE:continue
+                try:
+                    new=requote_item(item,matches)
+                    changes.append({'index':index,'account':item['account'],'before':item['legs'],
+                                    'old_coefficient':item['coefficient'],'stake':item['stake'],**new})
+                except ValueError as exc:
+                    changes.append({'index':index,'account':item['account'],'error':str(exc)})
+            token=uuid.uuid4().hex
+            quote={'id':token,'job_id':self.job['id'],'expires_at':time.time()+180,'changes':changes}
+            self.quotes={token:quote}
+            return web.json_response(quote)
+
+    async def resume(self, request):
+        data=await request.json()
+        async with self.lock:
+            if not self.job or data.get('job_id') != self.job['id']:
+                return web.json_response({'error':'Сохранённая очередь не найдена'},status=404)
+            if self.job['running'] or (self.task and not self.task.done()):
+                return web.json_response({'error':'Очередь уже выполняется'},status=409)
+            todo=[i for i in self.job['items'] if i['state'] in RESUMABLE]
+            if not todo:return web.json_response({'error':'Нет безопасно неотправленных строк для продолжения'},status=409)
+            if any(i['account'] in self.unknown_accounts for i in todo):
+                return web.json_response({'error':'Есть аккаунт с неизвестной прошлой отправкой; нужна ручная проверка истории игры'},status=409)
+            quote_id=data.get('quote_id')
+            if quote_id is not None:
+                quote=self.quotes.get(quote_id)
+                if not quote or quote['job_id']!=self.job['id'] or quote['expires_at']<=time.time():
+                    return web.json_response({'error':'Пересчёт устарел. Запросите новый'},status=409)
+                if any(c.get('error') for c in quote['changes']):
+                    return web.json_response({'error':'Не все купоны удалось пересчитать; исходная очередь сохранена'},status=409)
+                for change in quote['changes']:
+                    item=self.job['items'][change['index']]
+                    if item['state'] not in RESUMABLE or item['legs']!=change['before'] or item['stake']!=change['stake']:
+                        return web.json_response({'error':'Очередь изменилась; пересчитайте снова'},status=409)
+                for change in quote['changes']:
+                    item=self.job['items'][change['index']]
+                    item.update({key:change[key] for key in ('legs','coefficient','potential','winner_balance')})
+                self.quotes.clear()
+                self.job['requoted_at']=time.time()
+            for item in todo:
+                item.update(state='queue',note='')
+            self.job.update(running=True,stop_requested=False,interrupted=False,resumed_at=time.time())
+            self.save();self.task=asyncio.create_task(self.run())
+            return web.json_response(self.job)
 
     async def stop(self, request):
         if self.job:self.job['stop_requested']=True;self.save()
@@ -320,6 +417,8 @@ class BulkGame:
     def register(self, app):
         app.router.add_post('/api/cs3bet/bulk/plan',self.preview)
         app.router.add_post('/api/cs3bet/bulk/start',self.start)
+        app.router.add_post('/api/cs3bet/bulk/resume',self.resume)
+        app.router.add_post('/api/cs3bet/bulk/requote',self.requote)
         app.router.add_post('/api/cs3bet/bulk/stop',self.stop)
         app.router.add_get('/api/cs3bet/bulk',self.status)
         app.on_cleanup.append(self.close)

@@ -141,6 +141,78 @@ class BulkTests(unittest.IsolatedAsyncioTestCase):
         response=await self.bulk.start(Request({'plan_id':plan['id']}))
         self.assertEqual(response.status,409);self.submit.assert_not_awaited()
 
+    async def test_resume_after_restart_never_repeats_accepted_rows(self):
+        sent=[]
+        async def first(name,client,stake,picks,state):
+            sent.append(name)
+            if len(sent)==3:
+                raise web.HTTPBadRequest(text=json.dumps({'error':'Коэффициент изменился: 2.0 → 2.1'}),content_type='application/json')
+            return web.json_response({'ok':True})
+        self.bulk.submit=first;plan=await self.plan()
+        await self.bulk.start(Request({'plan_id':plan['id']}));await self.bulk.task
+        self.assertIn('Коэффициент изменился',self.bulk.job['items'][2]['note'])
+        accepted=[i['account'] for i in self.bulk.job['items'] if i['state']=='ok']
+        submit=AsyncMock(return_value=web.json_response({'ok':True}))
+        restored=BulkGame(self.temp.name,lambda:self.clients,self.state,self.fetch,submit)
+        response=await restored.resume(Request({'job_id':plan['id']}))
+        self.assertEqual(response.status,200)
+        await restored.task
+        self.assertTrue(all(c.args[0] not in accepted for c in submit.await_args_list))
+        self.assertEqual(submit.await_count,6)
+        self.assertTrue(all(i['state']=='ok' for i in restored.job['items']))
+        await restored.close()
+
+    async def test_resume_skips_unknown_results(self):
+        async def ambiguous(name,client,stake,picks,state):
+            state['on_send']();state['sent']=True;raise TimeoutError()
+        self.bulk.submit=ambiguous;plan=await self.plan()
+        await self.bulk.start(Request({'plan_id':plan['id']}));await self.bulk.task
+        unknown=self.bulk.job['items'][0]['account']
+        submit=AsyncMock(return_value=web.json_response({'ok':True}));self.bulk.submit=submit
+        await self.bulk.resume(Request({'job_id':plan['id']}));await self.bulk.task
+        self.assertEqual(self.bulk.job['items'][0]['state'],'unknown')
+        self.assertFalse(any(c.args[0]==unknown for c in submit.await_args_list))
+        self.assertEqual(submit.await_count,7)
+
+    async def test_requote_requires_confirmation_and_preserves_accepted_and_stakes(self):
+        self.bulk.submit=AsyncMock(side_effect=ValueError('before send'))
+        plan=await self.plan();await self.bulk.start(Request({'plan_id':plan['id']}));await self.bulk.task
+        # Simulate a previously accepted row from the saved job.
+        self.bulk.job['items'][0]['state']='ok'
+        accepted=json.loads(json.dumps(self.bulk.job['items'][0]))
+        original=json.loads(json.dumps(self.bulk.job['items']))
+        self.fetch.return_value=[{**m,'odds_a':2,'odds_b':2} for m in matches()]
+        self.bulk.submit=AsyncMock(return_value=web.json_response({'ok':True}))
+        response=await self.bulk.requote(Request({'job_id':plan['id']}));quote=json.loads(response.text)
+        self.bulk.submit.assert_not_awaited()
+        self.assertEqual(self.bulk.job['items'],original)
+        for change in quote['changes']:
+            old={(l['match_id'],l['side']) for l in change['before']}
+            new={(l['match_id'],l['side']) for l in change['legs']}
+            self.assertTrue(new.issubset(old))
+            self.assertLessEqual(Decimal(change['coefficient']),30)
+        response=await self.bulk.resume(Request({'job_id':plan['id'],'quote_id':quote['id']}))
+        self.assertEqual(response.status,200)
+        await self.bulk.task
+        self.assertEqual(self.bulk.job['items'][0],accepted)
+        for old,new in zip(original,self.bulk.job['items']):self.assertEqual(old['stake'],new['stake'])
+        self.assertEqual(self.bulk.submit.await_count,7)
+
+    async def test_invalid_or_expired_quote_does_not_resume(self):
+        self.bulk.submit=AsyncMock(side_effect=ValueError('before send'))
+        plan=await self.plan();await self.bulk.start(Request({'plan_id':plan['id']}));await self.bulk.task
+        self.fetch.return_value=[{**m,'odds_a':10,'odds_b':10} for m in matches()]
+        quote=json.loads((await self.bulk.requote(Request({'job_id':plan['id']}))).text)
+        self.assertTrue(all(c.get('error') for c in quote['changes']))
+        self.bulk.submit=AsyncMock()
+        response=await self.bulk.resume(Request({'job_id':plan['id'],'quote_id':quote['id']}))
+        self.assertEqual(response.status,409)
+        self.bulk.submit.assert_not_awaited()
+        self.bulk.quotes[quote['id']]['expires_at']=0
+        response=await self.bulk.resume(Request({'job_id':plan['id'],'quote_id':quote['id']}))
+        self.assertEqual(response.status,409)
+
+
 
 class LiveLimitValidationTests(unittest.IsolatedAsyncioTestCase):
     async def exercise(self,stake,odds=2,balance=100000,seen=None):

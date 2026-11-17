@@ -743,7 +743,7 @@ def make_handlers(get_clients, app=None, account_ids=None):
             if stake is None:
                 stake = min(bal.quantize(Decimal("0.01"), rounding=ROUND_DOWN), MAX_STAKE)
             if not stake.is_finite() or stake < MIN_STAKE or stake > MAX_STAKE or stake > bal:
-                fail("Недостаточно баланса или сумма вне лимита 100–50000 монет")
+                fail(f"Ставка {stake}, текущий баланс {bal}; допустима сумма 100–50000, не больше баланса")
             # Свежие данные по выбранным матчам прямо перед ставкой
             current = {m["id"]: m for m in await fetch_matches(name, client, {mid for mid, _, _ in picks})}
             legs, combined = [], Decimal("1")
@@ -761,7 +761,7 @@ def make_handlers(get_clients, app=None, account_ids=None):
                 legs.append({"match_id": mid, "type_id": 1, "specifiers": {}, "outcome_external_id": side})
 
             if combined > MAX_ODDS:
-                fail("Общий коэффициент превышает максимум 30")
+                fail(f"Общий коэффициент {combined} превышает максимум 30")
             await login(name, client)        # токен/связь с Telegram — до отправки, ставка ещё не ушла
             if state.get("on_send"):
                 state["on_send"]()
