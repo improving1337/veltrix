@@ -42,8 +42,27 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
     async def test_caption_question_and_single_option(self):
         self.assertEqual(list(automatic.explicit_reaction_choices('Согласны? 👍 / 👎')), ['👍', '👎'])
         self.assertEqual(automatic.explicit_reaction_choices('😊 Обычный заголовок'), {})
-        result = automatic.validated_reaction_plan({}, 1, post_text='Он получил стикеры!\n🎈 — красава')
-        self.assertEqual(result['reactions'], [{'emoji': '🎈', 'count': 1}])
+        result = automatic.validated_reaction_plan({}, 1, post_text='Он получил стикеры!\n\n❤️ — *красава*')
+        self.assertEqual(result['reactions'], [{'emoji': '❤️', 'count': 1}])
+
+    async def test_channel_bait_formats_and_editorial_endings(self):
+        choices = automatic.explicit_reaction_choices
+        self.assertEqual(choices('Игрок выиграл награду.\n\nЗаслуженная награда? 👍/👎'),
+                         {'👍': 'Да — Заслуженная награда?', '👎': 'Нет — Заслуженная награда?'})
+        self.assertEqual(choices('Что впечатляет больше?\n❤️ — *541 карта ropz*\n🔥 — *501 карта NiKo*'),
+                         {'❤️': '541 карта ropz', '🔥': '501 карта NiKo'})
+        self.assertEqual(choices('Открыт мап-пик.\n\n❤️ — Team Spirit / 🔥 — NAVI'),
+                         {'❤️': 'Team Spirit', '🔥': 'NAVI'})
+        for caption in (
+            'А вам как пятёрка? 👇',
+            '🔥 — горячая новость',
+            'Расписание: 17:00 — NAVI, 20:00 — Spirit',
+            'Патчноут CS2: исправлены ошибки.',
+            'В цитате «Согласны? 👍/👎», но игра начнётся в 20:00.',
+            '❤️ — первый вариант\n\nРешение объявят завтра.',
+        ):
+            with self.subTest(caption=caption):
+                self.assertEqual(choices(caption), {})
 
     async def test_poll_labels_and_no_invented_votes(self):
         caption = '❤️ — Лучший!\n😭 — Лучше бы MVP'

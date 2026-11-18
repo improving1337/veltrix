@@ -90,22 +90,42 @@ def mixed_reactions(emojis, amount, rng=None):
 
 
 def explicit_reaction_choices(text):
-    """Recognize captioned reaction options near the end of a publication."""
-    labels = '|'.join(map(re.escape, (*ALLOWED_EMOJI, *EMOJI_ALIASES)))
-    choices = {}
-    for line in str(text).strip().splitlines()[-8:]:
-        line = line.strip()
-        caption = re.fullmatch(rf'({labels})\s*[—–-]\s*(\S.*)', line)
-        if caption:
-            emoji = caption.group(1)
-            choices[EMOJI_ALIASES.get(emoji, emoji)] = caption.group(2)
-            continue
-        if '?' in line:
-            options = re.findall(labels, line.rsplit('?', 1)[-1])
-            if len(options) > 1:
-                for emoji in options:
-                    choices.setdefault(EMOJI_ALIASES.get(emoji, emoji), line)
-    return choices
+    """Read the channel's reaction choices from the end of the post."""
+    lines = str(text).strip().splitlines()
+    if not lines:
+        return {}
+    final = lines[-1].strip()
+    yes_no = re.fullmatch(r'(.+\?)\s*👍\s*/\s*👎', final)
+    if yes_no:
+        question = yes_no.group(1)
+        return {'👍': 'Да — ' + question, '👎': 'Нет — ' + question}
+
+    markers = ('❤️', '🔥', '😭', '💔', *EMOJI_ALIASES)
+    marker_pattern = '|'.join(map(re.escape, markers))
+
+    def caption(line):
+        match = re.fullmatch(rf'({marker_pattern})\s*[—–-]\s*(\S.*)', line.strip())
+        if not match:
+            return None
+        emoji, label = match.groups()
+        return EMOJI_ALIASES.get(emoji, emoji), label.strip().strip('*_').strip()
+
+    inline = re.split(r'\s*/\s*(?=🔥\s*[—–-])', final, maxsplit=1)
+    last_choice = caption(inline[-1])
+    if last_choice is None:
+        return {}
+    if len(inline) == 2:
+        first_choice = caption(inline[0])
+        if first_choice and (first_choice[0], last_choice[0]) == ('❤️', '🔥'):
+            return dict((first_choice, last_choice))
+        return {}
+
+    previous_choice = caption(lines[-2]) if len(lines) > 1 else None
+    if previous_choice:
+        if previous_choice[0] != last_choice[0] and previous_choice[1].casefold() != last_choice[1].casefold():
+            return dict((previous_choice, last_choice))
+        return {}
+    return dict((last_choice,)) if last_choice[0] != '🔥' else {}
 
 
 def validated_reaction_plan(data, configured_max, allowed=None, post_text=''):
@@ -717,7 +737,14 @@ class Monitor:
         allowed = list(self.state['allowed_reactions'])
         guidance = self.state['reaction_prompt']
         choices = explicit_reaction_choices(post_text)
-        if choices:
+        if len(choices) == 1:
+            emoji, label = next(iter(choices.items()))
+            criteria = (
+                'Финал — одна эмоциональная реплика. Она выражает одну позицию и не является опросом. '
+                'Используй только эмодзи из поля reaction, если он разрешён. '
+            )
+            analysis_text = json.dumps({'post': analysis_text, 'reaction': {emoji: label}}, ensure_ascii=False)
+        elif choices:
             poll_options = {emoji: label for emoji, label in choices.items() if emoji in allowed}
             criteria = (
                 'Это опрос реакциями. Ключи poll_options — единственные допустимые ответы. '
@@ -732,6 +759,8 @@ class Monitor:
         else:
             criteria = (
                 'Опирайся на новость, тон автора и контекст. Игнорируй рекламные вставки. '
+                'Финал с 👇 приглашает в комментарии и не задаёт вариантов голосования. '
+                'Даты, условия, расписание, результат и состав команды сами по себе не являются вариантами. '
                 'Используй только уместные реакции и не выравнивай доли автоматически. '
             )
         prompt = (
