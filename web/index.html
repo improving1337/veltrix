@@ -500,7 +500,7 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 .profile-layout{display:grid;grid-template-columns:minmax(260px,1fr) minmax(320px,1.65fr);gap:20px;align-items:start}.profile-card{padding:22px;border:1px solid #2a2b35;border-radius:14px;background:#111218;min-width:0}.profile-card .otoggle{position:relative}.profile-card .otoggle input{width:1px!important;height:1px!important;left:0;top:0}.profile-card h3{margin:0 0 18px;font-size:16px}.profile-card .big{margin:0 0 18px}.profile-card .fld{margin-bottom:16px}.profile-card-title{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.profile-card-title h3{margin:0}.profile-session{min-height:260px}.profile-media{grid-column:1/-1}.profile-card .btn{width:auto!important;max-width:100%;margin-right:8px;padding:9px 14px!important}.profile-card .profile-music-box{margin-top:22px}.profile-card .ex-avatar-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
 .ui-actions{display:flex;gap:8px;flex-wrap:wrap}.ui-btn{display:inline-flex!important;align-items:center;justify-content:center;gap:6px;flex:none!important;width:auto!important;min-width:0!important;height:32px!important;min-height:32px!important;margin:0!important;padding:0 11px!important;border:1px solid #353641!important;border-radius:7px!important;background:#1b1c24!important;color:#dfdfe8!important;font:inherit;font-size:12px;font-weight:500;line-height:1.2;white-space:nowrap;cursor:pointer;box-shadow:none!important}.ui-btn:hover{background:#262733!important}.ui-btn:disabled{opacity:.4;cursor:not-allowed}.ui-primary{background:#5945bc!important;border-color:#7360d7!important;color:white!important}.ui-btn:focus-visible{outline:2px solid #a594ff;outline-offset:2px}
 .sessions-panel{border:1px solid #2a2b35;border-radius:14px;background:#101116;min-width:0;padding:24px}.sessions-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-bottom:16px}.sessions-toolbar h2{font-size:23px;margin:0 0 6px}.sessions-toolbar p{font-size:13px;color:#94919f;margin:0}.session-legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:#8d8a99;padding:10px 0}.session-own{color:#5ad9a0!important}.session-external{color:#eabd60!important}.session-dead{color:#ef868e!important}.session-count{font-weight:600;font-variant-numeric:tabular-nums}.session-big{font-size:40px;line-height:1;font-weight:600}.session-summary{display:flex;gap:20px;align-items:center;margin:24px 0}.session-devices{font-size:12px}.session-device{padding:9px 0;border-bottom:1px solid #2a2b35;color:#aaa7b6}.sessions-scroll{overflow:auto}.sessions-table{table-layout:fixed;width:100%;min-width:1050px;border-collapse:collapse}.sessions-table th{text-align:left;color:#9693a3;font-size:11px;font-weight:500;padding:14px 10px;border-bottom:1px solid #30313b}.sessions-table td{padding:13px 10px;border-bottom:1px solid #24252e;font-size:12px;vertical-align:middle;overflow-wrap:anywhere}.sessions-table tr:hover{background:#16171f}.session-lamp{font-size:17px}.session-operation-note{font-size:11px;line-height:1.5;color:#9693a3;margin-bottom:7px}.password-control{display:flex;align-items:center;gap:7px;width:230px;max-width:100%;min-width:0}.password-control input{box-sizing:border-box!important;width:145px!important;min-width:0!important;flex:1!important;height:32px!important;margin:0!important;padding:5px 8px!important;font:12px monospace!important;background:#16171f!important;color:#d7d4e3!important;border:1px solid #30313b!important;border-radius:6px!important;text-overflow:clip}.password-control .ui-btn{width:78px!important;flex:none!important;padding:0!important}.muted{color:#8c899b}.profile-password{min-height:34px}.profile-password .password-control{width:340px}.profile-password .password-control input{width:250px!important}
-#v-accounts .acc-table-head,#v-accounts .acc-row{grid-template-columns:minmax(155px,1.3fr) minmax(110px,.9fr) 115px 110px 115px 95px 155px!important;min-width:1050px!important}
+#v-accounts .acc-table-head,#v-accounts .acc-row{grid-template-columns:minmax(155px,1.3fr) minmax(110px,.9fr) 115px 110px 115px 95px 155px 110px!important;min-width:1170px!important}
 @media(max-width:850px){.profile-layout{grid-template-columns:minmax(0,1fr)}.profile-media{grid-column:auto}#v-accounts #detail.open{padding:20px 16px!important}.sessions-panel{padding:16px}.profile-file{width:100%}.profile-header{gap:12px}.profile-card{padding:18px}}
 
 
@@ -1035,6 +1035,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
        <button class="ex-sort" data-acc-sort="avatar_count">Кол-во аватарок <span class="arrow"></span></button>
        <button class="ex-sort" data-acc-sort="music_count">Кол-во песен <span class="arrow"></span></button>
        <button class="ex-sort" data-acc-sort="last_avatar_change">Последняя смена аватарки <span class="arrow"></span></button>
+       <button class="ex-sort" data-acc-sort="lang_code">Язык <span class="arrow"></span></button>
      </div>
      <div id="grid" class="acc-table"></div>
    </div><div id="acc-load-errors" class="acc-load-errors" hidden></div><p class="acc-table-note">Цвет числа: зелёный — своя сессия, жёлтый — внешняя, красный — нет подключения. Число — результат последней проверки; обновить можно в профиле.</p></div>
@@ -1081,6 +1082,11 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
  <div class="sessions-toolbar"><div><h2>Безопасность и сессии</h2><p>Происхождение авторизации, пароли 2FA и перевыпуск</p></div><div class="ui-actions"><button id="twofa-reissue" class="ui-btn ui-primary">Перевыпустить внешние</button><button id="twofa-refresh" class="ui-btn">↻ Обновить</button></div></div>
  <div class="session-legend"><span class="session-own">● Своя</span><span class="session-external">● Внешняя</span><span class="session-dead">● Нет подключения</span><span>Время по МСК</span></div>
  <div id="twofa-status" class="status" role="status"></div>
+ <form id="twofa-language" class="ui-actions">
+  <label>Код языка <input name="lang_code" value="ru" placeholder="ru" maxlength="35" required></label>
+  <button type="submit" class="ui-btn">Сменить язык у всех</button>
+ </form>
+ <div id="twofa-language-status" class="status" role="status"></div>
  <div class="sessions-scroll"><table class="sessions-table"><colgroup><col style="width:48px"><col style="width:135px"><col style="width:220px"><col style="width:140px"><col style="width:100px"><col style="width:140px"><col style="width:220px"></colgroup><thead><tr><th>Статус</th><th>Номер / аккаунт</th><th>Пароль 2FA</th><th>Дата авторизации</th><th>Происхождение</th><th>Когда получена</th><th>Действия</th></tr></thead><tbody id="twofa-rows"></tbody></table></div>
  </div></div></section>
  <section id="v-upload" class="view">
@@ -1629,6 +1635,7 @@ function accSortValue(a,key){
   const p=a.profile_meta||{};
   if(key==='name')return(fullName(a)||a.name||'').trim().toLocaleLowerCase('ru');
   if(key==='username')return(a.username||'').trim().toLocaleLowerCase('ru');
+  if(key==='lang_code')return a.lang_code;
   if(key==='session_count')return a.security?.session_count??null;
   if(key==='birthday')return accDateValue(p.birthday,true);
   if(key==='avatar_count')return Number.isFinite(p.avatar_count)?p.avatar_count:null;
@@ -1648,6 +1655,7 @@ for(const b of document.querySelectorAll('[data-acc-sort]')){
     renderAccounts();
   };
 }
+const languageName=code=>code==='ru'?'Русский (ru)':code==='en'?'Английский (en)':code||'—';
 function renderAccounts(){
   const g=$('#grid');g.replaceChildren();
   const bad=$('#acc-load-errors');if(bad){
@@ -1687,7 +1695,8 @@ function renderAccounts(){
       el('span','acc-cell',p.birthday||'—'),
       el('span','acc-cell',Number.isFinite(p.avatar_count)?String(p.avatar_count):'—'),
       el('span','acc-cell',Number.isFinite(p.music_count)?String(p.music_count):'—'),
-      el('span','acc-cell',accDateDisplay(p.last_avatar_change))];
+      el('span','acc-cell',accDateDisplay(p.last_avatar_change)),
+      el('span','acc-cell',languageName(a.lang_code))];
     for(let i=0;i<vals.length;i++){
       if(i!==0)vals[i].title=vals[i].textContent;
       c.append(vals[i]);
@@ -1697,12 +1706,34 @@ function renderAccounts(){
 }
 const fld=(l,i)=>{const w=el("label","fld");w.append(el("span","",l),i);return w};
 const inp=(v,p)=>{const i=el("input");i.value=v||"";i.placeholder=p||"";return i};
+function profileLanguageCard(account){
+  const card=el('section','profile-card'),form=el('form'),input=inp(account.lang_code,'ru'),save=el('button','ui-btn','Сохранить язык');
+  input.required=true;input.maxLength=35;save.type='submit';
+  const status=el('div','status','Применяется после перезапуска панели.');
+  status.setAttribute('role','status');
+  form.append(fld('Код языка Telegram',input),save,status);
+  card.append(el('h3','','Язык'),form);
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    save.disabled=true;
+    try{
+      const result=await api(`/api/accounts/${enc(account.name)}/language`,{method:'POST',json:{lang_code:input.value}});
+      const current=S.accounts.find(item=>item.name===account.name);
+      if(current)current.lang_code=result.lang_code;
+      input.value=result.lang_code;
+      renderAccounts();
+      status.textContent='Сохранено. Перезапустите панель для применения.';
+    }catch(error){status.textContent=error.message}
+    finally{save.disabled=false}
+  };
+  return card;
+}
 function renderDetail(){
   const box=$("#detail"),a=S.accounts.find(x=>x.name===S.sel);
   box.replaceChildren();box.classList.toggle("open",!!a);$("#v-accounts").classList.toggle("profile-open",!!a);if(!a)return;
   const x=el("button","ui-btn","← Назад");x.id="profile-back";x.onclick=()=>{S.sel=null;renderAccounts();renderDetail()};
   const head=el("div","profile-header");head.append(x,el("h2","",fullName(a)||a.name),el("span","profile-file",a.name));
-  const sessionCard=profileSessionCard(a);
+  const sessionCard=profileSessionCard(a),languageCard=profileLanguageCard(a);
   const del=el("button","btn danger","Удалить аккаунт"),dst=el("div","status");
   del.onclick=async()=>{
     if(!confirm(`Удалить аккаунт ${a.name}?\nБудут удалены файлы сессии (.session) и .json. Это нельзя отменить.`))return;
@@ -1717,11 +1748,11 @@ function renderDetail(){
     const info=el('div','status err',accountConnectionStatus(a));
     if(a.error_kind==='temporary'){
       const note=el('div','status','Временная ошибка: повторная попытка запускается автоматически.');
-      box.append(head,sessionCard,info,note,del,dst);
+      box.append(head,sessionCard,languageCard,info,note,del,dst);
     }else{
       const note=el('div','status',a.error_kind==='session'?'Сессия недействительна: проверь файл .session или авторизуй аккаунт заново.':
         a.error_kind==='other'?'Ошибка требует проверки. Подробности указаны выше и в терминале.':'Ожидание подключения.');
-      box.append(head,sessionCard,info,note,del,dst);
+      box.append(head,sessionCard,languageCard,info,note,del,dst);
     }
     return;
   }
@@ -1869,7 +1900,7 @@ function renderDetail(){
   media.append(el('h3','','Фотографии и музыка'),photoRows,musicBox);
   const danger=el('section','profile-card profile-danger');danger.append(el('h3','','Управление аккаунтом'),del,dst);
   const left=el('div','profile-column'),middle=el('div','profile-column'),right=el('div','profile-column');
-  left.append(identity,privacy,danger);middle.append(editor);right.append(sessionCard,media);
+  left.append(identity,privacy,danger);middle.append(editor,languageCard);right.append(sessionCard,media);
   layout.append(left,middle,right);box.append(head,layout);
   loadFull();
   updatePhotoHistory();
@@ -2825,6 +2856,22 @@ async function twofaLoad(){
 }
 $('#t-twofa').onclick=()=>{showTab('twofa');twofaLoad();};
 $('#twofa-refresh').onclick=twofaLoad;
+$('#twofa-language').onsubmit=async event=>{
+ const form=event.currentTarget,input=form.elements.lang_code,button=form.querySelector('button');
+ const status=$('#twofa-language-status'),code=input.value.trim().toLowerCase();
+ event.preventDefault();
+ if(!confirm(`Установить язык «${code}» у всех загруженных аккаунтов?`))return;
+ button.disabled=true;status.textContent='Сохраняю…';
+ try{
+  const result=await api('/api/2fa/language',{method:'POST',json:{lang_code:code}});
+  const summary=[`Сохранено для ${result.saved} аккаунтов.`];
+  if(result.errors.length)summary.push('Ошибка сохранения: '+result.errors.join(', ')+'.');
+  if(result.not_loaded.length)summary.push('Аккаунты не загрузились: '+result.not_loaded.join(', ')+'.');
+  if(result.saved)summary.push('Перезапустите панель для применения.');
+  status.textContent=summary.join(' ');
+ }catch(error){status.textContent=error.message}
+ finally{button.disabled=false}
+};
 async function twofaStart(name,label){
  const target=name===undefined?'всех подключённых внешних аккаунтов':`только аккаунта ${label}`;
  if(!confirm(`Создать независимую сессию для ${target}? После проверки новой сессии исходные файлы будут убраны в закрытый архив на сервере, а фоновая защита попытается отозвать старые авторизации с учётом ограничений Telegram.`))return;

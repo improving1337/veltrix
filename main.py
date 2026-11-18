@@ -66,6 +66,7 @@ class Account:
     def __init__(self, name, client):
         self.name, self.client = name, client
         self.me = None
+        self.lang_code = "en"
         self.status = "не подключён"
         self.avatar_ver = 0
         self.channels = None     # на сколько каналов подписан (None — ещё не считали)
@@ -292,6 +293,7 @@ def ser_message(m):
 def ser_account(a):
     me = a.me
     return {"name": a.name, "connected": me is not None, "status": a.status,
+            "lang_code": a.lang_code,
             "id": me.id if me else None, "phone": (me.phone or "") if me else "",
             "first_name": (me.first_name or "") if me else "", "last_name": (me.last_name or "") if me else "",
             "username": (me.username or "") if me else "", "avatar_ver": int(a.avatar_ver), "presence": presence.keeper.info(a.name),
@@ -765,6 +767,7 @@ def load_accounts():
             ACCOUNT_LOAD_ERRORS[name] = f"ошибка открытия сессии [{type(exc).__name__}]: {exc}"[:240]
             print(f"[LOAD] {name}: {ACCOUNT_LOAD_ERRORS[name]}", flush=True)
             continue
+        acc.lang_code = extra.get("lang_code", "en")
         ACCOUNTS[name] = acc
         new.append(acc)
     for session_file in sorted(SESSION_DIR.glob("*.session")):
@@ -1385,6 +1388,58 @@ async def api_apply_template(request):
     tpl = await request.json()
     errors = await apply_template_to_account(acc, tpl)
     return web.json_response({"errors": errors, "account": ser_account(acc)})
+
+async def read_language(request):
+    try:
+        data = await request.json()
+    except ValueError:
+        fail("Ожидается JSON с полем lang_code")
+    code = data.get("lang_code") if isinstance(data, dict) else None
+    if isinstance(code, str):
+        code = code.strip().lower()
+        if len(code) <= 35 and re.fullmatch(r"[a-z]{2,3}(?:-[a-z0-9]{2,8})*", code):
+            return code
+    fail("Укажите код языка Telegram, например ru или en")
+
+
+def save_account_language(acc, code):
+    path = ACCOUNT_DIR / f"{acc.name}.json"
+    config = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(config, dict):
+        raise ValueError("Account configuration must be an object")
+    if config.get("lang_code") != code or config.get("system_lang_code") != code:
+        config.update(lang_code=code, system_lang_code=code)
+        account_security.private_json(path, config)
+    acc.lang_code = code
+
+
+async def api_account_language(request):
+    code = await read_language(request)
+    acc = ACCOUNTS.get(request.match_info["acc"])
+    if acc is None:
+        fail("Аккаунт не найден", web.HTTPNotFound)
+    try:
+        save_account_language(acc, code)
+    except (OSError, ValueError):
+        fail("Не удалось сохранить язык аккаунта", web.HTTPInternalServerError)
+    return web.json_response({"lang_code": code})
+
+
+async def api_bulk_language(request):
+    code = await read_language(request)
+    if not ACCOUNTS:
+        fail("Нет загруженных аккаунтов")
+    saved, errors = 0, []
+    for acc in ACCOUNTS.values():
+        try:
+            save_account_language(acc, code)
+        except (OSError, ValueError):
+            errors.append(acc.name)
+        else:
+            saved += 1
+    return web.json_response({"saved": saved, "errors": errors,
+                              "not_loaded": sorted(ACCOUNT_LOAD_ERRORS)})
+
 
 async def api_profile(request):
     acc, data = get_acc(request), await request.json()
@@ -2753,6 +2808,8 @@ async def main():
         web.get(r"/api/accounts/{acc}/profile-photos/{pid:\d+}/image", api_account_photo_image),
         web.delete(r"/api/accounts/{acc}/profile-photos/{pid:\d+}", api_account_photo_delete),
         web.post("/api/accounts/{acc}/profile", api_profile),
+        web.post("/api/accounts/{acc}/language", api_account_language),
+        web.post("/api/2fa/language", api_bulk_language),
         web.get("/api/accounts/{acc}/full", api_full),
         web.post("/api/accounts/{acc}/open", api_open),
         web.post("/api/accounts/{acc}/last-seen", api_last_seen),
