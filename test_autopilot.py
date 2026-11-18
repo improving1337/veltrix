@@ -25,18 +25,33 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         return {'post_id':ident,'post_date':(self.now-timedelta(hours=age)).isoformat(),
                 'post_text':'Test','samples':[],'execution':{},'suggestion':None}
 
-    async def test_random_reaction_target_and_dominant_preferred(self):
-        for limit in [0,1,2,3,15,100]:
-            for sentiment in ['neutral','sad','positive']:
-                result=automatic.validated_reaction_plan({'sentiment':sentiment,'intensity':'low','reactions':[{'emoji':'🔥','count':999}]},limit)
-                total = result['total']
-                self.assertLessEqual(total, limit)
-                self.assertGreaterEqual(total, max(1, limit * 4 // 5) if limit else 0)
-                if limit:
-                    self.assertIn(result['reactions'][0]['emoji'],['❤️','👍','😭'])
-                    self.assertGreaterEqual(result['reactions'][0]['count'],__import__('math').ceil(total*.65))
-                    fire=sum(r['count'] for r in result['reactions'] if r['emoji']=='🔥')
-                    self.assertLessEqual(fire,total//10)
+    async def test_caption_options_override_generic_sentiment(self):
+        data = {
+            'sentiment': 'positive',
+            'reactions': [
+                {'emoji': '🔥', 'count': 100},
+                {'emoji': '😭', 'count': 80},
+                {'emoji': '❤️', 'count': 20},
+            ],
+        }
+        caption = 'Игрок поставил рекорд\n❤️ — Лучший!\n😭 — Лучше бы MVP'
+        with patch('automatic.random.randint', return_value=20):
+            result = automatic.validated_reaction_plan(data, 20, post_text=caption)
+        self.assertEqual(result['reactions'], [{'emoji': '😭', 'count': 16}, {'emoji': '❤️', 'count': 4}])
+
+    async def test_caption_question_and_single_option(self):
+        self.assertEqual(automatic.explicit_reaction_choices('Согласны? 👍 / 👎'), ['👍', '👎'])
+        self.assertEqual(automatic.explicit_reaction_choices('😊 Обычный заголовок'), [])
+        result = automatic.validated_reaction_plan({}, 1, post_text='Он получил стикеры!\n🎈 — красава')
+        self.assertEqual(result['reactions'], [{'emoji': '🎈', 'count': 1}])
+
+    async def test_contextual_weights_and_sentiment_fallback(self):
+        data = {'sentiment': 'critical', 'reactions': [{'emoji': '👎', 'count': 4}, {'emoji': '👍', 'count': 1}]}
+        with patch('automatic.random.randint', return_value=10):
+            result = automatic.validated_reaction_plan(data, 10)
+        self.assertEqual(result['reactions'], [{'emoji': '👎', 'count': 8}, {'emoji': '👍', 'count': 2}])
+        self.assertEqual(automatic.validated_reaction_plan({'sentiment': 'sad'}, 1)['reactions'],
+                         [{'emoji': '😭', 'count': 1}])
 
     async def test_reaction_target_uses_both_bounds(self):
         with patch('automatic.random.randint', side_effect=[12, 15]) as choose:

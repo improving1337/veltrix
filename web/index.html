@@ -2985,7 +2985,7 @@ $("#up-go").onclick=upStart;
 upPoll();
 
 /* --- Автоматическая: мониторинг и опциональное выполнение плана --- */
-const AUTO_EMOJI=['❤️','👍','👎','🔥','😭','🤬','😍','💔','🤡','💩'];
+const AUTO_EMOJI=['❤️','👍','👎','🔥','😭','🤬','😍','💔','🤡','💩','😁','🤣','🎈'];
 function autoPolicyFields(d){const root=$('#auto-emoji-options');root.replaceChildren();for(const emoji of AUTO_EMOJI){const label=el('label','auto-emoji-choice'),input=el('input');input.type='checkbox';input.value=emoji;input.checked=(d.allowed_reactions||AUTO_EMOJI).includes(emoji);input.onchange=()=>{AUTO.dirty=true;};label.append(input,document.createTextNode(emoji));root.append(label);}$('#auto-reaction-prompt').value=d.reaction_prompt||'';}
 $('#auto-reaction-prompt').oninput=()=>{AUTO.dirty=true;};
 const AUTO={data:null,values:[34,15,9,7,5,4,3,2,2,2,1,1,2,2,1,1,1,2,1,1,1,1,1,1],timer:null,drag:null,dirty:false,selectedId:null,lockSelection:false,showArchive:false,raw:null,serverClockOffsetMs:0};

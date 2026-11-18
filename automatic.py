@@ -18,9 +18,12 @@ from aiohttp import web
 
 DEFAULT_HOURS = [34, 15, 9, 7, 5, 4, 3, 2, 2, 2, 1, 1, 2, 2, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1]
 assert len(DEFAULT_HOURS) == 24 and sum(DEFAULT_HOURS) == 100
-ALLOWED_EMOJI = ('❤️', '👍', '👎', '🔥', '😭', '🤬', '😍', '💔', '🤡', '💩')
+ALLOWED_EMOJI = ('❤️', '👍', '👎', '🔥', '😭', '🤬', '😍', '💔', '🤡', '💩', '😁', '🤣', '🎈')
 EMOJI_ALIASES = {'❤': '❤️', '♥️': '❤️', '♥': '❤️'}
-DEFAULT_PROMPT = 'Предпочитай сердечки и лайки, для грустных новостей — слёзы. Одна реакция должна явно преобладать; остальные дополняют её. Избегай избытка огоньков.'
+LEGACY_DEFAULT_PROMPT = 'Предпочитай сердечки и лайки, для грустных новостей — слёзы. Одна реакция должна явно преобладать; остальные дополняют её. Избегай избытка огоньков.'
+DEFAULT_PROMPT = ('Учитывай контекст киберспортивной новости и смысл эмодзи в подписи. '
+                  'Для рекорда или возвращения игрока уместна поддержка, для спорного мнения — согласие или несогласие. '
+                  'Добавляй вторую реакцию, только если она выражает уместную для этого поста точку зрения.')
 INTENSITY_RATIOS = {'low': 0.25, 'normal': 0.5, 'high': 0.85}
 LOG = logging.getLogger(__name__)
 
@@ -86,8 +89,27 @@ def mixed_reactions(emojis, amount, rng=None):
     return [emoji for _, _, emoji in slots]
 
 
-def validated_reaction_plan(data, configured_max, allowed=None):
-    """Sample a total within the configured cap and preserve a dominant emoji."""
+def explicit_reaction_choices(text):
+    """Recognize captioned reaction options near the end of a publication."""
+    labels = '|'.join(map(re.escape, (*ALLOWED_EMOJI, *EMOJI_ALIASES)))
+    choices = {}
+    for line in str(text).strip().splitlines()[-8:]:
+        line = line.strip()
+        caption = re.match(rf'^({labels})\s*[—–-]\s*\S', line)
+        if caption:
+            emoji = caption.group(1)
+            choices[EMOJI_ALIASES.get(emoji, emoji)] = None
+            continue
+        if '?' in line:
+            options = re.findall(labels, line.rsplit('?', 1)[-1])
+            if len(options) > 1:
+                for emoji in options:
+                    choices[EMOJI_ALIASES.get(emoji, emoji)] = None
+    return list(choices)
+
+
+def validated_reaction_plan(data, configured_max, allowed=None, post_text=''):
+    """Sample a total within the configured cap and allocate by context."""
     configured_max = max(0, int(configured_max))
     allowed = list(ALLOWED_EMOJI if allowed is None else allowed)
     if not allowed:
@@ -112,23 +134,24 @@ def validated_reaction_plan(data, configured_max, allowed=None):
             continue
         if count > 0:
             weights[emoji] = weights.get(emoji, 0) + min(count, 100000)
-    preferred = [emoji for emoji in ('😭', '❤️', '👍') if emoji in allowed] if sentiment == 'sad' else [emoji for emoji in ('❤️', '👍', '😭') if emoji in allowed]
-    dominant = preferred[0] if preferred else max(allowed, key=lambda e: weights.get(e, 0))
-    if sentiment != 'sad' and preferred:
-        dominant = max(preferred, key=lambda e: weights.get(e, 0))
+    choices = [emoji for emoji in explicit_reaction_choices(post_text) if emoji in allowed]
+    if choices:
+        # Keep explicitly offered answers even when the model missed one.
+        weights = {emoji: weights.get(emoji, 1) for emoji in choices}
+    if not weights:
+        fallback = {
+            'sad': ('😭', '💔', '❤️'),
+            'angry': ('🤬', '👎'),
+            'critical': ('👎', '👍'),
+            'positive': ('❤️', '👍', '🔥'),
+        }.get(sentiment, ('👍', '❤️'))
+        weights = {next((emoji for emoji in fallback if emoji in allowed), allowed[0]): 1}
     target = random.randint(max(1, configured_max * 4 // 5), configured_max) if configured_max > 1 else configured_max
-    secondary = sorted((e for e in allowed if e != dominant), key=lambda e: (e in ('❤️','👍','😭'), weights.get(e, 0)), reverse=True)[:2]
-    main_count = target if not secondary else math.ceil(target * random.uniform(.65, .82))
-    rest = apportion(target-main_count, [weights.get(e, 1) for e in secondary])
-    allocation = {dominant: main_count, **dict(zip(secondary, rest))}
-    if '🔥' in allocation and dominant != '🔥':
-        excess = max(0, allocation['🔥'] - target//10)
-        allocation['🔥'] -= excess
-        allocation[dominant] += excess
-    result = [{'emoji': e, 'count': n} for e, n in allocation.items() if n > 0]
+    counts = apportion(target, list(weights.values()))
+    result = [{'emoji': emoji, 'count': count} for emoji, count in zip(weights, counts) if count > 0]
     result.sort(key=lambda x: -x['count'])
     return {
-        'status': 'ok', 'policy_version': 3, 'reactions': result, 'total': sum(x['count'] for x in result),
+        'status': 'ok', 'policy_version': 4, 'reactions': result, 'total': sum(x['count'] for x in result),
         'limit': configured_max, 'intensity': intensity, 'sentiment': sentiment,
         'reason': str(data.get('reason', ''))[:500],
         'repost_caption': str(data.get('repost_caption', ''))[:500],
@@ -307,6 +330,8 @@ class Monitor:
                 for key in self.state:
                     if key in old:
                         self.state[key] = old[key]
+                if self.state['reaction_prompt'] == LEGACY_DEFAULT_PROMPT:
+                    self.state['reaction_prompt'] = DEFAULT_PROMPT
                 if not isinstance(self.state['posts'], list):
                     self.state['posts'] = []
                 # v3 => v4: keep the currently observed publication if any,
@@ -559,13 +584,16 @@ class Monitor:
         post['samples'] = samples[-2400:]
 
     def add_post(self, message, now):
+        text = getattr(message, 'message', '') or ''
+        if len(text) > 2500:
+            text = text[:1895] + '\n[…]\n' + text[-600:]
         post = {
-            'post_id': int(message.id), 'post_text': (getattr(message, 'message', '') or '')[:2500],
+            'post_id': int(message.id), 'post_text': text,
             'post_date': message.date.isoformat() if getattr(message, 'date', None) else now,
             'views': None, 'forwards': None, 'actual_reactions': None,
             'reaction_breakdown': [], 'first_seen': now, 'last_checked': None,
             'execution': {},
-            'suggestion': (None if (getattr(message, 'message', '') or '') else
+            'suggestion': (None if text else
                            {'status': 'unavailable', 'message': 'Для анализа DeepSeek нужен текст новости'}),
             'samples': [], 'missing': False,
         }
@@ -668,7 +696,9 @@ class Monitor:
             return
         key = env_value('DEEPSEEK_API_KEY', self.env_directory)
         max_reactions = min(self.available_count(), max(0, int(self.state['max_reactions'])))
-        post_text = post['post_text'][:1800]
+        post_text = post['post_text'].strip()
+        analysis_text = (post_text if len(post_text) <= 1800 else
+                         post_text[:1200] + '\n[…]\n' + post_text[-600:])
         if not key:
             post['suggestion'] = {'status': 'unavailable', 'reason_code': 'missing_key',
                                   'message': 'Добавь DEEPSEEK_API_KEY в .env для рекомендаций ИИ'}
@@ -686,7 +716,11 @@ class Monitor:
             'reactions=[{"emoji":"...","count":1}], reason и repost_caption. '
             'Разрешены только: '+ ' '.join(allowed) + '. '
             'Поле count задаёт относительный вес эмодзи. Количество реакций планировщик выберет сам. '
-            'Предпочитай сердечки, лайки и слёзы по смыслу новости. Огоньки — редкое дополнение. '
+            'Сначала проверь подпись в конце: если «эмодзи — ответ» или вопрос с вариантами, '
+            'эмодзи означает указанный ответ. Например, 😭 может значить «лучше бы MVP» в позитивном посте. '
+            'Используй только уместные варианты и дай больший вес более вероятному ответу, '
+            'не выравнивай доли автоматически. Если вариантов нет, опирайся на новость, '
+            'тон автора и контекст, игнорируй рекламные вставки. '
             'Настройки редактора канала: '+guidance
         )
         try:
@@ -698,7 +732,7 @@ class Monitor:
                         headers={'Authorization': 'Bearer ' + key},
                         json={'model': 'deepseek-chat', 'temperature': 0.35,
                               'response_format': {'type': 'json_object'},
-                              'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': post_text}]},
+                              'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': analysis_text}]},
                     ) as response:
                         body = await response.json(content_type=None)
                         if response.status >= 400:
@@ -706,7 +740,7 @@ class Monitor:
                 data = json.loads(body['choices'][0]['message']['content'])
                 if not isinstance(data, dict):
                     raise ValueError('DeepSeek returned invalid JSON object')
-                suggestion = validated_reaction_plan(data, max_reactions, allowed)
+                suggestion = validated_reaction_plan(data, max_reactions, allowed, post_text)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -805,10 +839,14 @@ class Monitor:
                 recommendation = post.get('suggestion') or {}
                 if recommendation.get('status') == 'ok':
                     prior_reactions = post.get('execution', {}).get('reactions') or {}
-                    if recommendation.get('policy_version') not in (2, 3) or (
-                        recommendation.get('policy_version') == 2 and not prior_reactions.get('actions')
-                    ):
-                        recommendation = validated_reaction_plan(recommendation, min(self.available_count(), int(self.state['max_reactions'])), self.state['allowed_reactions'])
+                    version = recommendation.get('policy_version')
+                    if version not in (2, 3, 4) or (version in (2, 3) and not prior_reactions.get('actions')):
+                        recommendation = validated_reaction_plan(
+                            recommendation,
+                            min(self.available_count(), int(self.state['max_reactions'])),
+                            self.state['allowed_reactions'],
+                            post.get('post_text', ''),
+                        )
                         post['suggestion'] = recommendation
                         self.save()
                     emojis = [(r['emoji'], r['count']) for r in recommendation.get('reactions', [])
