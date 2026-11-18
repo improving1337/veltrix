@@ -25,21 +25,30 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         return {'post_id':ident,'post_date':(self.now-timedelta(hours=age)).isoformat(),
                 'post_text':'Test','samples':[],'execution':{},'suggestion':None}
 
-    async def test_exact_reaction_target_and_dominant_preferred(self):
+    async def test_random_reaction_target_and_dominant_preferred(self):
         for limit in [0,1,2,3,15,100]:
             for sentiment in ['neutral','sad','positive']:
                 result=automatic.validated_reaction_plan({'sentiment':sentiment,'intensity':'low','reactions':[{'emoji':'🔥','count':999}]},limit)
-                self.assertEqual(result['total'],limit)
+                total = result['total']
+                self.assertLessEqual(total, limit)
+                self.assertGreaterEqual(total, max(1, limit * 4 // 5) if limit else 0)
                 if limit:
                     self.assertIn(result['reactions'][0]['emoji'],['❤️','👍','😭'])
-                    self.assertGreaterEqual(result['reactions'][0]['count'],__import__('math').ceil(limit*.65))
+                    self.assertGreaterEqual(result['reactions'][0]['count'],__import__('math').ceil(total*.65))
                     fire=sum(r['count'] for r in result['reactions'] if r['emoji']=='🔥')
-                    self.assertLessEqual(fire,limit//10)
+                    self.assertLessEqual(fire,total//10)
+
+    async def test_reaction_target_uses_both_bounds(self):
+        with patch('automatic.random.randint', side_effect=[12, 15]) as choose:
+            self.assertEqual(automatic.validated_reaction_plan({}, 15)['total'], 12)
+            self.assertEqual(automatic.validated_reaction_plan({}, 15)['total'], 15)
+            self.assertEqual([call.args for call in choose.call_args_list], [(12, 15), (12, 15)])
 
     async def test_reaction_allowlist_and_single_choice(self):
         for allowed in [['👍'],['😭','💔'],['🔥'],['👎','🤬']]:
             result=automatic.validated_reaction_plan({'reactions':[{'emoji':'❤️','count':100}]},15,allowed)
-            self.assertEqual(result['total'],15)
+            self.assertLessEqual(result['total'],15)
+            self.assertGreaterEqual(result['total'],12)
             self.assertTrue(all(r['emoji'] in allowed for r in result['reactions']))
 
     async def test_view_target_persists_and_clamps_to_accounts(self):

@@ -3291,7 +3291,7 @@ function autoMultiForms(d,force=false){
     const viewCheck=el('input','');viewCheck.type='checkbox';viewCheck.checked=c.views_enabled!==false;viewCheck.dataset.key='views_enabled';
     viewCheck.onchange=()=>{row.dataset.dirty='1'};
     viewToggle.append(viewCheck,document.createTextNode('Добавлять просмотры'));viewBlock.append(viewToggle);
-    const reactionBlock=makeRange('max_reactions','Реакций на пост');
+    const reactionBlock=makeRange('max_reactions','Макс. реакций на пост');
     const planToggle=el('label','auto-plan-toggle');
     const planCheck=el('input','');planCheck.type='checkbox';planCheck.checked=c.execute_plan===true;
     planCheck.onchange=()=>{row.dataset.dirty='1'};

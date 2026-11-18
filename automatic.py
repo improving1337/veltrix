@@ -87,7 +87,7 @@ def mixed_reactions(emojis, amount, rng=None):
 
 
 def validated_reaction_plan(data, configured_max, allowed=None):
-    """Use the configured target and channel allowlist; preserve a dominant emoji."""
+    """Sample a total within the configured cap and preserve a dominant emoji."""
     configured_max = max(0, int(configured_max))
     allowed = list(ALLOWED_EMOJI if allowed is None else allowed)
     if not allowed:
@@ -116,7 +116,7 @@ def validated_reaction_plan(data, configured_max, allowed=None):
     dominant = preferred[0] if preferred else max(allowed, key=lambda e: weights.get(e, 0))
     if sentiment != 'sad' and preferred:
         dominant = max(preferred, key=lambda e: weights.get(e, 0))
-    target = configured_max
+    target = random.randint(max(1, configured_max * 4 // 5), configured_max) if configured_max > 1 else configured_max
     secondary = sorted((e for e in allowed if e != dominant), key=lambda e: (e in ('❤️','👍','😭'), weights.get(e, 0)), reverse=True)[:2]
     main_count = target if not secondary else math.ceil(target * random.uniform(.65, .82))
     rest = apportion(target-main_count, [weights.get(e, 1) for e in secondary])
@@ -128,7 +128,7 @@ def validated_reaction_plan(data, configured_max, allowed=None):
     result = [{'emoji': e, 'count': n} for e, n in allocation.items() if n > 0]
     result.sort(key=lambda x: -x['count'])
     return {
-        'status': 'ok', 'policy_version': 2, 'reactions': result, 'total': sum(x['count'] for x in result),
+        'status': 'ok', 'policy_version': 3, 'reactions': result, 'total': sum(x['count'] for x in result),
         'limit': configured_max, 'intensity': intensity, 'sentiment': sentiment,
         'reason': str(data.get('reason', ''))[:500],
         'repost_caption': str(data.get('repost_caption', ''))[:500],
@@ -685,7 +685,7 @@ class Monitor:
             'Верни строго JSON с sentiment=positive|sad|angry|critical|neutral, intensity=low|normal|high, '
             'reactions=[{"emoji":"...","count":1}], reason и repost_caption. '
             'Разрешены только: '+ ' '.join(allowed) + '. '
-            f'Распредели ровно {max_reactions} реакций; одна доминирует. '
+            'Поле count задаёт относительный вес эмодзи. Количество реакций планировщик выберет сам. '
             'Предпочитай сердечки, лайки и слёзы по смыслу новости. Огоньки — редкое дополнение. '
             'Настройки редактора канала: '+guidance
         )
@@ -804,7 +804,10 @@ class Monitor:
                 planned |= self.update_execution_plan(post, 'views', view_target, [], now)
                 recommendation = post.get('suggestion') or {}
                 if recommendation.get('status') == 'ok':
-                    if recommendation.get('policy_version') != 2:
+                    prior_reactions = post.get('execution', {}).get('reactions') or {}
+                    if recommendation.get('policy_version') not in (2, 3) or (
+                        recommendation.get('policy_version') == 2 and not prior_reactions.get('actions')
+                    ):
                         recommendation = validated_reaction_plan(recommendation, min(self.available_count(), int(self.state['max_reactions'])), self.state['allowed_reactions'])
                         post['suggestion'] = recommendation
                         self.save()

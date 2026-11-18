@@ -273,12 +273,16 @@ class ChannelJoiner:
     async def _join(client, kind, key, extra=None):
         from telethon.tl.functions.channels import JoinChannelRequest
         from telethon.tl.functions.messages import ImportChatInviteRequest
+        from telethon.tl.functions.account import UpdateNotifySettingsRequest
+        from telethon.tl.types import InputNotifyPeer, InputPeerNotifySettings
         try:
             if kind == "invite":
-                await client(ImportChatInviteRequest(key))
+                updates = await client(ImportChatInviteRequest(key))
+                chats = getattr(updates, "chats", [])
+                entity = chats[0] if len(chats) == 1 else None
             else:
-                await client(JoinChannelRequest(await client.get_entity(key)))
-            return "ok", "вошёл"
+                entity = await client.get_entity(key)
+                await client(JoinChannelRequest(entity))
         except Exception as e:
             n = type(e).__name__
             if n == "UserAlreadyParticipantError":
@@ -288,6 +292,18 @@ class ChannelJoiner:
             if n == "FloodWaitError":
                 return "err", f"FloodWait: подождать {getattr(e, 'seconds', '?')} сек"
             return "err", f"{n}: {e}"[:200]
+        if entity is not None and random.random() < 0.7:
+            try:
+                peer = await client.get_input_entity(entity)
+                await client(UpdateNotifySettingsRequest(
+                    peer=InputNotifyPeer(peer),
+                    settings=InputPeerNotifySettings(mute_until=2**31 - 1),
+                ))
+            except Exception as exc:
+                note = f"вошёл; уведомления не отключены ({type(exc).__name__})"
+                return "ok", note
+            return "ok", "вошёл; уведомления отключены"
+        return "ok", "вошёл"
 
     def cancel(self, plan_id):
         self.plans.pop(plan_id, None)
