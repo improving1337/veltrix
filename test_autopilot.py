@@ -40,10 +40,23 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['reactions'], [{'emoji': '😭', 'count': 16}, {'emoji': '❤️', 'count': 4}])
 
     async def test_caption_question_and_single_option(self):
-        self.assertEqual(automatic.explicit_reaction_choices('Согласны? 👍 / 👎'), ['👍', '👎'])
-        self.assertEqual(automatic.explicit_reaction_choices('😊 Обычный заголовок'), [])
+        self.assertEqual(list(automatic.explicit_reaction_choices('Согласны? 👍 / 👎')), ['👍', '👎'])
+        self.assertEqual(automatic.explicit_reaction_choices('😊 Обычный заголовок'), {})
         result = automatic.validated_reaction_plan({}, 1, post_text='Он получил стикеры!\n🎈 — красава')
         self.assertEqual(result['reactions'], [{'emoji': '🎈', 'count': 1}])
+
+    async def test_poll_labels_and_no_invented_votes(self):
+        caption = '❤️ — Лучший!\n😭 — Лучше бы MVP'
+        self.assertEqual(automatic.explicit_reaction_choices(caption),
+                         {'❤️': 'Лучший!', '😭': 'Лучше бы MVP'})
+        data = {'sentiment': 'sad', 'reactions': [{'emoji': '🔥', 'count': 100}]}
+        self.assertEqual(automatic.validated_reaction_plan(data, 10, post_text=caption)['status'],
+                         'unavailable')
+        data['reactions'].append({'emoji': '❤️', 'count': 100})
+        result = automatic.validated_reaction_plan(data, 1, post_text=caption)
+        self.assertEqual(result['reactions'], [{'emoji': '❤️', 'count': 1}])
+        self.assertEqual(automatic.validated_reaction_plan(data, 10, ['🔥'], caption)['status'],
+                         'unavailable')
 
     async def test_contextual_weights_and_sentiment_fallback(self):
         data = {'sentiment': 'critical', 'reactions': [{'emoji': '👎', 'count': 4}, {'emoji': '👍', 'count': 1}]}
