@@ -1,12 +1,14 @@
 """
-Вкладки «Реакции» и «Просмотры»: аккаунты по очереди (с задержками) ставят реакцию / засчитывают просмотр
-на публичный пост https://t.me/channel/123. Работает на той же схеме, что и «Каналы»
+Услуги «Реакции», «Просмотры» и «Репосты»: аккаунты по очереди выполняют действие
+с публичным постом https://t.me/channel/123. Работает на той же схеме, что и «Каналы»
 (план -> подтверждение -> несколько параллельных задач), см. channels.py.
 
-Эндпоинты: /api/reactions/{plan,start,stop,cancel,job} и /api/views/{plan,start,stop,cancel,job}
+Префиксы API: /api/reactions, /api/views, /api/reposts
 """
 import random
 import re
+
+from telethon.errors import ChatForwardsRestrictedError
 
 import channels
 import plan_options
@@ -45,7 +47,7 @@ class PostBase(ChannelJoiner):
     parse = staticmethod(parse_post_link)
 
     async def _subscribed(self, alive, kind, key):
-        return set(), 0  # для реакций и просмотров подписка не нужна
+        return set(), 0  # для действий с публичным постом подписка не нужна
 
     async def _title(self, client, kind, key):
         """Проверяем, что пост существует; возвращаем «канал · пост N»."""
@@ -104,6 +106,25 @@ class ViewsJoiner(PostBase):
             return explain(e)
 
 
+class RepostJoiner(PostBase):
+    @staticmethod
+    async def _join(client, kind, key, extra=None):
+        channel, message_id = key
+        try:
+            source = await client.get_input_entity(channel)
+            if await plan_options.wait_before_action(extra):
+                return "skip", "остановлено"
+            message = await client.forward_messages("me", message_id, from_peer=source)
+            if not message:
+                return "err", "Telegram не подтвердил пересылку"
+            return "ok", "переслано в «Избранное»"
+        except ChatForwardsRestrictedError:
+            return "err", "Telegram запретил пересылку из этого канала"
+        except Exception as e:
+            return explain(e)
+
+
 def register_all(app, get_clients):
     channels.register(app, get_clients, prefix="reactions", joiner_cls=ReactionJoiner)
     channels.register(app, get_clients, prefix="views", joiner_cls=ViewsJoiner)
+    channels.register(app, get_clients, prefix="reposts", joiner_cls=RepostJoiner)

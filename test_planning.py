@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from telethon.errors import ChatForwardsRestrictedError
 
 import automatic
 import channels
@@ -167,7 +168,7 @@ class EligibilityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_every_service_applies_options(self):
         clients = {'recent': client(2), 'old': client(9)}
-        for cls in [channels.ChannelJoiner, posts.ViewsJoiner, posts.ReactionJoiner,
+        for cls in [channels.ChannelJoiner, posts.ViewsJoiner, posts.ReactionJoiner, posts.RepostJoiner,
                     multi.MultiJoiner, multi.ButtonsJoiner, multi.StartsJoiner, unsub.UnsubJoiner]:
             joiner = cls(lambda: clients)
             subscribed = {'old'} if cls is unsub.UnsubJoiner else set()
@@ -180,6 +181,52 @@ class EligibilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([i['account'] for i in plan['items']], ['old'], cls.__name__)
             self.assertEqual(plan['finish_at'], finish, cls.__name__)
             self.assertGreater(plan['total'], 28790)
+
+    async def test_reposts_forward_once_to_each_selected_accounts_saved_messages(self):
+        clients = {'first': client(), 'second': client()}
+        sources = {name: object() for name in clients}
+        for name, selected in clients.items():
+            selected.get_input_entity = AsyncMock(return_value=sources[name])
+            selected.forward_messages = AsyncMock(return_value=object())
+        app = web.Application()
+        channels.register(app, lambda: clients)
+        async with TestClient(TestServer(app)) as http:
+            response = await http.post('/api/reposts/plan', json={
+                'link': 'https://t.me/example/123', 'count': 3, 'delay_from': 0, 'delay_to': 0,
+            })
+            self.assertEqual(response.status, 200)
+            plan = await response.json()
+            self.assertCountEqual([item['account'] for item in plan['items']], clients)
+            for selected in clients.values():
+                selected.forward_messages.assert_not_awaited()
+            response = await http.post('/api/reposts/start', json={'plan_id': plan['id']})
+            self.assertEqual(response.status, 200)
+            async with asyncio.timeout(3):
+                while True:
+                    response = await http.get('/api/reposts/job')
+                    job = (await response.json())['jobs'][0]
+                    if job['status'] != 'running':
+                        break
+                    await asyncio.sleep(.01)
+            self.assertEqual(job['status'], 'done')
+            self.assertEqual([item['state'] for item in job['items']], ['ok', 'ok'])
+            for name, selected in clients.items():
+                selected.get_input_entity.assert_awaited_once_with('example')
+                selected.forward_messages.assert_awaited_once_with('me', 123, from_peer=sources[name])
+
+    async def test_repost_respects_wait_guard_and_reports_protected_channel(self):
+        selected = client()
+        selected.get_input_entity = AsyncMock()
+        selected.forward_messages = AsyncMock(side_effect=ChatForwardsRestrictedError(None))
+        guard = AsyncMock(return_value=True)
+        state, _ = await posts.RepostJoiner._join(selected, 'post', ('example', 123),
+                                                 {'wait_before_action': guard})
+        self.assertEqual(state, 'skip')
+        guard.assert_awaited_once()
+        selected.forward_messages.assert_not_awaited()
+        state, note = await posts.RepostJoiner._join(selected, 'post', ('example', 123))
+        self.assertEqual(state, 'err')
+        self.assertIn('запретил пересылку', note)
 
     async def test_max_checks_real_service_pool_and_leaves_no_plan(self):
         clients = {'recent': client(2), 'old': client(9), 'subscribed': client(10)}

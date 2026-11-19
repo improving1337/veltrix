@@ -2370,6 +2370,7 @@ const ICON={
  channels:'<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/>',
  reactions:'<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>',
  views:'<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>',
+ reposts:'<path d="m15 5 6 6-6 6v-4H9a5 5 0 0 0-5 5v-3a6 6 0 0 1 6-6h5z"/>',
  multi:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
  starts:'<polygon points="7 4 20 12 7 20 7 4"/>',
  btn:'<rect x="3" y="7" width="18" height="10" rx="3"/><path d="M8 12h8"/>',
@@ -2395,6 +2396,7 @@ const SERVICES=[
  {id:"channels",name:"Подписчики",grad:["#2aabee","#1a7fd1"],link:"Ссылка на канал",ph:"https://t.me/channel или https://t.me/+invite",hint:"подписка на канал"},
  {id:"reactions",name:"Реакции",grad:["#f472b6","#ec4899"],link:"Ссылка на пост",ph:"https://t.me/channel/123",emoji:true,hint:"реакция на пост"},
  {id:"views",name:"Просмотры",grad:["#34d399","#10b981"],link:"Ссылка на пост",ph:"https://t.me/channel/123",hint:"просмотр поста"},
+ {id:"reposts",name:"Репосты",grad:["#38bdf8","#4f46e5"],link:"Ссылка на пост",ph:"https://t.me/channel/123",hint:"пересылка поста в «Избранное» каждого аккаунта"},
  {id:"multi",name:"Мульти",grad:["#8b5cf6","#6d4aff"],link:"Ссылка на пост",ph:"https://t.me/channel/123",emoji:true,chans:true,uniq:true,hint:"в сеть → подписка → просмотр → реакция → кнопка → из сети",already:"Уже подписаны на все указанные каналы, исключены из плана"},
  {id:"starts",name:"Старты",grad:["#fb7185","#ef4444"],link:"Ссылка на бота",ph:"https://t.me/mybot?start=ref123",hint:"запуск бота по ссылке",already:"Уже запускали бота (есть переписка), исключены из плана"},
  {id:"btn",name:"Кнопки",grad:["#fbbf24","#f59e0b"],link:"Ссылка на пост с кнопкой",ph:"https://t.me/channel/123",chans:true,hint:"нажатие первой кнопки под постом",already:"Уже нажимали эту кнопку, исключены из плана",chkExcl:true},
@@ -2735,11 +2737,12 @@ function renderPlanBox(){
   b.append(ok,no);box.append(b);out.append(box);
 }
 $("#t-orders").onclick=openOrders;
-const VELTRIX_SERVICE_ICONS={channels:'users',reactions:'zap',views:'eye',multi:'layers',starts:'play',btn:'mouse-pointer',unsub:'user-minus'};
+const VELTRIX_SERVICE_ICONS={channels:'users',reactions:'zap',views:'eye',reposts:'forward',multi:'layers',starts:'play',btn:'mouse-pointer',unsub:'user-minus'};
 const VELTRIX_SERVICE_SVG={
  users:'<circle cx="12" cy="7" r="3.5"/><path d="M5 20v-2a7 7 0 0 1 14 0v2"/>',
  zap:'<path d="m13 2-9 12h7l-1 8 10-12h-7z"/>',
  eye:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+ forward:ICON.reposts,
  layers:'<path d="m12 3 9 5-9 5-9-5 9-5Zm-9 10 9 5 9-5M3 17l9 5 9-5"/>',
  play:'<path d="m8 5 11 7-11 7V5z"/>',
  'mouse-pointer':'<path d="M5 3v16l4-4 4 6 3-2-4-6h7L5 3z"/>',

@@ -450,7 +450,7 @@ def register(app, get_clients, prefix="channels", joiner_cls=None):
         web.post(f"/api/{prefix}/skip", skip),
         web.get(f"/api/{prefix}/job", job),
     ])
-    if joiner_cls is None:  # заодно подключаем вкладки «Реакции» и «Просмотры» (posts.py): main.py менять не нужно
+    if joiner_cls is None:  # подключаем услуги для постов из posts.py
         try:
             import posts
         except ImportError:
