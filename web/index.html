@@ -497,10 +497,20 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 #v-accounts.profile-open>.accwrap{display:none!important}
 #v-accounts #detail.open{display:block!important;position:static!important;inset:auto!important;transform:none!important;width:100%!important;max-width:none!important;max-height:none!important;padding:28px 32px!important;border:0!important;border-radius:0!important;box-shadow:none!important;background:transparent!important;overflow:visible!important}
 .profile-header{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:24px}.profile-header h2{margin:0;font-size:24px}.profile-file{font:12px monospace;color:#9693a5;overflow-wrap:anywhere}
-.profile-copy-fields,.profile-copy-delays{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0 0 16px}
-.profile-copy-fields label{display:flex;align-items:center;gap:7px;font-size:13px}
-.profile-copy-fields input{margin:0;accent-color:#9a86f9}
-.profile-copy-delays .fld{margin:0}
+.profile-copy-card{display:grid;gap:14px;container-type:inline-size}
+.profile-card.profile-copy-card h3{margin:0}
+.profile-copy-card .fld{display:grid;gap:5px;margin:0!important;min-width:0}
+.profile-copy-fields,.profile-copy-delays{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.profile-copy-option{display:flex;align-items:center;gap:8px;min-width:0;min-height:36px;padding:6px 9px;border:1px solid #32323c;border-radius:8px;font-size:13px;cursor:pointer}
+.profile-copy-option:has(input:checked){background:#1c1b28;border-color:#55506a}
+.profile-copy-option input[type="checkbox"]{width:16px;height:16px;flex:0 0 16px;padding:0;margin:0;accent-color:#ab98fa}
+.profile-copy-avatar-settings{display:grid;gap:10px;padding:12px;background:#171720;border:1px solid #32323c;border-radius:9px}
+.profile-copy-avatar-settings .profile-copy-count{max-width:14rem}
+.profile-copy-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.profile-copy-card .profile-copy-actions .btn{margin:0}
+.profile-copy-card .status{margin:0;min-height:0;overflow-wrap:anywhere}
+.profile-copy-card .status:empty,.profile-copy-review .status:empty{display:none}
+@container (max-width:300px){.profile-copy-fields,.profile-copy-delays{grid-template-columns:minmax(0,1fr)}}
 .profile-copy-dialog{box-sizing:border-box;width:calc(100vw - 32px);max-width:none;height:calc(100dvh - 32px);max-height:none;padding:0;border:1px solid #383644;border-radius:16px;background:#111218;color:#edebf5}
 .profile-copy-dialog::backdrop{background:#08080bd9}
 .profile-copy-review{display:flex;flex-direction:column;height:100%;overflow:hidden}
@@ -1769,16 +1779,25 @@ function profileCopyCard(account,onApplied){
   const options=el('div','profile-copy-fields'),checks={};
   for(const [key,label] of Object.entries(PROFILE_COPY_FIELDS)){
     const check=el('input');check.type='checkbox';checks[key]=check;
-    const row=el('label');row.append(check,label);options.append(row);
+    const row=el('label','profile-copy-option');row.append(check,el('span','',label));options.append(row);
   }
+  const avatarSettings=el('div','profile-copy-avatar-settings'),count=inp('3');
+  count.type='number';count.min='1';count.step='1';count.inputMode='numeric';count.className='profile-copy-count';
   const delays=el('div','profile-copy-delays'),from=inp('1'),to=inp('2');
   for(const input of [from,to]){input.type='number';input.min='0';input.step='any'}
   delays.append(fld('Задержка от, дней',from),fld('Задержка до, дней',to));
-  delays.hidden=true;checks.avatars.onchange=()=>{delays.hidden=!checks.avatars.checked};
+  avatarSettings.append(fld('Точное количество аватарок',count),delays);
+  const updateAvatarSettings=()=>{
+    avatarSettings.hidden=!checks.avatars.checked;
+    delays.hidden=!checks.avatars.checked||Number(count.value)<=1;
+  };
+  checks.avatars.onchange=count.oninput=updateAvatarSettings;
+  updateAvatarSettings();
   const preview=el('button','btn ghost','Предпросмотр'),status=el('div','status'),progress=el('div','status');
+  const actions=el('div','profile-copy-actions');actions.append(preview,status);
   status.setAttribute('role','status');progress.setAttribute('aria-live','polite');
   card.append(el('h3','','Скопировать случайный профиль'),fld('Ссылка на группу Telegram',group),
-    options,delays,preview,status,progress);
+    options,avatarSettings,actions,progress);
   const base=`/api/accounts/${enc(account.name)}/profile-copy`;
   let searching=false,active=false,timer;
   const buttons=()=>{preview.disabled=searching||active};
@@ -1808,9 +1827,13 @@ function profileCopyCard(account,onApplied){
     if(!fields.length||!group.value.trim()){
       status.className='status err';status.textContent='Укажите ссылку на группу и выберите поля.';return;
     }
+    if(checks.avatars.checked&&(!Number.isInteger(count.valueAsNumber)||count.valueAsNumber<1)){
+      status.className='status err';status.textContent='Укажите целое количество аватарок больше нуля.';count.focus();return;
+    }
     searching=true;buttons();status.className='status';status.textContent='Подбираю профиль…';
     try{
-      const draft=await api(base,{method:'POST',json:{group:group.value.trim(),fields,delay_from_days:from.value,delay_to_days:to.value}});
+      const data={group:group.value.trim(),fields,avatar_count:count.valueAsNumber,delay_from_days:from.value,delay_to_days:to.value};
+      const draft=await api(base,{method:'POST',json:data});
       if(!card.isConnected){api(base+'/'+draft.token,{method:'DELETE'}).catch(()=>{});return}
       status.textContent='';
       showProfileCopyReview(account,base,draft,job=>{

@@ -21,7 +21,13 @@ DRAFT_TTL = 20 * 60
 DAY = 24 * 60 * 60
 ACTIVE_STATES = {'waiting', 'running'}
 FIELDS = {'username', 'birthday', 'bio', 'avatars'}
+STATIC_PHOTO_SIZES = (types.PhotoSize, types.PhotoSizeProgressive, types.PhotoCachedSize,
+                      types.PhotoStrippedSize)
 LOG = logging.getLogger(__name__)
+
+
+class AvatarUnavailable(ValueError):
+    pass
 
 
 def copy_options(data):
@@ -34,7 +40,13 @@ def copy_options(data):
         raise ValueError('Укажите ссылку на группу Telegram')
     kind, key = parse_link(group)
     if 'avatars' not in selected:
-        return kind, key, set(selected), None
+        return kind, key, set(selected), None, None
+    count = str(data.get('avatar_count', '')).strip()
+    if not re.fullmatch(r'[0-9]{1,10}', count) or not 1 <= int(count) < 2**31 - 1:
+        raise ValueError('Укажите целое количество аватарок больше нуля')
+    count = int(count)
+    if count == 1:
+        return kind, key, set(selected), count, None
     try:
         delay = tuple(float(str(data.get(k, d)).replace(',', '.'))
                       for k, d in [('delay_from_days', 1), ('delay_to_days', 2)])
@@ -42,7 +54,7 @@ def copy_options(data):
         raise ValueError('Укажите интервал между аватарками в днях') from None
     if not all(math.isfinite(n * DAY) and n > 0 for n in delay) or delay[0] > delay[1]:
         raise ValueError('Задержка должна быть больше нуля, а «от» — не больше «до»')
-    return kind, key, set(selected), delay
+    return kind, key, set(selected), count, delay
 
 
 async def group_entity(client, kind, key):
@@ -139,7 +151,22 @@ class ProfileCopies:
         if job and job['state'] in ACTIVE_STATES:
             raise ValueError('У аккаунта уже есть очередь изменений профиля')
 
-    async def select_source(self, acc, kind, key, selected):
+    async def download_avatar_still(self, client, photo):
+        sizes = [size for size in (getattr(photo, 'sizes', None) or ())
+                 if isinstance(size, STATIC_PHOTO_SIZES)]
+        sizes.sort(key=lambda size: getattr(size, 'w', 0) * getattr(size, 'h', 0), reverse=True)
+        # A Photo can also contain MP4 variants. An explicit still thumbnail
+        # type keeps Telethon from choosing a video when downloading it.
+        for size in sizes:
+            data = await client.download_media(photo, file=bytes, thumb=size.type)
+            if data:
+                try:
+                    return await asyncio.to_thread(self.prepare_avatar, data)
+                except ValueError:
+                    continue  # Try the next still size if Telegram returned unusable bytes.
+        raise AvatarUnavailable('У одной из аватарок нет доступного изображения')
+
+    async def select_source(self, acc, kind, key, selected, count, token):
         entity = await group_entity(acc.client, kind, key)
         excluded = self.used_sources | {draft['source_id'] for draft in self.drafts.values()}
         excluded = excluded | {self.target(a) for a in self.accounts().values() if a.me is not None}
@@ -147,7 +174,8 @@ class ProfileCopies:
                  if str(user.id) not in excluded and not user.bot and not user.deleted
                  and ('username' not in selected or user.username)]
         random.shuffle(users)
-        for user in users[:20]:
+        unusable_photos = False
+        for user in users[:60]:
             values = {}
             if selected & {'bio', 'birthday'}:
                 full = (await acc.client(functions.users.GetFullUserRequest(user))).full_user
@@ -162,20 +190,37 @@ class ProfileCopies:
                         continue
                     values['birthday'] = birthday
             photos = []
-            if 'avatars' in selected:
-                photos = await acc.client.get_profile_photos(user, limit=None)
-                if not photos:
+            if count is not None:
+                photos = await acc.client.get_profile_photos(user, limit=count + 1)
+                if len(photos) != count or (getattr(photos, 'total', None) or count) > count:
                     continue
             if 'username' in selected:
                 username = await available_username(acc.client, user.username)
                 if not username:
                     continue
                 values['username'] = username
+            if photos:
+                self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+                folder = self.photos / token
+                folder.mkdir(parents=True, mode=0o700)
+                try:
+                    for index, photo in enumerate(reversed(photos)):
+                        image = await self.download_avatar_still(acc.client, photo)
+                        (folder / f'{index}.jpg').write_bytes(image)
+                except AvatarUnavailable:
+                    self.remove_photos(token)
+                    unusable_photos = True
+                    continue
             return user, values, photos
+        if unusable_photos:
+            raise ValueError('Подходящие участники найдены, но скачать все их аватарки не удалось')
+        if count is not None:
+            raise ValueError(f'В доступной выборке нет нового участника с нужным количеством '
+                             f'аватарок ({count}) и выбранными полями')
         raise ValueError('В доступной выборке нет нового участника со всеми выбранными полями')
 
     async def preview(self, acc, data):
-        kind, key, selected, delay = copy_options(data)
+        kind, key, selected, count, delay = copy_options(data)
         target = self.target(acc)
         async with self.preview_lock:
             self.expire()
@@ -184,28 +229,18 @@ class ProfileCopies:
                 if draft['target'] == target:
                     self.drafts.pop(token)
                     self.remove_photos(token)
-            try:
-                source, values, photos = await asyncio.wait_for(self.select_source(acc, kind, key, selected), 90)
-            except FloodWaitError as exc:
-                raise ValueError(f'Повторите поиск через {exc.seconds} сек.') from None
-            except asyncio.TimeoutError:
-                raise ValueError('Telegram не успел вернуть данные для предпросмотра') from None
             token = secrets.token_hex(16)
             try:
-                if photos:
-                    self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-                    folder = self.photos / token
-                    folder.mkdir(parents=True, mode=0o700)
-                    for index, photo in enumerate(reversed(photos)):
-                        data = await asyncio.wait_for(acc.client.download_media(photo, file=bytes), 60)
-                        if not data:
-                            raise ValueError('Не удалось скачать все аватарки участника')
-                        image = await asyncio.to_thread(self.prepare_avatar, data)
-                        (folder / f'{index}.jpg').write_bytes(image)
+                source, values, photos = await asyncio.wait_for(
+                    self.select_source(acc, kind, key, selected, count, token), 120)
                 delays = [0] + [random.uniform(*delay) * DAY for _ in photos[1:]] if photos else []
                 draft = {'token': token, 'target': target, 'source_id': str(source.id), 'values': values,
                          'delays': delays, 'expires': self.clock() + DRAFT_TTL}
                 self.drafts[token] = draft
+            except FloodWaitError as exc:
+                raise ValueError(f'Повторите поиск через {exc.seconds} сек.') from None
+            except asyncio.TimeoutError:
+                raise ValueError('Telegram не успел вернуть данные для предпросмотра') from None
             finally:
                 if token not in self.drafts:
                     self.remove_photos(token)
