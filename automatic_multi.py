@@ -12,7 +12,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from automatic import Monitor, clean_link, utc_now, MAX_PARALLEL_ACTIONS
+from automatic import MAX_PARALLEL_ACTIONS, MembershipRequests, Monitor, clean_link, utc_now
 
 LOG = logging.getLogger(__name__)
 MAX_CHANNELS = 100
@@ -42,7 +42,7 @@ class Hub:
         # number of simultaneous Telegram actions / DeepSeek HTTP requests.
         self.action_semaphore = asyncio.Semaphore(MAX_PARALLEL_ACTIONS)
         self.analysis_semaphore = asyncio.Semaphore(2)
-        self.membership_semaphore = asyncio.Semaphore(8)
+        self.membership_requests = MembershipRequests()
         self.order = []
         self.lock = asyncio.Lock()
         self.load()
@@ -92,7 +92,7 @@ class Hub:
                           env_directory=self.directory)
             mon.action_semaphore = self.action_semaphore
             mon.analysis_semaphore = self.analysis_semaphore
-            mon.membership_semaphore = self.membership_semaphore
+            mon.membership_requests = self.membership_requests
             # A stored monitor for this channel may have been stopped and removed
             # from registry; the same JSON is recovered if it is later re-added.
             self.monitors[ident] = mon

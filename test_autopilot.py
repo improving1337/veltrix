@@ -1,3 +1,4 @@
+import asyncio
 import json
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from aiohttp import web
 from telethon import types
+from telethon.errors import FloodWaitError
 import automatic
 from automatic_multi import Hub, _JsonRequest, channel_key
 
@@ -92,12 +94,79 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([action['account'] for action in actions], ['member'])
         action = post['execution']['views']['actions'][0]
         action['status'] = 'running'
+        member_client = self.clients['member']
+        for _ in range(2):
+            self.assertEqual(list(await mon.subscriber_accounts(self.clients, 'example')), ['member'])
+        self.assertEqual(member_client.channels, ['example'])
+        entry = mon.membership_cache[('example', 'member')]
+        entry.checked_at -= automatic.MEMBERSHIP_ACTION_TTL
         self.clients['member'].participant = left
         with patch('posts.ViewsJoiner._join', new_callable=AsyncMock) as perform:
             await mon.perform_action(1, 'views', action, 'example')
         perform.assert_not_awaited()
         self.assertEqual(action['status'], 'pending')
         self.assertEqual(self.clients['member'].channels, ['example', 'example'])
+        self.assertEqual(await mon.subscriber_accounts(self.clients, 'example'), {})
+        self.assertEqual(member_client.channels, ['example', 'example'])
+
+    async def test_recent_membership_is_shared_across_concurrent_actions(self):
+        mon = self.monitor
+        client = self.clients['0']
+        clock = 1000
+
+        async def check(*args):
+            await asyncio.sleep(0)
+            return True, clock + automatic.MEMBERSHIP_ROSTER_TTL
+
+        with (patch('automatic.monotonic', side_effect=lambda: clock),
+              patch.object(mon.membership_requests, 'check', new_callable=AsyncMock, side_effect=check) as lookup):
+            self.assertTrue(await mon.is_subscriber('0', client, 'example'))
+            clock += automatic.MEMBERSHIP_ACTION_TTL
+            confirmations = await asyncio.gather(
+                mon.is_subscriber('0', client, 'example', before_action=True),
+                mon.is_subscriber('0', client, 'example', before_action=True))
+            self.assertEqual(confirmations, [True, True])
+            self.assertEqual(lookup.await_count, 2)
+            clock += 600
+            self.assertTrue(await mon.is_subscriber('0', client, 'example'))
+            self.assertEqual(lookup.await_count, 2)
+
+    async def test_membership_flood_wait_applies_across_channels(self):
+        class Client:
+            count = 0
+
+            async def get_input_entity(self, name):
+                return types.InputChannel(1, 1)
+
+            async def __call__(self, request):
+                self.count += 1
+                if self.count == 1:
+                    raise FloodWaitError(request, capture=180)
+                return SimpleNamespace(participant=types.ChannelParticipant(1, self.now))
+
+        client = Client()
+        client.now = self.now
+        requests = automatic.MembershipRequests()
+        clock = 1000
+        with patch('automatic.monotonic', side_effect=lambda: clock):
+            self.assertEqual(await requests.check('tg:1', client, 'first'), (False, 1180))
+            clock = 1179
+            self.assertEqual(await requests.check('tg:1', client, 'second'), (False, 1180))
+            self.assertEqual(client.count, 1)
+            clock = 1180
+            self.assertTrue((await requests.check('tg:1', client, 'second'))[0])
+            self.assertEqual(client.count, 2)
+
+    async def test_no_membership_scan_after_all_queued_actions_finish(self):
+        mon = self.monitor
+        mon.state.update(active=True, channel='https://t.me/example', execute_plan=True,
+                         subscribers_only=True, max_views=10)
+        post = mon.add_post(self.message(1, 'Test'), self.now.isoformat())
+        post['execution']['views'] = {'target': 1, 'actions': [{'status': 'done'}]}
+        with (patch('automatic.utc_now', return_value=self.now),
+              patch.object(mon, 'subscriber_accounts', new_callable=AsyncMock) as scan):
+            await mon.dispatch_actions()
+        scan.assert_not_awaited()
 
     async def test_ad_news_footer_and_reaction_vote(self):
         def plan(text, count, allowed):

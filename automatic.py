@@ -11,12 +11,16 @@ import os
 import random
 import re
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from time import monotonic
+from weakref import WeakValueDictionary
 
 import aiohttp
 from aiohttp import web
 from telethon import functions, types
+from telethon.errors import ChannelPrivateError, FloodPremiumWaitError, FloodWaitError, UserNotParticipantError
 
 DEFAULT_HOURS = [34, 15, 9, 7, 5, 4, 3, 2, 2, 2, 1, 1, 2, 2, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1]
 assert len(DEFAULT_HOURS) == 24 and sum(DEFAULT_HOURS) == 100
@@ -28,6 +32,61 @@ LOG = logging.getLogger(__name__)
 POST_SETTINGS = ('hours', 'max_views', 'max_reactions', 'execute_plan', 'views_enabled',
                  'allowed_reactions', 'reaction_prompt', 'subscribers_only')
 EMOJI_PATTERN = r'[\U0001f000-\U0001faff\u2600-\u27bf]\ufe0f?'
+MEMBERSHIP_ROSTER_TTL = 15 * 60
+MEMBERSHIP_ACTION_TTL = 60
+MEMBERSHIP_ERROR_TTL = 2 * 60
+
+
+@dataclass
+class Membership:
+    client: object
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    confirmed: bool = False
+    checked_at: float = 0
+    expires_at: float = 0
+
+
+class MembershipRequests:
+    """Pace participant lookups across channels and respect account flood waits."""
+
+    def __init__(self):
+        self.slots = asyncio.Semaphore(8)
+        self.pace = asyncio.Lock()
+        self.next_request = 0
+        self.account_locks = WeakValueDictionary()
+        self.blocked_until = {}
+
+    async def check(self, identity, client, channel):
+        async def lookup():
+            peer = await client.get_input_entity(channel)
+            result = await client(functions.channels.GetParticipantRequest(peer, types.InputPeerSelf()))
+            return isinstance(result.participant, (types.ChannelParticipant, types.ChannelParticipantSelf,
+                                                   types.ChannelParticipantAdmin, types.ChannelParticipantCreator))
+
+        lock = self.account_locks.setdefault(identity, asyncio.Lock())
+        async with lock:
+            now = monotonic()
+            blocked = self.blocked_until.get(identity, 0)
+            if blocked > now:
+                return False, blocked
+            self.blocked_until.pop(identity, None)
+            async with self.slots:
+                async with self.pace:
+                    delay = self.next_request - monotonic()
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+                    self.next_request = monotonic() + 0.2
+                try:
+                    confirmed = await asyncio.wait_for(lookup(), timeout=10)
+                except (FloodWaitError, FloodPremiumWaitError) as error:
+                    until = monotonic() + max(MEMBERSHIP_ERROR_TTL, error.seconds)
+                    self.blocked_until[identity] = until
+                    return False, until
+                except (UserNotParticipantError, ChannelPrivateError):
+                    confirmed = False
+                except Exception:
+                    return False, monotonic() + MEMBERSHIP_ERROR_TTL
+                return confirmed, monotonic() + MEMBERSHIP_ROSTER_TTL
 
 
 def post_reaction_context(text):
@@ -392,7 +451,7 @@ class Monitor:
         self.action_lock = asyncio.Lock()
         self.action_tasks = {}
         self.action_semaphore = asyncio.Semaphore(MAX_PARALLEL_ACTIONS)
-        self.membership_semaphore = asyncio.Semaphore(8)
+        self.membership_requests = MembershipRequests()
         self.membership_cache = {}
         self.reactions_cache = None
         migrated = False
@@ -500,34 +559,46 @@ class Monitor:
     def post_settings(self, post):
         return post.get('settings', self.state)
 
-    async def is_subscriber(self, client, channel):
-        async def check():
-            peer = await client.get_input_entity(channel)
-            result = await client(functions.channels.GetParticipantRequest(peer, types.InputPeerSelf()))
-            return isinstance(result.participant, (types.ChannelParticipant, types.ChannelParticipantSelf,
-                                                   types.ChannelParticipantAdmin, types.ChannelParticipantCreator))
-
-        async with self.membership_semaphore:
-            try:
-                return await asyncio.wait_for(check(), timeout=10)
-            except Exception:
-                return False
+    async def is_subscriber(self, name, client, channel, *, before_action=False):
+        key = (channel, name)
+        entry = self.membership_cache.get(key)
+        if entry is None or entry.client is not client:
+            entry = self.membership_cache[key] = Membership(client)
+        async with entry.lock:
+            now = monotonic()
+            positive_expired = (before_action and entry.confirmed
+                                and now - entry.checked_at >= MEMBERSHIP_ACTION_TTL)
+            if now >= entry.expires_at or positive_expired:
+                identity = self.account_identity(name, client)
+                entry.confirmed, entry.expires_at = await self.membership_requests.check(identity, client, channel)
+                entry.checked_at = monotonic()
+            return entry.confirmed
 
     async def subscriber_accounts(self, live, channel):
-        now = asyncio.get_running_loop().time()
-        self.membership_cache = {key: value for key, value in self.membership_cache.items()
-                                 if key[0] == channel and live.get(key[1]) is value[0]}
-
-        async def check(name, client):
-            key = (channel, name)
-            entry = self.membership_cache.get(key)
-            if entry is None or entry[1] <= now:
-                confirmed = await self.is_subscriber(client, channel)
-                entry = self.membership_cache[key] = (client, asyncio.get_running_loop().time() + 60, confirmed)
-            return entry[2]
-
-        included = await asyncio.gather(*(check(name, client) for name, client in live.items()))
+        now = monotonic()
+        for key, entry in list(self.membership_cache.items()):
+            if live.get(key[1]) is not entry.client and now >= entry.expires_at:
+                self.membership_cache.pop(key)
+        included = await asyncio.gather(*(self.is_subscriber(name, client, channel)
+                                         for name, client in live.items()))
         return {name: live[name] for name, confirmed in zip(live, included) if confirmed}
+
+    @staticmethod
+    def needs_subscribers(post, settings):
+        execution = post.get('execution', {})
+        suggestion = post.get('suggestion') or {}
+        targets = {
+            'views': settings['max_views'] if settings['views_enabled'] else 0,
+            'reactions': suggestion.get('total', 0) if suggestion.get('status') == 'ok' else 0,
+        }
+        for service, target in targets.items():
+            if not target:
+                continue
+            plan = execution.get(service) or {}
+            actions = plan.get('actions', [])
+            if not plan.get('target') or any(a['status'] == 'pending' for a in actions):
+                return True
+        return False
 
     def find_post(self, post_id):
         return next((p for p in self.state['posts'] if p['post_id'] == post_id), None)
@@ -960,6 +1031,8 @@ class Monitor:
                     continue
                 pool = live
                 if settings['subscribers_only']:
+                    if not self.needs_subscribers(post, settings):
+                        continue
                     if subscribers is None:
                         subscribers = await self.subscriber_accounts(live, channel)
                         if not self.state['active']:
@@ -1016,11 +1089,12 @@ class Monitor:
                 from posts import ViewsJoiner, ReactionJoiner
                 joiner = ViewsJoiner if service == 'views' else ReactionJoiner
                 async with self.action_semaphore:
-                    if self.post_settings(post)['subscribers_only'] and not await self.is_subscriber(client, channel):
-                        self.membership_cache.pop((channel, action['account']), None)
-                        action['status'] = 'pending'
-                        action.pop('started_at', None)
-                        return
+                    if self.post_settings(post)['subscribers_only']:
+                        confirmed = await self.is_subscriber(action['account'], client, channel, before_action=True)
+                        if not confirmed:
+                            action['status'] = 'pending'
+                            action.pop('started_at', None)
+                            return
                     result = await asyncio.wait_for(
                         joiner._join(client, 'post', (channel, post_id),
                                      {'emoji': action['emoji']} if service == 'reactions' else None),
