@@ -1,5 +1,6 @@
 import asyncio
 import json
+import random
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,7 +36,8 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
     async def test_discovery_settings_survive_changes_and_restart(self):
         mon = self.monitor
         mon.state.update(max_views=20, max_reactions=10, execute_plan=True)
-        old = mon.add_post(self.message(1, 'Реклама: скидка на подписку'), self.now.isoformat())
+        with patch('automatic.random.randint', side_effect=lambda low, high: high):
+            old = mon.add_post(self.message(1, 'Реклама: скидка на подписку'), self.now.isoformat())
         old_settings = mon.capture_settings()
         old_views = mon.view_target(old)
         await mon.configure(_JsonRequest({
@@ -43,7 +45,8 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
             'execute_plan': False, 'views_enabled': False, 'subscribers_only': True,
             'allowed_reactions': ['💩'], 'reaction_prompt': 'Updated',
         }))
-        new = mon.add_post(self.message(2, 'Реклама: скидка на подписку'), self.now.isoformat())
+        with patch('automatic.random.randint', side_effect=lambda low, high: high):
+            new = mon.add_post(self.message(2, 'Реклама: скидка на подписку'), self.now.isoformat())
         mon.save()
         restored = automatic.Monitor(mon.storage, lambda: self.clients)
         self.assertEqual(restored.find_post(1)['settings'], old_settings)
@@ -184,9 +187,82 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan(ad, 1, allowed), ('ad', {'❤️': 1}))
         self.assertEqual(plan('Команда выиграла финал.\n\nРеклама: купите билеты.', 20, allowed)[0], 'news')
         self.assertEqual(plan(ad + '\n\nГолосуем: 👍 — да, 😡 — нет.', 4, allowed),
-                         ('poll', {'👍': 2, '😡': 2}))
+                         ('poll', {'❤️': 2, '👍': 1, '😡': 1}))
         self.assertEqual(plan(ad + '\n\nГолосуем: 👍 — да, 😡 — нет.', 3, ['❤️', '😡']),
-                         ('poll', {'😡': 3}))
+                         ('poll', {'❤️': 2, '😡': 1}))
+
+    async def test_falcons_poll_hearts_dominate_and_telegram_alias_is_used(self):
+        text = ('🟢 **THORIN: СМЕНА IGL НЕ СПАСЁТ** 🟢 **FALCONS**\n\n'
+                'По мнению аналитика, ни один из действующих капитанов не способен заметно '
+                'улучшить результаты Falcons и заставить нынешний ростер работать.\n\n'
+                'Что должно измениться в Falcons в первую очередь?\n❤️ — капитан\n🔥 — состав')
+        mon = self.monitor
+        mon.state.update(max_reactions=15)
+        with patch('automatic.random.randint', return_value=15):
+            post = mon.add_post(self.message(1, text), self.now.isoformat())
+        with (patch.object(mon, 'channel_reactions', AsyncMock(return_value={'❤', '🔥'})),
+              patch('automatic.env_value', return_value='')):
+            await mon.analyze(1)
+        suggestion = post['suggestion']
+        self.assertEqual(suggestion['post_kind'], 'poll')
+        self.assertEqual({r['emoji']: r['count'] for r in suggestion['reactions']}, {'❤️': 9, '🔥': 6})
+        action = {'account': '0', 'emoji': '❤️', 'status': 'running'}
+        with patch('posts.ReactionJoiner._join', AsyncMock(return_value=('ok', ''))) as send:
+            await mon.perform_action(1, 'reactions', action, 'example')
+        send.assert_awaited_once_with(self.clients['0'], 'post', ('example', 1), {'emoji': '❤'})
+
+    async def test_bait_leaves_at_least_forty_percent_hearts_after_pool_cap(self):
+        examples = [('Согласны? 👍👎', {'👍', '👎'}), ('😭 - такого не ожидали', {'😭'}),
+                    ('Поставьте 😭 если расстроены', {'😭'})]
+        for text, options in examples:
+            context = automatic.post_reaction_context(text)
+            self.assertEqual(set(context['poll_options']), options)
+            result = automatic.validated_reaction_plan(context, 20, sorted(options | {'❤️'}))
+            self.assertEqual({r['emoji']: r['count'] for r in result['reactions']}['❤️'], 8)
+            self.assertEqual(automatic.reaction_allocation(6, result['proportions'])['❤️'], 3)
+
+    async def test_random_reaction_budgets_vary_within_limit_and_survive_restart(self):
+        mon = self.monitor
+        mon.state.update(max_reactions=15)
+        with patch('automatic.random.randint', side_effect=random.Random(41).randint):
+            posts = [mon.add_post(self.message(i, 'Согласны? 👍👎'), self.now.isoformat()) for i in range(10)]
+        budgets = [post['reaction_budget'] for post in posts]
+        self.assertGreater(len(set(budgets)), 1)
+        self.assertTrue(all(12 <= budget <= 15 for budget in budgets))
+        mon.save()
+        restored = automatic.Monitor(mon.storage, lambda: self.clients)
+        self.assertEqual([post['reaction_budget'] for post in restored.state['posts']], budgets)
+        with (patch.object(restored, 'channel_reactions', AsyncMock(return_value={'❤', '👍', '👎'})),
+              patch('automatic.env_value', return_value='')):
+            await restored.analyze(0)
+        self.assertEqual(restored.find_post(0)['suggestion']['total'], budgets[0])
+
+    async def test_dispatch_applies_heart_floor_at_the_smaller_executable_target(self):
+        self.clients = {str(i): object() for i in range(6)}
+        mon = self.monitor
+        mon.state.update(active=True, execute_plan=True, max_reactions=20)
+        post = mon.add_post(self.message(1, 'Согласны? 👍👎'), self.now.isoformat())
+        post['suggestion'] = automatic.validated_reaction_plan(post['reaction_context'], 20)
+        with patch('automatic.utc_now', return_value=self.now):
+            await mon.dispatch_actions()
+        actions = post['execution']['reactions']['actions']
+        self.assertEqual(len(actions), 6)
+        self.assertEqual(sum(a['emoji'] == '❤️' for a in actions), 3)
+
+    async def test_persisted_targets_keep_their_previous_policy(self):
+        mon = self.monitor
+        mon.state.update(active=True, execute_plan=True, max_views=40, max_reactions=15)
+        post = self.post(age=0)
+        post['settings'] = mon.capture_settings()
+        post['view_budget'] = {'base': 40, 'target': 48}
+        post['suggestion'] = {'status': 'ok', 'policy_version': 2, 'total': 15,
+                              'reactions': [{'emoji': '🔥', 'count': 15}]}
+        mon.state['posts'] = [post]
+        with patch('automatic.utc_now', return_value=self.now):
+            await mon.dispatch_actions()
+        self.assertEqual(post['execution']['views']['target'], 48)
+        self.assertEqual(post['execution']['reactions']['target'], 15)
+        self.assertEqual({a['emoji'] for a in post['execution']['reactions']['actions']}, {'🔥'})
 
     async def test_exact_reaction_target_and_dominant_preferred(self):
         for limit in [0,1,2,3,15,100]:
@@ -195,7 +271,8 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result['total'],limit)
                 if limit:
                     self.assertIn(result['reactions'][0]['emoji'],['❤️','👍','😭'])
-                    self.assertGreaterEqual(result['reactions'][0]['count'],__import__('math').ceil(limit*.65))
+                    hearts = sum(r['count'] for r in result['reactions'] if r['emoji'] == '❤️')
+                    self.assertGreaterEqual(hearts, (2 * limit + 4) // 5)
                     fire=sum(r['count'] for r in result['reactions'] if r['emoji']=='🔥')
                     self.assertLessEqual(fire,limit//10)
 
@@ -210,15 +287,15 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         mon.state['max_views']=40
         post=self.post();mon.state['posts']=[post]
         with patch('automatic.random.randint',side_effect=lambda low,high:high) as choose:
-            self.assertEqual(mon.view_target(post),48)
-            self.assertEqual(mon.view_target(post),48)
-            choose.assert_called_once_with(32,48)
+            self.assertEqual(mon.view_target(post),44)
+            self.assertEqual(mon.view_target(post),44)
+            choose.assert_called_once_with(36,44)
         restored=automatic.Monitor(mon.storage,lambda:self.clients)
-        self.assertEqual(restored.view_target(restored.state['posts'][0]),48)
+        self.assertEqual(restored.view_target(restored.state['posts'][0]),44)
         self.clients={str(i):object() for i in range(35)}
         self.assertEqual(mon.view_target(post),35)
         another=self.post(2)
-        self.assertTrue(32<=mon.view_target(another)<=35)
+        self.assertEqual(mon.view_target(another),35)
         self.clients={}
         empty=self.post(3)
         self.assertEqual(mon.view_target(empty),0)

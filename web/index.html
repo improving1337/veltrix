@@ -1029,8 +1029,8 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
   <div class="auto-panel" id="auto-policy-panel"><div class="auto-head"><div><h3>Реакции и промпт канала</h3><small>Настройки сохраняются отдельно для выбранного канала</small></div></div>
    <div id="auto-emoji-options" class="auto-emoji-options"></div>
    <label class="fld"><span>Промпт для анализа публикаций</span><textarea id="auto-reaction-prompt" rows="4" maxlength="6000" placeholder="Как выбирать реакции по содержанию публикации"></textarea></label>
-   <p class="auto-note">Количество реакций — цель плана, без уменьшения по «интенсивности». Одна разрешённая реакция преобладает. Ошибки Telegram и нехватка аккаунтов могут уменьшить выполненное количество.</p>
-   <p class="auto-note">Просмотры: цель выбирается для каждого поста в диапазоне ±20% от настройки, ограничивается доступными аккаунтами и сохраняется между перезапусками.</p>
+   <p class="auto-note">Цель по реакциям случайно выбирается для каждого нового поста в пределах лимита. Если ❤️ разрешено, оно получает минимум 40%, а в голосовании с ❤️ — больше любого другого варианта.</p>
+   <p class="auto-note">Просмотры: цель выбирается для каждого поста в диапазоне ±10% от настройки, ограничивается доступными аккаунтами и сохраняется между перезапусками.</p>
   </div>
   <div class="auto-panel"><div class="auto-head"><div><h3>Профиль просмотров · 24 часа</h3><small>Перетаскивай вершины колонок или используй стрелки клавиатуры</small></div><div><button id="auto-default" class="btn ghost" style="width:auto">По умолчанию</button></div></div>
    <div id="auto-plot" class="auto-plot" aria-label="24 редактируемых столбца с долями просмотров"></div><div id="auto-hours" class="auto-hours"></div><div class="auto-note" id="auto-sum">Сумма: 100%</div>
@@ -3432,12 +3432,18 @@ function autoMultiForms(d,force=false){
     };
     const viewBlock=makeRange('max_views','Просмотры · базовое число');
     const spread=el('small','auto-note'),viewSlider=viewBlock.querySelector('input[type=range]'),rangeChange=viewSlider.oninput;
-    const updateSpread=()=>{const base=+viewSlider.value;spread.textContent='На пост: '+Math.min(count,Math.ceil(base*.8))+'–'+Math.min(count,Math.floor(base*1.2))+' · ±20%';};viewSlider.oninput=()=>{rangeChange();updateSpread();};updateSpread();viewBlock.append(spread);
+    const updateSpread=()=>{const base=+viewSlider.value;spread.textContent='На пост: '+Math.min(count,Math.ceil(base*9/10))+'–'+Math.min(count,Math.floor(base*11/10))+' · ±10%';};viewSlider.oninput=()=>{rangeChange();updateSpread();};updateSpread();viewBlock.append(spread);
     const viewToggle=el('label','');viewToggle.className='auto-views-toggle';
     const viewCheck=el('input','');viewCheck.type='checkbox';viewCheck.checked=c.views_enabled!==false;viewCheck.dataset.key='views_enabled';
     viewCheck.onchange=()=>{row.dataset.dirty='1'};
     viewToggle.append(viewCheck,document.createTextNode('Добавлять просмотры'));viewBlock.append(viewToggle);
-    const reactionBlock=makeRange('max_reactions','Реакций на пост');
+    const reactionBlock=makeRange('max_reactions','Лимит реакций на пост');
+    const reactionSpread=el('small','auto-note'),reactionSlider=reactionBlock.querySelector('input[type=range]'),reactionChange=reactionSlider.oninput;
+    const updateReactionSpread=()=>{
+      const limit=+reactionSlider.value,min=limit?Math.max(1,Math.floor(limit*4/5)):0;
+      reactionSpread.textContent='На пост: '+min+'–'+limit;
+    };
+    reactionSlider.oninput=()=>{reactionChange();updateReactionSpread()};updateReactionSpread();reactionBlock.append(reactionSpread);
     const planToggle=el('label','auto-plan-toggle');
     const planCheck=el('input','');planCheck.type='checkbox';planCheck.checked=c.execute_plan===true;
     planCheck.onchange=()=>{row.dataset.dirty='1'};
