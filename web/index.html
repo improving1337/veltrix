@@ -497,6 +497,23 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 #v-accounts.profile-open>.accwrap{display:none!important}
 #v-accounts #detail.open{display:block!important;position:static!important;inset:auto!important;transform:none!important;width:100%!important;max-width:none!important;max-height:none!important;padding:28px 32px!important;border:0!important;border-radius:0!important;box-shadow:none!important;background:transparent!important;overflow:visible!important}
 .profile-header{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:24px}.profile-header h2{margin:0;font-size:24px}.profile-file{font:12px monospace;color:#9693a5;overflow-wrap:anywhere}
+.profile-copy-fields,.profile-copy-delays{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0 0 16px}
+.profile-copy-fields label{display:flex;align-items:center;gap:7px;font-size:13px}
+.profile-copy-fields input{margin:0;accent-color:#9a86f9}
+.profile-copy-delays .fld{margin:0}
+.profile-copy-dialog{box-sizing:border-box;width:calc(100vw - 32px);max-width:none;height:calc(100dvh - 32px);max-height:none;padding:0;border:1px solid #383644;border-radius:16px;background:#111218;color:#edebf5}
+.profile-copy-dialog::backdrop{background:#08080bd9}
+.profile-copy-review{display:flex;flex-direction:column;height:100%;overflow:hidden}
+.profile-copy-review>header,.profile-copy-review>footer{padding:16px clamp(16px,4vw,44px);background:#171720}
+.profile-copy-review h2,.profile-copy-review h3{margin:0 0 8px}
+.profile-copy-review>main{flex:1;overflow:auto;padding:16px clamp(16px,4vw,44px)}
+.profile-copy-review dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:7px 16px;margin:0 0 20px}
+.profile-copy-review dd{margin:0;overflow-wrap:anywhere;white-space:pre-wrap}
+.profile-copy-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,165px));gap:12px}
+.profile-copy-gallery figure{margin:0;padding:8px;border:1px solid #343443;border-radius:10px}
+.profile-copy-gallery img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:7px;display:block}
+.profile-copy-gallery figcaption{font-size:12px;margin-top:6px}
+.profile-copy-review>footer{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
 .profile-layout{display:grid;grid-template-columns:minmax(260px,1fr) minmax(320px,1.65fr);gap:20px;align-items:start}.profile-card{padding:22px;border:1px solid #2a2b35;border-radius:14px;background:#111218;min-width:0}.profile-card .otoggle{position:relative}.profile-card .otoggle input{width:1px!important;height:1px!important;left:0;top:0}.profile-card h3{margin:0 0 18px;font-size:16px}.profile-card .big{margin:0 0 18px}.profile-card .fld{margin-bottom:16px}.profile-card-title{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.profile-card-title h3{margin:0}.profile-session{min-height:260px}.profile-media{grid-column:1/-1}.profile-card .btn{width:auto!important;max-width:100%;margin-right:8px;padding:9px 14px!important}.profile-card .profile-music-box{margin-top:22px}.profile-card .ex-avatar-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
 .ui-actions{display:flex;gap:8px;flex-wrap:wrap}.ui-btn{display:inline-flex!important;align-items:center;justify-content:center;gap:6px;flex:none!important;width:auto!important;min-width:0!important;height:32px!important;min-height:32px!important;margin:0!important;padding:0 11px!important;border:1px solid #353641!important;border-radius:7px!important;background:#1b1c24!important;color:#dfdfe8!important;font:inherit;font-size:12px;font-weight:500;line-height:1.2;white-space:nowrap;cursor:pointer;box-shadow:none!important}.ui-btn:hover{background:#262733!important}.ui-btn:disabled{opacity:.4;cursor:not-allowed}.ui-primary{background:#5945bc!important;border-color:#7360d7!important;color:white!important}.ui-btn:focus-visible{outline:2px solid #a594ff;outline-offset:2px}
 .sessions-panel{border:1px solid #2a2b35;border-radius:14px;background:#101116;min-width:0;padding:24px}.sessions-toolbar{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-bottom:16px}.sessions-toolbar h2{font-size:23px;margin:0 0 6px}.sessions-toolbar p{font-size:13px;color:#94919f;margin:0}.session-legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:#8d8a99;padding:10px 0}.session-own{color:#5ad9a0!important}.session-external{color:#eabd60!important}.session-dead{color:#ef868e!important}.session-count{font-weight:600;font-variant-numeric:tabular-nums}.session-big{font-size:40px;line-height:1;font-weight:600}.session-summary{display:flex;gap:20px;align-items:center;margin:24px 0}.session-devices{font-size:12px}.session-device{padding:9px 0;border-bottom:1px solid #2a2b35;color:#aaa7b6}.sessions-scroll{overflow:auto}.sessions-table{table-layout:fixed;width:100%;min-width:1050px;border-collapse:collapse}.sessions-table th{text-align:left;color:#9693a3;font-size:11px;font-weight:500;padding:14px 10px;border-bottom:1px solid #30313b}.sessions-table td{padding:13px 10px;border-bottom:1px solid #24252e;font-size:12px;vertical-align:middle;overflow-wrap:anywhere}.sessions-table tr:hover{background:#16171f}.session-lamp{font-size:17px}.session-operation-note{font-size:11px;line-height:1.5;color:#9693a3;margin-bottom:7px}.password-control{display:flex;align-items:center;gap:7px;width:230px;max-width:100%;min-width:0}.password-control input{box-sizing:border-box!important;width:145px!important;min-width:0!important;flex:1!important;height:32px!important;margin:0!important;padding:5px 8px!important;font:12px monospace!important;background:#16171f!important;color:#d7d4e3!important;border:1px solid #30313b!important;border-radius:6px!important;text-overflow:clip}.password-control .ui-btn{width:78px!important;flex:none!important;padding:0!important}.muted{color:#8c899b}.profile-password{min-height:34px}.profile-password .password-control{width:340px}.profile-password .password-control input{width:250px!important}
@@ -1697,6 +1714,116 @@ function renderAccounts(){
 }
 const fld=(l,i)=>{const w=el("label","fld");w.append(el("span","",l),i);return w};
 const inp=(v,p)=>{const i=el("input");i.value=v||"";i.placeholder=p||"";return i};
+const PROFILE_COPY_FIELDS={username:'Юзернейм',birthday:'День рождения',bio:'Био',avatars:'Аватарки'};
+const profileCopyDays=n=>new Intl.NumberFormat('ru-RU',{maximumFractionDigits:3}).format(n/86400);
+function showProfileCopyReview(account, base, draft, onConfirm, onClose){
+  const dialog=el('dialog','profile-copy-dialog'),review=el('div','profile-copy-review');
+  const head=el('header'),title=el('h2','','Предпросмотр профиля');
+  title.id='profile-copy-review-title';dialog.setAttribute('aria-labelledby',title.id);
+  head.append(title,el('div','',`${fullName(account)||account.name} · источник ${draft.source_id}`));
+  const body=el('main'),details=el('dl');
+  for(const [key,value] of Object.entries(draft.values)){
+    details.append(el('dt','',PROFILE_COPY_FIELDS[key]),el('dd','',key==='username'?'@'+value:value));
+  }
+  if(!draft.values.username && account.username){
+    details.append(el('dt','','Юзернейм'),el('dd','','@'+account.username));
+  }
+  body.append(details);
+  const plan=base+'/'+draft.token;
+  if(draft.delays.length){
+    body.append(el('h3','',`Аватарки · ${draft.delays.length}`));
+    const photos=el('div','profile-copy-gallery');
+    draft.delays.forEach((delay,index)=>{
+      const item=el('figure'),image=new Image();
+      image.alt=`Аватарка ${index+1}`;image.loading='lazy';image.src=plan+'/photos/'+index;
+      item.append(image,el('figcaption','',index?`Через ${profileCopyDays(delay)} дн. после предыдущей`:'Сразу после подтверждения'));
+      photos.append(item);
+    });
+    body.append(photos);
+  }
+  const foot=el('footer'),yes=el('button','ui-btn ui-primary','Да'),no=el('button','ui-btn','Нет');
+  const status=el('span','status');
+  status.setAttribute('role','status');
+  foot.append(el('strong','','Согласны применить изменения?'),yes,no,status);
+  review.append(head,body,foot);dialog.append(review);document.body.append(dialog);
+  let busy=false,accepted=false;
+  yes.onclick=async()=>{
+    busy=true;yes.disabled=no.disabled=true;status.textContent='Применяю…';
+    try{
+      const job=await api(plan,{method:'POST'});
+      accepted=true;dialog.close();onConfirm(job);
+    }catch(e){
+      busy=false;yes.disabled=no.disabled=false;status.className='status err';status.textContent=e.message;
+    }
+  };
+  no.onclick=()=>dialog.close();
+  dialog.addEventListener('cancel',event=>{if(busy)event.preventDefault()});
+  dialog.addEventListener('close',()=>{
+    if(!accepted)api(plan,{method:'DELETE'}).catch(()=>{});
+    dialog.remove();onClose();
+  });
+  dialog.showModal();no.focus();
+}
+function profileCopyCard(account,onApplied){
+  const card=el('section','profile-card profile-copy-card'),group=inp('','https://t.me/group');
+  const options=el('div','profile-copy-fields'),checks={};
+  for(const [key,label] of Object.entries(PROFILE_COPY_FIELDS)){
+    const check=el('input');check.type='checkbox';checks[key]=check;
+    const row=el('label');row.append(check,label);options.append(row);
+  }
+  const delays=el('div','profile-copy-delays'),from=inp('1'),to=inp('2');
+  for(const input of [from,to]){input.type='number';input.min='0';input.step='any'}
+  delays.append(fld('Задержка от, дней',from),fld('Задержка до, дней',to));
+  delays.hidden=true;checks.avatars.onchange=()=>{delays.hidden=!checks.avatars.checked};
+  const preview=el('button','btn ghost','Предпросмотр'),status=el('div','status'),progress=el('div','status');
+  status.setAttribute('role','status');progress.setAttribute('aria-live','polite');
+  card.append(el('h3','','Скопировать случайный профиль'),fld('Ссылка на группу Telegram',group),
+    options,delays,preview,status,progress);
+  const base=`/api/accounts/${enc(account.name)}/profile-copy`;
+  let searching=false,active=false,timer;
+  const buttons=()=>{preview.disabled=searching||active};
+  function renderJob(job){
+    clearTimeout(timer);
+    if(!card.isConnected)return;
+    active=['waiting','running'].includes(job?.state);buttons();
+    if(!job?.state){progress.textContent='';return}
+    const states={waiting:'Ожидает следующей аватарки',running:'Применяю изменения',done:job.errors?.length?'Выполнено с ошибками':'Очередь выполнена',
+      failed:'Очередь остановлена',interrupted:'Очередь прервана'};
+    const due=job.state==='waiting'&&job.due?new Date(job.due*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'}):'';
+    progress.className='status'+(job.errors?.length?' err':'');
+    progress.replaceChildren(el('div','',states[job.state]+(job.total?` · Аватарки ${job.uploaded}/${job.total}`:'')),
+      el('div','',`Источник ${job.source_id}`+(due?` · Следующая попытка с ${due} МСК`:'')));
+    (job.errors||[]).forEach(message=>progress.append(el('div','',message)));
+    if(active)timer=setTimeout(refresh,20000);
+  }
+  async function refresh(){
+    if(!card.isConnected)return;
+    try{renderJob(await api(base))}catch(e){
+      if(active)timer=setTimeout(refresh,20000);
+      progress.className='status err';progress.textContent=e.message;
+    }
+  }
+  preview.onclick=async()=>{
+    const fields=Object.keys(checks).filter(key=>checks[key].checked);
+    if(!fields.length||!group.value.trim()){
+      status.className='status err';status.textContent='Укажите ссылку на группу и выберите поля.';return;
+    }
+    searching=true;buttons();status.className='status';status.textContent='Подбираю профиль…';
+    try{
+      const draft=await api(base,{method:'POST',json:{group:group.value.trim(),fields,delay_from_days:from.value,delay_to_days:to.value}});
+      if(!card.isConnected){api(base+'/'+draft.token,{method:'DELETE'}).catch(()=>{});return}
+      status.textContent='';
+      showProfileCopyReview(account,base,draft,job=>{
+        renderJob(job);
+        onApplied(draft.values,!!draft.delays.length).catch(e=>errToast(e.message));
+      },()=>{searching=false;buttons()});
+    }catch(e){
+      searching=false;buttons();status.className='status err';status.textContent=e.message;
+    }
+  };
+  setTimeout(refresh,0);
+  return card;
+}
 function renderDetail(){
   const box=$("#detail"),a=S.accounts.find(x=>x.name===S.sel);
   box.replaceChildren();box.classList.toggle("open",!!a);$("#v-accounts").classList.toggle("profile-open",!!a);if(!a)return;
@@ -1869,14 +1996,30 @@ function renderDetail(){
   media.append(el('h3','','Фотографии и музыка'),photoRows,musicBox);
   const danger=el('section','profile-card profile-danger');danger.append(el('h3','','Управление аккаунтом'),del,dst);
   const left=el('div','profile-column'),middle=el('div','profile-column'),right=el('div','profile-column');
-  left.append(identity,privacy,danger);middle.append(editor);right.append(sessionCard,media);
+  const copy=profileCopyCard(a,async(values,changedPhoto)=>{
+    await loadAccounts();
+    if(S.sel!==a.name)return;
+    const latest=S.accounts.find(z=>z.name===a.name);
+    if(values.username&&latest)un.value=latest.username;
+    if(values.bio||values.birthday){
+      await loadFull(false);
+      if(values.bio&&full)bio.value=full.bio;
+      if(values.birthday&&full)bd.value=full.birthday;
+    }
+    if(changedPhoto&&latest){
+      const next=avatar(avUrl(latest),fullName(latest)||latest.name,96);
+      next.classList.add('big');av.replaceWith(next);av=next;
+      await updatePhotoHistory(true);
+    }
+  });
+  left.append(identity,privacy,danger);middle.append(editor,copy);right.append(sessionCard,media);
   layout.append(left,middle,right);box.append(head,layout);
   loadFull();
   updatePhotoHistory();
   refreshMusic();
 }
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'&&$('#detail').classList.contains('open')){
+  if(e.key==='Escape'&&!$('.profile-copy-dialog[open]')&&$('#detail').classList.contains('open')){
     e.preventDefault();S.sel=null;renderAccounts();renderDetail();
   }
 });

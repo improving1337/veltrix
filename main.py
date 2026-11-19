@@ -40,6 +40,7 @@ import account_music_manager
 import account_deploy
 import session_admin
 import account_security
+import profile_copy
 
 # ============== НАСТРОЙКИ ==============
 BASE_DIR = Path(__file__).resolve().parent
@@ -1454,8 +1455,9 @@ def prepare_avatar(data):
         raise ValueError(f"не удалось прочитать картинку: {exc}")
 
 
-async def upload_avatar(acc, data):
-    data = prepare_avatar(data)
+async def upload_avatar(acc, data, *, prepared=False):
+    if not prepared:
+        data = prepare_avatar(data)
     before = getattr(acc.me.photo, "photo_id", None)
     print(f"[AVATAR] {acc.name}: {len(data)} байт, фото до: {before}", flush=True)
     uploaded = await acc.client.upload_file(data, file_name="avatar.jpg")
@@ -1471,6 +1473,34 @@ async def upload_avatar(acc, data):
     acc.avatar_ver = time.time()
     invalidate_account_profile(acc)
     schedule_account_profile_refresh(acc, force=True)
+
+
+async def copy_profile_fields(acc, fields):
+    requests = []
+    if 'username' in fields and fields['username'] != acc.me.username:
+        requests.append(('Юзернейм', functions.account.UpdateUsernameRequest(fields['username'])))
+    if 'bio' in fields:
+        requests.append(('Био', functions.account.UpdateProfileRequest(about=fields['bio'])))
+    if 'birthday' in fields:
+        requests.append(('День рождения', functions.account.UpdateBirthdayRequest(
+            birthday=parse_birthday(fields['birthday']))))
+    errors = []
+    for label, request in requests:
+        try:
+            result = await asyncio.wait_for(acc.client(request), 30)
+            if result is False:
+                errors.append(f'{label}: Telegram не подтвердил изменение')
+        except RPCError as exc:
+            errors.append(f'{label}: {err_text(exc)}')
+        except asyncio.TimeoutError:
+            errors.append(f'{label}: Telegram не ответил. Проверьте значение в профиле.')
+    try:
+        acc.me = await asyncio.wait_for(acc.client.get_me(), 15)
+    except (RPCError, asyncio.TimeoutError):
+        pass
+    invalidate_account_profile(acc)
+    schedule_account_profile_refresh(acc, force=True)
+    return errors
 
 
 async def api_set_avatar(request):
@@ -2723,6 +2753,10 @@ async def main():
     SESSION_ADMIN = sessions
     sessions.register(app)
     deploy.on_created = lambda name: sessions.mark_owned(ACCOUNTS[name]) if name in ACCOUNTS else None
+    copies = profile_copy.ProfileCopies(BASE_DIR / 'profile_copies', lambda: ACCOUNTS, prepare_avatar,
+                                        lambda acc, data: upload_avatar(acc, data, prepared=True),
+                                        copy_profile_fields)
+    copies.register(app, get_acc)
 
     async def background(app):
         async def expire_logins():
@@ -2731,7 +2765,8 @@ async def main():
                 await sessions.cleanup()
                 await asyncio.sleep(30)
         tasks = [asyncio.create_task(SECURITY.run(), name="account-security"),
-                 asyncio.create_task(expire_logins(), name="login-cleanup")]
+                 asyncio.create_task(expire_logins(), name="login-cleanup"),
+                 asyncio.create_task(copies.run(), name="profile-copies")]
         yield
         for task in tasks:
             task.cancel()

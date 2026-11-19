@@ -8,6 +8,7 @@ Sorting/
 temp/
 security/
 template_avatars/
+profile_copies/
 panel_password.txt
 automatic_channels.json
 presence.json
