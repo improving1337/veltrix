@@ -3,8 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from aiohttp import web
+from telethon import types
 import automatic
 from automatic_multi import Hub, _JsonRequest, channel_key
 
@@ -24,6 +26,98 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
     def post(self, ident=1, age=1):
         return {'post_id':ident,'post_date':(self.now-timedelta(hours=age)).isoformat(),
                 'post_text':'Test','samples':[],'execution':{},'suggestion':None}
+
+    def message(self, ident, text):
+        return SimpleNamespace(id=ident, message=text, date=self.now)
+
+    async def test_discovery_settings_survive_changes_and_restart(self):
+        mon = self.monitor
+        mon.state.update(max_views=20, max_reactions=10, execute_plan=True)
+        old = mon.add_post(self.message(1, 'Реклама: скидка на подписку'), self.now.isoformat())
+        old_settings = mon.capture_settings()
+        old_views = mon.view_target(old)
+        await mon.configure(_JsonRequest({
+            'hours': [0, 100] + [0] * 22, 'max_views': 0, 'max_reactions': 2,
+            'execute_plan': False, 'views_enabled': False, 'subscribers_only': True,
+            'allowed_reactions': ['💩'], 'reaction_prompt': 'Updated',
+        }))
+        new = mon.add_post(self.message(2, 'Реклама: скидка на подписку'), self.now.isoformat())
+        mon.save()
+        restored = automatic.Monitor(mon.storage, lambda: self.clients)
+        self.assertEqual(restored.find_post(1)['settings'], old_settings)
+        self.assertEqual(restored.find_post(2)['settings'], new['settings'])
+        self.assertEqual(restored.view_target(restored.find_post(1)), old_views)
+        self.assertEqual(restored.view_target(restored.find_post(2)), 0)
+        with (patch.object(restored, 'channel_reactions', AsyncMock(return_value={'❤️', '💩', '😡'})),
+              patch('automatic.env_value', return_value='')):
+            await restored.analyze(1)
+            await restored.analyze(2)
+        self.assertEqual(restored.find_post(1)['suggestion']['total'], 10)
+        self.assertEqual(restored.find_post(2)['suggestion']['reactions'], [{'emoji': '💩', 'count': 2}])
+        restored.state['active'] = True
+        with patch('automatic.utc_now', return_value=self.now):
+            await restored.dispatch_actions()
+        old_plans = restored.find_post(1)['execution']
+        self.assertEqual(old_plans['views']['signature']['hours'], old_settings['hours'])
+        self.assertEqual(old_plans['reactions']['target'], 10)
+        self.assertEqual(restored.find_post(2)['execution'], {})
+
+    async def test_subscribers_only_for_views_and_reactions(self):
+        class Client:
+            def __init__(self, participant):
+                self.participant = participant
+                self.channels = []
+
+            async def get_input_entity(self, channel):
+                self.channels.append(channel)
+                return types.InputChannel(1, 1)
+
+            async def __call__(self, request):
+                if self.participant is None:
+                    raise ConnectionError()
+                return SimpleNamespace(participant=self.participant)
+
+        member = types.ChannelParticipant(1, self.now)
+        left = types.ChannelParticipantLeft(types.PeerUser(2))
+        self.clients = {'member': Client(member), 'left': Client(left), 'unknown': Client(None)}
+        mon = self.monitor
+        mon.state.update(active=True, channel='https://t.me/example', max_views=3, max_reactions=3,
+                         subscribers_only=True, execute_plan=True)
+        post = mon.add_post(self.message(1, 'Test'), self.now.isoformat())
+        post['suggestion'] = automatic.validated_reaction_plan({'post_kind': 'ad'}, 3)
+        with patch('automatic.utc_now', return_value=self.now):
+            await mon.dispatch_actions()
+        for service in ('views', 'reactions'):
+            actions = post['execution'][service]['actions']
+            self.assertEqual([action['account'] for action in actions], ['member'])
+        action = post['execution']['views']['actions'][0]
+        action['status'] = 'running'
+        self.clients['member'].participant = left
+        with patch('posts.ViewsJoiner._join', new_callable=AsyncMock) as perform:
+            await mon.perform_action(1, 'views', action, 'example')
+        perform.assert_not_awaited()
+        self.assertEqual(action['status'], 'pending')
+        self.assertEqual(self.clients['member'].channels, ['example', 'example'])
+
+    async def test_ad_news_footer_and_reaction_vote(self):
+        def plan(text, count, allowed):
+            context = automatic.post_reaction_context(text)
+            result = automatic.validated_reaction_plan(context, count, allowed)
+            return result['post_kind'], {r['emoji']: r['count'] for r in result['reactions']}
+
+        allowed = ['❤️', '👍', '💩', '😡']
+        ad = 'Реклама: скидка на подписку'
+        kind, allocation = plan(ad, 100, allowed)
+        self.assertEqual(kind, 'ad')
+        self.assertEqual(allocation['❤️'], 75)
+        self.assertEqual(allocation['💩'] + allocation['😡'], 25)
+        self.assertEqual(plan(ad, 4, ['❤️', '😡']), ('ad', {'❤️': 3, '😡': 1}))
+        self.assertEqual(plan(ad, 1, allowed), ('ad', {'❤️': 1}))
+        self.assertEqual(plan('Команда выиграла финал.\n\nРеклама: купите билеты.', 20, allowed)[0], 'news')
+        self.assertEqual(plan(ad + '\n\nГолосуем: 👍 — да, 😡 — нет.', 4, allowed),
+                         ('poll', {'👍': 2, '😡': 2}))
+        self.assertEqual(plan(ad + '\n\nГолосуем: 👍 — да, 😡 — нет.', 3, ['❤️', '😡']),
+                         ('poll', {'😡': 3}))
 
     async def test_exact_reaction_target_and_dominant_preferred(self):
         for limit in [0,1,2,3,15,100]:

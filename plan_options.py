@@ -2,8 +2,87 @@
 import asyncio
 import math
 import random
+import re
 import time
 from datetime import datetime, timedelta, timezone
+
+MOSCOW_OFFSET = 3 * 3600
+DAY = 24 * 3600
+
+
+def quiet_hours(extra):
+    value = (extra or {}).get('quiet_hours')
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError('Укажите время пропуска в формате ЧЧ:ММ по МСК')
+    limits = []
+    for key in ('from', 'to'):
+        match = re.fullmatch(r'([01][0-9]|2[0-3]):([0-5][0-9])', str(value.get(key, '')))
+        if not match:
+            raise ValueError('Укажите время пропуска в формате ЧЧ:ММ по МСК')
+        limits.append(int(match[1]) * 3600 + int(match[2]) * 60)
+    if limits[0] == limits[1]:
+        raise ValueError('Начало и конец времени пропуска должны отличаться')
+    return tuple(limits)
+
+
+def quiet_end(timestamp, quiet):
+    """End of the pause containing timestamp, or None outside a pause."""
+    if quiet is None:
+        return None
+    start, end = quiet
+    since_start = (timestamp + MOSCOW_OFFSET - start) % DAY
+    length = (end - start) % DAY
+    return timestamp + (length - since_start) if since_start < length else None
+
+
+def after_quiet(timestamp, quiet):
+    end = quiet_end(timestamp, quiet)
+    if end is None:
+        return timestamp
+    available = (quiet[0] - quiet[1]) % DAY
+    return end + random.uniform(1, min(600, available / 2))
+
+
+def schedule_order(items, start, finish, quiet):
+    if finish is None:
+        previous = start
+        for item in items:
+            due = after_quiet(previous + item['base_delay'], quiet)
+            item.update(delay=due - previous, at=due - start)
+            previous = due
+        return items[-1]['at']
+    if quiet is None:
+        schedule(items, finish - start)
+        return items[-1]['at']
+    if quiet_end(finish, quiet) is not None:
+        raise ValueError('Время «Закончить к» попадает в интервал пропуска (МСК)')
+    open_seconds = (quiet[0] - quiet[1]) % DAY
+    origin = quiet[1] - MOSCOW_OFFSET
+
+    def open_clock(timestamp):
+        day, seconds = divmod(timestamp - origin, DAY)
+        return day * open_seconds + min(seconds, open_seconds)
+
+    start_open = open_clock(start)
+    available = open_clock(finish) - start_open
+    if available <= 0:
+        raise ValueError('До срока нет доступного времени вне интервала пропуска')
+    schedule(items, available)
+    previous = start
+    for item in items[:-1]:
+        day, seconds = divmod(start_open + item['at'], open_seconds)
+        due = origin + day * DAY + seconds
+        item.update(delay=due - previous, at=due - start)
+        previous = due
+    items[-1].update(delay=finish - previous, at=finish - start)
+    return items[-1]['at']
+
+
+async def wait_before_action(extra):
+    wait = (extra or {}).get('wait_before_action')
+    return await wait() if wait else False
 
 
 def deadline(value):

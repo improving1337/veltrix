@@ -42,6 +42,7 @@ class Hub:
         # number of simultaneous Telegram actions / DeepSeek HTTP requests.
         self.action_semaphore = asyncio.Semaphore(MAX_PARALLEL_ACTIONS)
         self.analysis_semaphore = asyncio.Semaphore(2)
+        self.membership_semaphore = asyncio.Semaphore(8)
         self.order = []
         self.lock = asyncio.Lock()
         self.load()
@@ -91,6 +92,7 @@ class Hub:
                           env_directory=self.directory)
             mon.action_semaphore = self.action_semaphore
             mon.analysis_semaphore = self.analysis_semaphore
+            mon.membership_semaphore = self.membership_semaphore
             # A stored monitor for this channel may have been stopped and removed
             # from registry; the same JSON is recovered if it is later re-added.
             self.monitors[ident] = mon
@@ -183,6 +185,7 @@ class Hub:
             'max_reactions': payload.get('max_reactions', mon.state['max_reactions']),
             'execute_plan': payload.get('execute_plan', mon.state['execute_plan']),
             'views_enabled': payload.get('views_enabled', mon.state['views_enabled']),
+            'subscribers_only': payload.get('subscribers_only', mon.state['subscribers_only']),
             'allowed_reactions': payload.get('allowed_reactions', mon.state['allowed_reactions']),
             'reaction_prompt': payload.get('reaction_prompt', mon.state['reaction_prompt']),
         }))

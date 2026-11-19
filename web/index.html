@@ -1009,7 +1009,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
    <div id="auto-plot" class="auto-plot" aria-label="24 редактируемых столбца с долями просмотров"></div><div id="auto-hours" class="auto-hours"></div><div class="auto-note" id="auto-sum">Сумма: 100%</div>
    <div class="auto-limits"><div><div class="auto-limit-head"><span>Просмотры на один пост (из аккаунтов)</span><strong id="auto-views-value">0</strong></div><input type="range" id="auto-views" min="0" max="0" value="0"><div class="auto-range-ends"><span>0</span><span id="auto-views-max">0</span></div></div>
    <div><div class="auto-limit-head"><span>Лимит реакций на один пост (из аккаунтов)</span><strong id="auto-reactions-value">0</strong></div><input type="range" id="auto-reactions" min="0" max="0" value="0"><div class="auto-range-ends"><span>0</span><span id="auto-reactions-max">0</span></div></div></div>
-   <label class="auto-execution-toggle"><input type="checkbox" id="auto-execute"> <span><strong>Выполнять план автоматически</strong><small>После сохранения новые и активные посты получат расписание на оставшуюся часть 24 часов. Отправка просмотров и реакций — через подключённые аккаунты и функции раздела «Услуги».</small></span></label><p class="auto-note">Каждый уникальный Telegram-аккаунт получает не более одного задания на просмотр и одного на реакцию на каждый пост, даже если подключён под разными именами. Эмодзи реакций перемешиваются по времени с сохранением их количества. Реакции запускаются после анализа DeepSeek. Если ключ не настроен или Telegram отклоняет реакцию, выполнение будет неполным. Публикации старше 24 часов не обрабатываются.</p><button id="auto-save" class="btn" style="width:auto">Сохранить настройки</button>
+   <label class="auto-execution-toggle"><input type="checkbox" id="auto-execute"> <span><strong>Выполнять план автоматически</strong><small>Настройки применяются к новым постам. Чтобы приостановить выполнение для активных постов, остановите мониторинг канала.</small></span></label><p class="auto-note">Каждый уникальный Telegram-аккаунт получает не более одного задания на просмотр и одного на реакцию на каждый пост, даже если подключён под разными именами. Эмодзи реакций перемешиваются по времени с сохранением их количества. Для новостей рекомендации даёт DeepSeek. Для явной рекламы и голосований варианты определяются по тексту и разрешённым реакциям канала. Публикации старше 24 часов не обрабатываются.</p><button id="auto-save" class="btn" style="width:auto">Сохранить настройки</button>
    <div class="auto-head" style="margin-top:22px"><h3>Ориентиры по каждому часу</h3><small>Распределение чисел по сохранённому / редактируемому профилю</small></div>
    <div class="auto-hour-table-wrap"><table class="auto-hour-table"><thead><tr><th>Час</th><th>Доля</th><th>Просмотры (модель)</th><th>Реакции (рекомендация ИИ)</th></tr></thead><tbody id="auto-hour-table"></tbody></table></div>
   </div>
@@ -2533,7 +2533,7 @@ function orRenderDetail(){
   if(running){
     const bt=el("div","orbtnrow"),sp=el("button","orbig primary"),st=el("button","orbig");
     const waiting=j.items.some(i=>i.state==="wait");
-    sp.append(ico("bolt")," Ускорить");sp.disabled=!waiting;sp.title=waiting?"Обнулить таймер у текущего аккаунта — он выполнит работу сейчас":"Сейчас нечего ускорять";
+    sp.append(ico("bolt")," Ускорить");sp.disabled=!waiting;sp.title=waiting?"Сократить ожидание текущего аккаунта с учётом времени пропуска":"Сейчас нечего ускорять";
     sp.onclick=async()=>{sp.disabled=true;try{await api(`/api/${j.service}/skip`,{method:"POST",json:{job_id:j.id}})}catch(e){errToast(e.message)}ordersPoll()};
     st.append(ico("stop")," Остановить");
     st.onclick=async()=>{if(!confirm("Остановить заказ? Оставшиеся аккаунты не будут запущены."))return;try{await api(`/api/${j.service}/stop`,{method:"POST",json:{job_id:j.id}})}catch(e){errToast(e.message)}ordersPoll()};
@@ -2638,13 +2638,30 @@ function renderNew(){
   w1.append(lab("clock","Задержка от"),suf(inp("dmin",{type:"number",min:"0"})));w2.append(lab("clock","Задержка до"),suf(inp("dmax",{type:"number",min:"0"})));
   row.append(w1,w2);
   const finishToggle=el('label','otoggle'),finishCheck=el('input');finishCheck.type='checkbox';finishCheck.id='order-finish-enabled';finishCheck.checked=!!F.v.deadline;
-  finishToggle.append(finishCheck,el('span','otsl'),el('span','ottx','Задать время последнего аккаунта'));
+  finishToggle.append(finishCheck,el('span','otsl'),el('span','ottx','Закончить к'));
   const finish=inp('finish_at',{type:'datetime-local'});finish.id='order-finish';
   const finishWrap=el('div','ofield');finishWrap.append(lab('clock','Последний аккаунт: дата и время (МСК)'),finish,
-    el('div','othint','Интервалы со случайным отклонением 10–40% от среднего. Последний аккаунт начнёт действие в указанное время; ответ Telegram может прийти позже.'));
+    el('div','othint','Интервалы рассчитываются по доступному времени. Ответ Telegram может прийти позже указанного срока.'));
+  const quietToggle=el('label','otoggle'),quietCheck=el('input');
+  quietCheck.type='checkbox';quietCheck.id='order-quiet-enabled';quietCheck.checked=!!F.v.quiet;
+  quietToggle.append(quietCheck,el('span','otsl'),el('span','ottx','Время пропуска'));
+  const quietWrap=el('div','ofrow');
+  for(const [key,label] of [['quiet_from','с (МСК)'],['quiet_to','до (МСК)']]){
+    const field=el('label','ofield'),input=inp(key,{inputMode:'numeric',placeholder:'ЧЧ:ММ'});
+    input.id='order-'+key;input.autocomplete='off';
+    const oninput=input.oninput;
+    input.oninput=()=>{
+      const digits=input.value.replace(/[^0-9]/g,'').slice(0,4);
+      input.value=digits.length>2?digits.slice(0,2)+':'+digits.slice(2):digits;
+      oninput();
+    };
+    field.append(lab('clock',label),input);quietWrap.append(field);
+  }
+  quietWrap.hidden=!F.v.quiet;
+  quietCheck.onchange=()=>{F.v.quiet=quietCheck.checked;quietWrap.hidden=!F.v.quiet;if(F.plan){cancelPlan();renderPlanBox();}};
   const updateMode=()=>{row.hidden=!!F.v.deadline;finishWrap.hidden=!F.v.deadline;};
   finishCheck.onchange=()=>{F.v.deadline=finishCheck.checked;updateMode();if(F.plan){cancelPlan();renderPlanBox();}};
-  body.append(finishToggle,finishWrap,row);updateMode();form.append(body);card.append(form);wrap.append(card);
+  body.append(finishToggle,finishWrap,row,quietToggle,quietWrap);updateMode();form.append(body);card.append(form);wrap.append(card);
 
   const out=el("div","oplanbox");out.id="or-plan";wrap.append(out);
   const go=el("button","orbig primary wide");go.id="or-go";go.append(ico("channels")," Построить план");
@@ -2653,6 +2670,12 @@ function renderNew(){
     st.className="orst";st.textContent="Строю план…";go.disabled=true;await cancelPlan();
     const extra=extras();
     try{
+      if(F.v.quiet){
+        const valid=/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/;
+        if(!valid.test(F.v.quiet_from)||!valid.test(F.v.quiet_to))throw new Error('Укажите время пропуска в формате ЧЧ:ММ по МСК');
+        if(F.v.quiet_from===F.v.quiet_to)throw new Error('Начало и конец времени пропуска должны отличаться');
+        extra.quiet_hours={from:F.v.quiet_from,to:F.v.quiet_to};
+      }
       if(F.v.deadline){
         const timestamp=new Date(F.v.finish_at+'+03:00').getTime()/1000;
         if(!Number.isFinite(timestamp)||timestamp<=Date.now()/1000)throw new Error('Выберите будущее время последнего аккаунта (МСК)');
@@ -2938,7 +2961,7 @@ $("#up-go").onclick=upStart;
 upPoll();
 
 /* --- Автоматическая: мониторинг и опциональное выполнение плана --- */
-const AUTO_EMOJI=['❤️','👍','👎','🔥','😭','🤬','😍','💔','🤡','💩'];
+const AUTO_EMOJI=['❤️','👍','👎','🔥','😭','🤬','😍','💔','🤡','💩','😡'];
 function autoPolicyFields(d){const root=$('#auto-emoji-options');root.replaceChildren();for(const emoji of AUTO_EMOJI){const label=el('label','auto-emoji-choice'),input=el('input');input.type='checkbox';input.value=emoji;input.checked=(d.allowed_reactions||AUTO_EMOJI).includes(emoji);input.onchange=()=>{AUTO.dirty=true;};label.append(input,document.createTextNode(emoji));root.append(label);}$('#auto-reaction-prompt').value=d.reaction_prompt||'';}
 $('#auto-reaction-prompt').oninput=()=>{AUTO.dirty=true;};
 const AUTO={data:null,values:[34,15,9,7,5,4,3,2,2,2,1,1,2,2,1,1,1,2,1,1,1,1,1,1],timer:null,drag:null,dirty:false,selectedId:null,lockSelection:false,showArchive:false,raw:null,serverClockOffsetMs:0};
@@ -2967,14 +2990,15 @@ function autoHoursPlot(id, hoursId, values, kind='views', coverage=null){
 let AUTO_OBSERVE='views';
 function autoForecast(){
   const d=AUTO.data;if(!d)return;
-  const views=autoApportion(+$('#auto-views').value,AUTO.values);
+  const hours=d.plan_hours||AUTO.values;
+  const views=d.model_view_hours||autoApportion(+$('#auto-views').value,hours);
   const s=d.suggestion, recTotal=s&&s.status==='ok'?s.total:0;
-  const reactions=autoApportion(recTotal,AUTO.values);
+  const reactions=d.model_reaction_hours||autoApportion(recTotal,hours);
   const table=$('#auto-hour-table');table.replaceChildren();
   const now=d.post_age_seconds==null?null:Math.floor(d.post_age_seconds/3600);
   for(let i=0;i<24;i++){
     const row=el('tr',now===i?'current':'');
-    for(const val of [i+1+' ч',AUTO.values[i].toFixed(1).replace('.0','')+'%',String(views[i]),String(reactions[i])])row.append(el('td','',val));
+    for(const val of [i+1+' ч',hours[i].toFixed(1).replace('.0','')+'%',String(views[i]),String(reactions[i])])row.append(el('td','',val));
     table.append(row);
   }
   const active=now!==null&&now>=0&&now<24;
@@ -3067,7 +3091,7 @@ function autoActionCountdown(p,summary,service,d){
     else if(!isView&&!p.suggestion)description='Реакции: ожидаем анализ DeepSeek';
     else if(!isView&&p.suggestion?.status==='error')description='Реакции: анализ DeepSeek недоступен';
     else description=`План по ${name} не задан`;
-  }else if(!d.active||!d.execute_plan){
+  }else if(!d.active||!(p.execution_enabled??d.execute_plan)){
     description=`План по ${name} приостановлен`;
     row.classList.add('warning');
   }else if(p.status!=='active'){
@@ -3131,10 +3155,10 @@ function autoCards(d){
     const ai=el('div','auto-post-ai'),s=p.suggestion;
     if(!s)ai.textContent='DeepSeek: ожидание анализа';
     else if(s.status==='ok'){
-      ai.append(el('b','','DeepSeek: '));
+      ai.append(el('b','',s.post_kind==='ad'?'Реклама: ':s.post_kind==='poll'?'Голосование: ':'DeepSeek: '));
       ai.append((s.reactions||[]).map(x=>`${x.emoji} ${x.count}`).join(' · ')||'Нет предложенных реакций');
       if(s.reason)ai.append(el('div','auto-post-graphs-note',s.reason));
-    }else ai.textContent='DeepSeek: '+(s.message||'анализ недоступен');
+    }else ai.textContent=s.message||'Анализ недоступен';
     card.append(ai);root.append(card);
   }
 
@@ -3216,7 +3240,7 @@ async function autoMultiAdd(link){
 }
 function autoMultiForms(d,force=false){
   const rows=d.channels||[];
-  const signature=rows.map(c=>[c.id,c.channel,c.max_views,c.max_reactions,c.views_enabled,c.execute_plan,c.connected_accounts,c.active,c.error].join(':')).join('|');
+  const signature=rows.map(c=>[c.id,c.channel,c.max_views,c.max_reactions,c.views_enabled,c.subscribers_only,c.execute_plan,c.connected_accounts,c.active,c.error].join(':')).join('|');
   if(!force&&AUTO_MULTI.formSignature===signature)return;
   // Preserve in-progress slider edits until that channel's Save button runs.
   if(!force&&$('#auto-multi-fields').querySelector('[data-dirty=\"1\"]'))return;
@@ -3250,11 +3274,16 @@ function autoMultiForms(d,force=false){
     planCheck.onchange=()=>{row.dataset.dirty='1'};
     planToggle.append(planCheck,document.createTextNode('Выполнять план автоматически'));
     reactionBlock.append(planToggle);
+    const subscriberToggle=el('label','auto-plan-toggle'),subscriberCheck=el('input');
+    subscriberCheck.type='checkbox';subscriberCheck.checked=c.subscribers_only===true;
+    subscriberCheck.onchange=()=>{row.dataset.dirty='1'};
+    subscriberToggle.append(subscriberCheck,document.createTextNode('Только подписчики'));
+    reactionBlock.append(subscriberToggle);
     row.append(viewBlock,reactionBlock);
     const buttons=el('div','auto-multi-buttons'),save=el('button','btn ghost','Сохранить'),remove=el('button','btn ghost','Удалить');
     save.type='button';remove.type='button';
     save.onclick=async()=>{
-      const values={views_enabled:viewCheck.checked,execute_plan:planCheck.checked};for(const slider of row.querySelectorAll('input[type=range]'))values[slider.dataset.key]=+slider.value;
+      const values={views_enabled:viewCheck.checked,execute_plan:planCheck.checked,subscribers_only:subscriberCheck.checked};for(const slider of row.querySelectorAll('input[type=range]'))values[slider.dataset.key]=+slider.value;
       save.disabled=true;
       try{
         const result=await api('/api/automatic/channels/'+c.id+'/config',{method:'POST',json:values});

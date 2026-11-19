@@ -21,13 +21,14 @@ import uuid
 from urllib.parse import parse_qs, urlparse
 
 import channels
+import plan_options
 import presence
 from channels import ChannelJoiner, parse_link
 from posts import REACTIONS, ReactionJoiner, ViewsJoiner, explain, parse_post_link
 
 
 # ======================= МУЛЬТИ =======================
-async def click_first_button(client, channel, mid):
+async def click_first_button(client, channel, mid, extra=None):
     """Нажимает первую кнопку [0, 0] под постом. -> (state, note)"""
     from telethon.errors import BotResponseTimeoutError
     try:
@@ -37,6 +38,8 @@ async def click_first_button(client, channel, mid):
             return "err", "пост не найден или недоступен"
         if not msg.buttons:
             return "ok", "у поста нет кнопок, пропущено"
+        if await plan_options.wait_before_action(extra):
+            return "skip", "остановлено"
         res = await msg.click(0, 0)
     except BotResponseTimeoutError:
         return "ok", "кнопка нажата, бот не ответил"
@@ -149,11 +152,8 @@ class MultiJoiner(ChannelJoiner):
     async def _run(self, job, kind, key):
         try:
             for it in job["items"]:
-                delay = max(0, job["started"] + it["at"] - time.time()) if job.get("finish_at") else it["delay"]
-                it["state"], it["until"] = "wait", time.time() + delay
-                job["skip"].clear()
-                if await self._sleep(job, delay):
-                    break  # нажали «Остановить»
+                if await self._wait_for_account(job, it):
+                    break
                 it["state"], it["until"] = "active", None
                 client = self.get_clients().get(it["account"])
                 if not client or not client.is_connected():
@@ -195,7 +195,7 @@ class MultiJoiner(ChannelJoiner):
     async def _steps(self, job, it, client, key):
         """Действия одного аккаунта (пока он в сети). -> (state, note)"""
         channel, mid = key
-        extra = job.get("extra") or {}
+        extra = self._action_extra(job, it) or {}
         notes, failed, stop_all = [], False, False
 
         def log(res):
@@ -220,8 +220,10 @@ class MultiJoiner(ChannelJoiner):
         chans = extra.get("channels") or []
         joined = 0
         for i, ch in enumerate(chans):
+            if job["stop"].is_set():
+                break
             it["note"] = f"подписывается ({i + 1}/{len(chans)})…"
-            state, note = await ChannelJoiner._join(client, ch["kind"], ch["key"])
+            state, note = await ChannelJoiner._join(client, ch["kind"], ch["key"], extra)
             if state == "ok":
                 joined += 1
             else:
@@ -234,9 +236,9 @@ class MultiJoiner(ChannelJoiner):
             log(("ok", f"подписка {joined}/{len(chans)}"))
 
         # 2-4. просмотр, реакция, кнопка
-        steps = (("смотрит пост…", lambda: ViewsJoiner._join(client, "post", key)),
-                 ("ставит реакцию…", lambda: ReactionJoiner._join(client, "post", key, {"emoji": extra.get("emoji")})),
-                 ("нажимает кнопку…", lambda: click_first_button(client, channel, mid)))
+        steps = (("смотрит пост…", lambda: ViewsJoiner._join(client, "post", key, extra)),
+                 ("ставит реакцию…", lambda: ReactionJoiner._join(client, "post", key, extra)),
+                 ("нажимает кнопку…", lambda: click_first_button(client, channel, mid, extra)))
         for label, fn in steps:
             if stop_all or job["stop"].is_set():
                 break
@@ -347,6 +349,8 @@ class StartsJoiner(ChannelJoiner):
         username, param = key
         try:
             ent = await client.get_entity(username)
+            if await plan_options.wait_before_action(extra):
+                return "skip", "остановлено"
             if param:
                 await client(StartBotRequest(bot=ent, peer=ent, random_id=random.randrange(1 << 62), start_param=param))
             else:
@@ -484,7 +488,7 @@ class ButtonsJoiner(ChannelJoiner):
     @staticmethod
     async def _join(client, kind, key, extra=None):
         channel, mid = key
-        return await click_first_button(client, channel, mid)
+        return await click_first_button(client, channel, mid, extra)
 
 
 def register_all(app, get_clients):

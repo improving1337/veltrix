@@ -8,6 +8,7 @@
 Эндпоинты: /api/unsub/{plan,start,stop,cancel,exclude,skip,job}
 """
 import channels
+import plan_options
 from channels import ChannelJoiner
 
 
@@ -34,10 +35,11 @@ class UnsubJoiner(ChannelJoiner):
                     return "ok", "уже не в канале"
             else:
                 ent = await client.get_entity(key)
-            if isinstance(ent, types.Chat):   # обычная группа
-                await client(DeleteChatUserRequest(ent.id, types.InputUserSelf()))
-            else:                             # канал / супергруппа
-                await client(LeaveChannelRequest(await client.get_input_entity(ent)))
+            request = (DeleteChatUserRequest(ent.id, types.InputUserSelf()) if isinstance(ent, types.Chat)
+                       else LeaveChannelRequest(await client.get_input_entity(ent)))
+            if await plan_options.wait_before_action(extra):
+                return "skip", "остановлено"
+            await client(request)
             return "ok", "вышел из канала"
         except Exception as e:
             n = type(e).__name__

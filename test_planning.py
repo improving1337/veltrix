@@ -19,6 +19,39 @@ import unsub
 
 
 class ScheduleTests(unittest.TestCase):
+    @staticmethod
+    def moscow(day, hour, minute=0):
+        return datetime(2026, 11, day, hour, minute, tzinfo=timezone(timedelta(hours=3))).timestamp()
+
+    def test_quiet_hours_shift_and_rebase_relative_delays(self):
+        start = self.moscow(19, 23)
+        quiet = plan_options.quiet_hours({'quiet_hours': {'from': '00:00', 'to': '07:00'}})
+        items = [{'base_delay': 1500} for _ in range(4)]
+        with patch('plan_options.random.uniform', return_value=360):
+            plan_options.schedule_order(items, start, None, quiet)
+        self.assertEqual([start + item['at'] for item in items], [
+            self.moscow(19, 23, 25), self.moscow(19, 23, 50),
+            self.moscow(20, 7, 6), self.moscow(20, 7, 31)])
+
+    def test_deadline_uses_open_time_across_midnight(self):
+        quiet = plan_options.quiet_hours({'quiet_hours': {'from': '23:30', 'to': '07:00'}})
+        start, finish = self.moscow(19, 23), self.moscow(20, 8)
+        items = [{} for _ in range(10)]
+        plan_options.schedule_order(items, start, finish, quiet)
+        due = [start + item['at'] for item in items]
+        self.assertEqual(due[-1], finish)
+        self.assertTrue(all(plan_options.quiet_end(at, quiet) is None for at in due))
+        self.assertLess(due[0], self.moscow(19, 23, 30))
+        with self.assertRaisesRegex(ValueError, 'интервал пропуска'):
+            plan_options.schedule_order(items, start, self.moscow(20, 6), quiet)
+        with self.assertRaisesRegex(ValueError, 'нет доступного времени'):
+            plan_options.schedule_order(items, self.moscow(20, 6), self.moscow(20, 7), quiet)
+
+    def test_invalid_quiet_hours(self):
+        for value in [True, {'from': '07:00', 'to': '07:00'}, {'from': '24:00', 'to': '7:00'}]:
+            with self.assertRaises(ValueError):
+                plan_options.quiet_hours({'quiet_hours': value})
+
     def test_views_and_reactions_share_burst_and_migrate_without_repeating(self):
         with tempfile.TemporaryDirectory() as directory:
             clients = {str(n): object() for n in range(100)}
@@ -85,6 +118,42 @@ def client(age=None, broken=False):
 
 
 class EligibilityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_acceleration_cannot_trigger_action_in_quiet_hours(self):
+        start = ScheduleTests.moscow(20, 0)
+        resume = ScheduleTests.moscow(20, 7) + 360
+        quiet = plan_options.quiet_hours({'quiet_hours': {'from': '00:00', 'to': '07:00'}})
+        joiner = channels.ChannelJoiner(lambda: {'a': client()})
+        item = {'account': 'a', 'base_delay': 1500, 'at': resume - start}
+        job = {'id': 'job', 'status': 'running', 'quiet': quiet, 'items': [item],
+               'stop': asyncio.Event(), 'skip': asyncio.Event()}
+        joiner.jobs['job'] = job
+        attempts = []
+        now = start
+
+        async def accelerated(job, delay):
+            joiner.skip('job')
+            self.assertTrue(job['skip'].is_set())
+            return False
+
+        async def wait_out_pause(wait, timeout):
+            nonlocal now
+            wait.close()
+            self.assertEqual(timeout, resume - start)
+            now = resume
+            raise asyncio.TimeoutError
+
+        async def action(*args):
+            attempts.append(now)
+            return 'ok', ''
+
+        with (patch('channels.time.time', side_effect=lambda: now),
+              patch('plan_options.random.uniform', return_value=360),
+              patch.object(joiner, '_sleep', accelerated),
+              patch.object(joiner, '_join', action),
+              patch('channels.asyncio.wait_for', wait_out_pause)):
+            await joiner._run(job, 'public', 'example')
+        self.assertEqual(attempts, [resume])
+
     async def test_freshness_recent_old_absent_unknown(self):
         clients = {'recent': client(2), 'old': client(8), 'no_photo': client(), 'unknown': client(broken=True)}
         filtered = await plan_options.eligible(clients, {'freshness_days': 7})

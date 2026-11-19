@@ -9,6 +9,7 @@ import random
 import re
 
 import channels
+import plan_options
 from channels import ChannelJoiner
 
 REACTIONS = ["❤️", "👍", "👎", "🔥", "😭", "🤬", "😍", "💔", "🤡", "💩", "🎉", "😁", "👏", "🤩", "💯", "👌", "🙏"]
@@ -79,6 +80,8 @@ class ReactionJoiner(PostBase):
             emoji = random.choice(REACTIONS)
         try:
             ent = await client.get_entity(channel)
+            if await plan_options.wait_before_action(extra):
+                return "skip", "остановлено"
             await client(SendReactionRequest(peer=ent, msg_id=mid, reaction=[ReactionEmoji(emoticon=emoji)]))
             return "ok", f"реакция {emoji}"
         except Exception as e:
@@ -92,6 +95,8 @@ class ViewsJoiner(PostBase):
         channel, mid = key
         try:
             ent = await client.get_entity(channel)
+            if await plan_options.wait_before_action(extra):
+                return "skip", "остановлено"
             r = await client(GetMessagesViewsRequest(peer=ent, id=[mid], increment=True))
             n = r.views[0].views if getattr(r, "views", None) else None
             return "ok", "просмотр засчитан" + (f" (всего {n})" if n is not None else "")

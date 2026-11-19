@@ -79,10 +79,11 @@ class ChannelJoiner:
         if not plan["items"]:
             raise ValueError("Нет подходящих аккаунтов")
         finish = plan_options.deadline((extra or {}).get("finish_at"))
-        if finish is not None:
-            plan_options.schedule(plan["items"], finish - time.time())
-            plan["finish_at"] = finish
-            plan["total"] = plan["items"][-1]["at"]
+        quiet = plan_options.quiet_hours(extra)
+        for item in plan["items"]:
+            item["base_delay"] = item["delay"]
+        plan.update(finish_at=finish, quiet=quiet)
+        plan["total"] = plan_options.schedule_order(plan["items"], time.time(), finish, quiet)
         self.plans[plan["id"]] = plan
         return self._public_plan(plan)
 
@@ -187,7 +188,8 @@ class ChannelJoiner:
     def _public_plan(p):
         out = {k: p[k] for k in ("id", "link", "title", "total")}
         un = usernames()
-        out["items"] = [{**i, "username": un.get(i["account"], "")} for i in p["items"]]
+        out["items"] = [{k: i[k] for k in ("account", "delay", "at")} |
+                        {"username": un.get(i["account"], "")} for i in p["items"]]
         out["finish_at"] = p.get("finish_at")
         out.update(already=p.get("already", []), alive=p.get("alive", 0), requested=p.get("requested"), check_errors=p.get("check_errors", 0))
         return out
@@ -197,14 +199,9 @@ class ChannelJoiner:
         plan = self.plans.get(plan_id)
         if not plan:
             raise ValueError("План устарел — построй его заново")
-        if plan.get("finish_at"):
-            finish = plan_options.deadline(plan["finish_at"])
-            duration = finish - time.time()
-            scale = duration / plan["total"]
-            for item in plan["items"]:
-                item["delay"] *= scale
-                item["at"] *= scale
-            plan["total"] = duration
+        finish = plan_options.deadline(plan["finish_at"])
+        started = time.time()
+        plan["total"] = plan_options.schedule_order(plan["items"], started, finish, plan["quiet"])
         self.plans.pop(plan_id)
         # храним максимум 10 завершённых задач
         done = [k for k, v in self.jobs.items() if v["status"] != "running"]
@@ -212,8 +209,8 @@ class ChannelJoiner:
             self.jobs.pop(k, None)
         job = {
             "id": plan["id"], "link": plan["link"], "title": plan["title"],
-            "status": "running", "total": plan["total"], "finish_at": plan.get("finish_at"), "extra": plan.get("extra"), "started": time.time(),
-            "items": [{"account": i["account"], "delay": i["delay"], "at": i["at"],
+            "status": "running", "total": plan["total"], "finish_at": plan.get("finish_at"), "extra": plan.get("extra"), "started": started, "quiet": plan["quiet"],
+            "items": [{"account": i["account"], "delay": i["delay"], "at": i["at"], "base_delay": i["base_delay"],
                        "state": "queue", "note": "", "until": None} for i in plan["items"]],
             "stop": asyncio.Event(), "skip": asyncio.Event(),
             "seq": next(_SEQ), "service": self.service,
@@ -225,17 +222,14 @@ class ChannelJoiner:
     async def _run(self, job, kind, key):
         try:
             for it in job["items"]:
-                delay = max(0, job["started"] + it["at"] - time.time()) if job.get("finish_at") else it["delay"]
-                it["state"], it["until"] = "wait", time.time() + delay
-                job["skip"].clear()
-                if await self._sleep(job, delay):
-                    break  # нажали «Остановить»
+                if await self._wait_for_account(job, it):
+                    break
                 it["state"], it["until"] = "active", None
                 client = self.get_clients().get(it["account"])
                 if not client or not client.is_connected():
                     it["state"], it["note"], it["finished"] = "err", "аккаунт не подключён", time.time()
                     continue
-                it["state"], it["note"] = await self._join(client, kind, key, job.get("extra"))
+                it["state"], it["note"] = await self._join(client, kind, key, self._action_extra(job, it))
                 it["finished"] = time.time()
             job["status"] = "stopped" if job["stop"].is_set() else "done"
         except Exception as e:  # не даём задаче зависнуть в «running»
@@ -244,6 +238,42 @@ class ChannelJoiner:
             for it in job["items"]:
                 if it["state"] in ("queue", "wait"):
                     it["state"], it["until"] = "skip", None
+
+    def _action_extra(self, job, item):
+        extra = job.get("extra")
+        if not job.get("quiet"):
+            return extra
+        return {**(extra or {}), "wait_before_action": lambda: self._wait_out_quiet(job, item)}
+
+    async def _wait_for_account(self, job, item):
+        now = time.time()
+        quiet = job.get("quiet")
+        due = (job["started"] + item["at"] if job.get("finish_at")
+               else plan_options.after_quiet(now + item["base_delay"], quiet))
+        item["state"], item["until"] = "wait", due
+        job["skip"].clear()
+        if await self._sleep(job, due - now):
+            return True
+        return await self._wait_out_quiet(job, item)
+
+    @staticmethod
+    async def _wait_out_quiet(job, item):
+        now = time.time()
+        quiet = job.get("quiet")
+        while (end := plan_options.quiet_end(now, quiet)) is not None:
+            due = plan_options.after_quiet(now, quiet)
+            finish = job.get("finish_at")
+            if finish is not None and end <= finish:
+                due = min(due, finish)
+            item["until"] = due
+            # Acceleration can skip ordinary delays, never the pause itself.
+            try:
+                await asyncio.wait_for(job["stop"].wait(), due - now)
+                return True
+            except asyncio.TimeoutError:
+                now = time.time()
+        item["until"] = None
+        return job["stop"].is_set()
 
     @staticmethod
     async def _sleep(job, delay):
@@ -258,7 +288,7 @@ class ChannelJoiner:
         return job["stop"].is_set()
 
     def skip(self, job_id=None):
-        """«Ускорить»: у аккаунта, который сейчас ждёт своей очереди, таймер обнуляется — он работает сразу."""
+        """Сократить ожидание текущего аккаунта с учётом времени пропуска."""
         running = [j for j in self.jobs.values() if j["status"] == "running"]
         if job_id:
             running = [j for j in running if j["id"] == job_id]
@@ -274,10 +304,11 @@ class ChannelJoiner:
         from telethon.tl.functions.channels import JoinChannelRequest
         from telethon.tl.functions.messages import ImportChatInviteRequest
         try:
-            if kind == "invite":
-                await client(ImportChatInviteRequest(key))
-            else:
-                await client(JoinChannelRequest(await client.get_entity(key)))
+            request = (ImportChatInviteRequest(key) if kind == "invite"
+                       else JoinChannelRequest(await client.get_entity(key)))
+            if await plan_options.wait_before_action(extra):
+                return "skip", "остановлено"
+            await client(request)
             return "ok", "вошёл"
         except Exception as e:
             n = type(e).__name__
@@ -303,15 +334,9 @@ class ChannelJoiner:
             raise ValueError("Этого аккаунта нет в плане")
         if not items:
             raise ValueError("В плане должен остаться хотя бы один аккаунт — иначе нажми «Отмена»")
-        at = 0
-        for i in items:
-            at += i["delay"]
-            i["at"] = at
-        if plan.get("finish_at"):
-            finish = plan_options.deadline(plan["finish_at"])
-            plan_options.schedule(items, finish - time.time())
-            at = items[-1]["at"]
-        plan["items"], plan["total"] = items, at
+        finish = plan_options.deadline(plan["finish_at"])
+        total = plan_options.schedule_order(items, time.time(), finish, plan["quiet"])
+        plan["items"], plan["total"] = items, total
         return self._public_plan(plan)
 
     def stop(self, job_id=None):
