@@ -10,6 +10,8 @@ import re
 import secrets
 import shutil
 import time
+from collections import Counter, defaultdict
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from aiohttp import web
@@ -88,48 +90,103 @@ async def group_entity(client, kind, key):
     return entity
 
 
-USERNAME_WORDS = ('wave', 'verse', 'echo', 'mode', 'arc', 'craft', 'note', 'orbit',
-                  'atlas', 'studio', 'north', 'shift', 'field', 'side', 'stream')
+def username_parts(name):
+    split = re.sub(r'([a-z])([A-Z])', r'\1_\2', name)
+    return re.findall(r'[a-z]+', split.casefold(), flags=re.ASCII)
+
+
+class UsernameDiversity:
+    """Index names for reuse and obvious lexical similarity checks."""
+
+    def __init__(self, names):
+        self.names = set()
+        self.edges = set()
+        self.words = set()
+        self.grams = defaultdict(set)
+        for name in names:
+            self.add(name)
+
+    @staticmethod
+    def features(name):
+        parts = username_parts(name)
+        compact = ''.join(parts)
+        words = set(word for word in parts if len(parts) > 1 and len(word) >= 4)
+        grams = {compact[i:i+3] for i in range(len(compact) - 2)}
+        return compact, words, grams
+
+    def add(self, name):
+        compact, words, grams = self.features(name)
+        if not compact:
+            return
+        self.names.add(compact)
+        self.edges.update((('start', compact[:4]), ('end', compact[-4:])))
+        self.words.update(words)
+        for gram in grams:
+            self.grams[gram].add(compact)
+
+    def allows(self, name):
+        compact, words, grams = self.features(name)
+        if (compact in self.names or words & self.words
+                or ('start', compact[:4]) in self.edges or ('end', compact[-4:]) in self.edges):
+            return False
+        shared_grams = Counter(other for gram in grams for other in self.grams.get(gram, ()))
+        for other, overlap in shared_grams.items():
+            shorter = min(len(compact), len(other))
+            if overlap >= 4 and overlap * 3 >= 2 * min(len(grams), len(other) - 2):
+                return False
+            match = SequenceMatcher(None, compact, other, autojunk=False)
+            shared = match.find_longest_match().size
+            if shared >= max(5, (shorter * 2 + 2) // 3) or match.ratio() >= .78:
+                return False
+        return True
 
 
 def username_candidates(original, target_id):
-    """Suggest readable variants in an account-specific order."""
-    split = re.sub(r'([a-z])([A-Z])', r'\1_\2', original)
-    words = re.findall(r'[a-z]+', split.casefold(), flags=re.ASCII)
+    """Mix source-based variants with independent names when stems collide."""
+    words = username_parts(original)
     if not words:
         return []
-    # Keep the stem from the source. Avoid splitting a short first token off
-    # a longer name just to insert a full word.
-    stem = '_'.join(words)
     compact = ''.join(words)
     seed = hashlib.blake2b(f'{original.casefold()}:{target_id}'.encode(), digest_size=16).digest()
     rng = random.Random(seed)
-    vocabulary = list(USERNAME_WORDS)
-    rng.shuffle(vocabulary)
-    endings = ['io', 'era', 'lab', 'works', 'zone']
-    rng.shuffle(endings)
 
-    families = [
-        [f'{stem[:31-len(word)].rstrip("_")}_{word}' for word in vocabulary],
-        [f'{word}_{stem[:31-len(word)].rstrip("_")}' for word in vocabulary],
-        [f'{compact[:32-len(word)]}{word}' for word in vocabulary],
-        [f'{compact[:32-len(ending)]}{ending}' for ending in endings],
-    ]
+    def coined():
+        syllables = []
+        onsets = ('', 'b', 'c', 'd', 'f', 'g', 'h', 'k', 'l', 'm', 'n', 'p', 'r', 's',
+                  't', 'v', 'w', 'z', 'br', 'cl', 'dr', 'fr', 'gr', 'sh', 'st', 'tr')
+        vowels = ('a', 'e', 'i', 'o', 'u', 'ai', 'ea', 'io', 'ou')
+        for _ in range(rng.choice((2, 2, 3, 3, 4))):
+            syllables.append(rng.choice(onsets) + rng.choice(vowels) + rng.choice(('', '', '', 'n', 'r', 's', 'l')))
+        if len(syllables) > 2 and rng.randrange(5) == 0:
+            return syllables[0] + '_' + ''.join(syllables[1:])
+        return ''.join(syllables)
+
+    root_forms = [compact]
     if len(words) > 1:
-        families.append([compact, '_'.join(reversed(words)), ''.join(reversed(words))])
-    rng.shuffle(families)
-    candidates = dict.fromkeys(
-        family[index]
-        for index in range(max(map(len, families))) for family in families if index < len(family)
-    )
-    return [name for name in candidates if name != original.casefold()
+        root_forms.extend(['_'.join(words), '_'.join(reversed(words)), ''.join(reversed(words))])
+    rng.shuffle(root_forms)
+    alternatives = []
+    for index in range(90):
+        fresh = coined()
+        if index < len(root_forms):
+            alternatives.append(root_forms[index])
+        if index < 8:
+            root = rng.choice(words) if len(words) > 1 else compact
+            stem_space = 32 - len(fresh) - 1
+            if index % 2:
+                alternatives.append(f'{fresh}_{root[:stem_space]}')
+            else:
+                alternatives.append(f'{root[:stem_space]}_{fresh}')
+        alternatives.append(fresh)
+    return [name for name in dict.fromkeys(alternatives) if name != original.casefold()
             and re.fullmatch(r'[a-z][a-z_]{3,30}[a-z]', name)]
 
 
 async def available_username(client, original, target_id, read, reserved=()):
+    diversity = reserved if isinstance(reserved, UsernameDiversity) else UsernameDiversity(reserved)
     checked = 0
     for candidate in username_candidates(original, target_id):
-        if candidate in reserved:
+        if not diversity.allows(candidate):
             continue
         checked += 1
         try:
@@ -207,6 +264,9 @@ class ProfileCopies:
             state = {'used_sources': [], 'jobs': {}}
         self.used_sources = set(state['used_sources'])
         self.jobs = state['jobs']
+        self.used_usernames = set(state.get('used_usernames', []))
+        self.used_usernames.update(job['values']['username'] for job in self.jobs.values()
+                                   if job.get('values', {}).get('username'))
         interrupted = {target: {**job, 'state': 'interrupted', 'values': {},
                                 'errors': [*job['errors'], 'Операция прервана. Проверьте профиль в Telegram.']}
                        for target, job in self.jobs.items() if job['state'] == 'running'}
@@ -218,10 +278,12 @@ class ProfileCopies:
                 if path.is_dir() and re.fullmatch(r'[0-9a-f]{32}', path.name) and path.name not in keep:
                     self.remove_photos(path.name)
 
-    def save(self, jobs, used):
+    def save(self, jobs, used, usernames=None):
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        atomic_json_save(self.path, {'used_sources': sorted(used), 'jobs': jobs})
-        self.jobs, self.used_sources = jobs, used
+        usernames = self.used_usernames if usernames is None else usernames
+        atomic_json_save(self.path, {'used_sources': sorted(used), 'jobs': jobs,
+                                    'used_usernames': sorted(usernames)})
+        self.jobs, self.used_sources, self.used_usernames = jobs, used, usernames
 
     def put(self, job):
         self.save(self.jobs | {job['target']: job}, self.used_sources)
@@ -247,6 +309,13 @@ class ProfileCopies:
     @staticmethod
     def target(acc):
         return str(acc.me.id)
+
+    def username_diversity(self, except_token=None):
+        names = list(self.used_usernames)
+        names.extend(a.me.username or '' for a in self.accounts().values() if a.me is not None)
+        names.extend(draft['values'].get('username', '') for token, draft in self.drafts.items()
+                     if token != except_token)
+        return UsernameDiversity(names)
 
     def signatures(self):
         return [job['signature'] for job in self.jobs.values() if 'signature' in job]
@@ -320,10 +389,7 @@ class ProfileCopies:
         excluded = self.used_sources | {draft['source_id'] for draft in self.drafts.values()}
         local = [a for a in self.accounts().values() if a.me is not None]
         excluded = excluded | {self.target(a) for a in local}
-        taken_usernames = {(a.me.username or '').casefold() for a in local}
-        taken_usernames.update(draft['values'].get('username', '').casefold() for draft in self.drafts.values())
-        taken_usernames.update(job['values'].get('username', '').casefold() for job in self.jobs.values()
-                               if job['state'] in ACTIVE_STATES)
+        taken_usernames = self.username_diversity()
         if kind == 'profile':
             members = [await read(acc.client.get_entity, key)]
         else:
@@ -553,7 +619,11 @@ class ProfileCopies:
         if signature_matches(job['signature'], self.signatures()):
             raise ValueError('Похожий профиль уже перенесён. Создайте новый предпросмотр.')
         job.update(state='waiting', due=self.clock(), uploaded=0, errors=[], replace_photos=bool(job['delays']))
-        self.save(self.jobs | {target: job}, self.used_sources | {draft['source_id']})
+        username = job['values'].get('username')
+        if username and not self.username_diversity(except_token=token).allows(username):
+            raise ValueError('Юзернейм стал слишком похож на другой профиль. Создайте новый предпросмотр.')
+        used_usernames = self.used_usernames | ({username} if username else set())
+        self.save(self.jobs | {target: job}, self.used_sources | {draft['source_id']}, used_usernames)
         self.drafts.pop(token)
         await self.advance(target, acc)
         return self.status(acc)

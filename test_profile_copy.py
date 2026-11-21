@@ -14,7 +14,8 @@ from telethon.errors import FloodWaitError, UsernameOccupiedError
 from telethon.helpers import TotalList
 
 import main
-from profile_copy import DAY, DRAFT_TTL, ProfileCopies, available_username, copy_options, username_candidates
+from profile_copy import (DAY, DRAFT_TTL, ProfileCopies, UsernameDiversity,
+                          available_username, copy_options, username_candidates)
 
 
 class Client:
@@ -107,10 +108,31 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_username_check_skips_locally_reserved_and_retries_occupied_candidates(self):
         candidates = username_candidates('SilentRunner', '1')
+        reserved = UsernameDiversity({candidates[0]})
+        eligible = [name for name in candidates if reserved.allows(name)]
         read = AsyncMock(side_effect=[UsernameOccupiedError(None), False, True])
-        picked = await available_username(self.client, 'SilentRunner', '1', read, {candidates[0]})
-        self.assertEqual(picked, candidates[3])
-        self.assertEqual([call.args[1].username for call in read.await_args_list], candidates[1:4])
+        picked = await available_username(self.client, 'SilentRunner', '1', read, reserved)
+        self.assertEqual(picked, eligible[2])
+        self.assertEqual([call.args[1].username for call in read.await_args_list], eligible[:3])
+
+    def test_username_diversity_rejects_shared_stems_and_word_reordering(self):
+        names = UsernameDiversity(['northwind_arc', 'moon_studio', 'ironraven'])
+        for candidate in ('North_Wind007', 'northwindfield', 'blue_studio', 'raveniron'):
+            self.assertFalse(names.allows(candidate), candidate)
+        self.assertTrue(names.allows('salvinea'))
+
+    def test_similar_source_names_still_produce_a_diverse_batch(self):
+        index = UsernameDiversity([])
+        selected = []
+        for target in range(500):
+            candidates = username_candidates(f'NorthWind{target}', str(target))
+            chosen = next((candidate for candidate in candidates if index.allows(candidate)), None)
+            self.assertIsNotNone(chosen)
+            selected.append(chosen)
+            index.add(chosen)
+        names = [name.replace('_', '') for name in selected]
+        self.assertEqual(len({name[:4] for name in names}), 500)
+        self.assertEqual(len({name[-4:] for name in names}), 500)
 
     async def test_preview_confirmation_spacing_persistence_and_source_uniqueness(self):
         draft = await self.preview(self.target)
@@ -137,6 +159,7 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
             await self.service.confirm(self.target, draft['token'])
 
         self.service = self.make_service()
+        self.assertIn(draft['values']['username'], self.service.used_usernames)
         newer = await self.preview(self.second)
         self.assertEqual(newer['source_id'], '30')
         await self.service.advance('1', self.target)
