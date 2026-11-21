@@ -10,11 +10,11 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 from telethon import functions, types
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, UsernameOccupiedError
 from telethon.helpers import TotalList
 
 import main
-from profile_copy import DAY, DRAFT_TTL, ProfileCopies, copy_options
+from profile_copy import DAY, DRAFT_TTL, ProfileCopies, available_username, copy_options, username_candidates
 
 
 class Client:
@@ -93,6 +93,24 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
     async def preview(self, target):
         with patch('profile_copy.random.shuffle'):
             return await self.service.preview(target, self.data)
+
+    def test_readable_username_styles_are_valid_diverse_and_account_specific(self):
+        for original in ('NorthWind77', 'silent_runner', 'a1', 'a' * 32):
+            with self.subTest(original=original):
+                candidates = username_candidates(original, '1')
+                self.assertNotEqual(candidates[:5], username_candidates(original, '9')[:5])
+                self.assertEqual(len(candidates), len(set(candidates)))
+                self.assertNotIn(original.lower(), candidates)
+                self.assertTrue(all(5 <= len(value) <= 32 and value[0].isalpha() and value[-1].isalpha()
+                                    and not any(char.isdigit() for char in value) for value in candidates))
+        self.assertEqual(username_candidates('123', '1'), [])
+
+    async def test_username_check_skips_locally_reserved_and_retries_occupied_candidates(self):
+        candidates = username_candidates('SilentRunner', '1')
+        read = AsyncMock(side_effect=[UsernameOccupiedError(None), False, True])
+        picked = await available_username(self.client, 'SilentRunner', '1', read, {candidates[0]})
+        self.assertEqual(picked, candidates[3])
+        self.assertEqual([call.args[1].username for call in read.await_args_list], candidates[1:4])
 
     async def test_preview_confirmation_spacing_persistence_and_source_uniqueness(self):
         draft = await self.preview(self.target)

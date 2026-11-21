@@ -1,6 +1,7 @@
 """Preview and schedule selected profile fields from an accessible group."""
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import math
@@ -87,15 +88,57 @@ async def group_entity(client, kind, key):
     return entity
 
 
-async def available_username(client, original, read):
-    base = original[:26].rstrip('_')
-    for _ in range(5):
-        candidate = f'{base}_{secrets.randbelow(90000) + 10000}'
+USERNAME_WORDS = ('wave', 'verse', 'echo', 'mode', 'arc', 'craft', 'note', 'orbit',
+                  'atlas', 'studio', 'north', 'shift', 'field', 'side', 'stream')
+
+
+def username_candidates(original, target_id):
+    """Suggest readable variants in an account-specific order."""
+    split = re.sub(r'([a-z])([A-Z])', r'\1_\2', original)
+    words = re.findall(r'[a-z]+', split.casefold(), flags=re.ASCII)
+    if not words:
+        return []
+    # Keep the stem from the source. Avoid splitting a short first token off
+    # a longer name just to insert a full word.
+    stem = '_'.join(words)
+    compact = ''.join(words)
+    seed = hashlib.blake2b(f'{original.casefold()}:{target_id}'.encode(), digest_size=16).digest()
+    rng = random.Random(seed)
+    vocabulary = list(USERNAME_WORDS)
+    rng.shuffle(vocabulary)
+    endings = ['io', 'era', 'lab', 'works', 'zone']
+    rng.shuffle(endings)
+
+    families = [
+        [f'{stem[:31-len(word)].rstrip("_")}_{word}' for word in vocabulary],
+        [f'{word}_{stem[:31-len(word)].rstrip("_")}' for word in vocabulary],
+        [f'{compact[:32-len(word)]}{word}' for word in vocabulary],
+        [f'{compact[:32-len(ending)]}{ending}' for ending in endings],
+    ]
+    if len(words) > 1:
+        families.append([compact, '_'.join(reversed(words)), ''.join(reversed(words))])
+    rng.shuffle(families)
+    candidates = dict.fromkeys(
+        family[index]
+        for index in range(max(map(len, families))) for family in families if index < len(family)
+    )
+    return [name for name in candidates if name != original.casefold()
+            and re.fullmatch(r'[a-z][a-z_]{3,30}[a-z]', name)]
+
+
+async def available_username(client, original, target_id, read, reserved=()):
+    checked = 0
+    for candidate in username_candidates(original, target_id):
+        if candidate in reserved:
+            continue
+        checked += 1
         try:
             if await read(client, functions.account.CheckUsernameRequest(candidate)):
                 return candidate
         except (UsernameInvalidError, UsernameOccupiedError):
-            continue
+            pass
+        if checked == 5:
+            break
     return None
 
 
@@ -277,6 +320,10 @@ class ProfileCopies:
         excluded = self.used_sources | {draft['source_id'] for draft in self.drafts.values()}
         local = [a for a in self.accounts().values() if a.me is not None]
         excluded = excluded | {self.target(a) for a in local}
+        taken_usernames = {(a.me.username or '').casefold() for a in local}
+        taken_usernames.update(draft['values'].get('username', '').casefold() for draft in self.drafts.values())
+        taken_usernames.update(job['values'].get('username', '').casefold() for job in self.jobs.values()
+                               if job['state'] in ACTIVE_STATES)
         if kind == 'profile':
             members = [await read(acc.client.get_entity, key)]
         else:
@@ -355,7 +402,7 @@ class ProfileCopies:
             if music:
                 values['music'] = music
             if user.username:
-                username = await available_username(acc.client, user.username, read)
+                username = await available_username(acc.client, user.username, target, read, taken_usernames)
                 if username:
                     values['username'] = username
                 elif 'username' in selected:
