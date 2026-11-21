@@ -1256,13 +1256,15 @@ function renderPanelSettings(){
     const row=el('label','profile-copy-option');row.append(input,label);tabs.append(row);
   }
   const number=(key,min,max)=>{
-    const field=el('input');field.type='number';field.min=min;field.max=max;field.value=PANEL_SETTINGS[key];return field;
+    const field=el('input');field.type='number';field.min=min;
+    if(max!==undefined)field.max=max;
+    field.value=PANEL_SETTINGS[key];return field;
   };
-  const views=number('view_spread',0,100),reacts=number('reaction_spread',0,100),workers=number('search_workers',1,5);
+  const views=number('view_spread',0,100),reacts=number('reaction_spread',0,100),workers=number('search_workers',1);
   const group=el('input');group.value=PANEL_SETTINGS.profile_group;
   const button=el('button','btn','Сохранить'),status=el('div','status');
   root.append(tabs,fld('Разброс просмотров Автопилота (±%)',views),fld('Разброс реакций ниже лимита (%)',reacts),
-    fld('Аккаунтов для поиска профилей (до 5)',workers),fld('Группа по умолчанию',group),button,status);
+    fld('Аккаунтов для поиска профилей',workers),fld('Группа по умолчанию',group),button,status);
   button.onclick=async()=>{
     try{
       PANEL_SETTINGS=await api('/api/panel-settings',{method:'POST',json:{

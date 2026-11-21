@@ -1202,6 +1202,7 @@ async def api_chat_media(request):
 
 
 ERR_TEXT = {"UsernameOccupiedError": "username уже занят", "UsernameInvalidError": "недопустимый username",
+            "UsernamePurchaseAvailableError": "этот username выставлен на продажу и недоступен для обычной установки",
             "FirstNameInvalidError": "недопустимое имя", "UsernameNotModifiedError": "username не изменился",
             "AboutTooLongError": "слишком длинное био", "BirthdayInvalidError": "недопустимая дата рождения"}
 PRIV = {"bio": ("био", "InputPrivacyKeyAbout"), "birthday": ("день рождения", "InputPrivacyKeyBirthday"),

@@ -17,7 +17,7 @@ from pathlib import Path
 from aiohttp import web
 from telethon import functions, types
 from telethon.errors import (FloodPremiumWaitError, FloodWaitError, RPCError, UserIdInvalidError,
-                             UsernameInvalidError, UsernameOccupiedError)
+                             UsernameInvalidError, UsernameOccupiedError, UsernamePurchaseAvailableError)
 
 from channels import parse_link
 from template_library import atomic_json_save
@@ -38,6 +38,13 @@ LOG = logging.getLogger(__name__)
 
 class AvatarUnavailable(ValueError):
     pass
+
+
+def search_workers(data):
+    value = data.get('workers', 1)
+    if type(value) is not int or value < 1:
+        raise ValueError('Число аккаунтов для поиска должно быть целым и не меньше 1')
+    return value
 
 
 def copy_options(data):
@@ -188,7 +195,7 @@ async def available_username(client, original, target_id, read, reserved=()):
         try:
             if await read(client, functions.account.CheckUsernameRequest(candidate)):
                 return candidate
-        except (UsernameInvalidError, UsernameOccupiedError):
+        except (UsernameInvalidError, UsernameOccupiedError, UsernamePurchaseAvailableError):
             pass
         if checked == 5:
             break
@@ -396,16 +403,16 @@ class ProfileCopies:
                       and ('username' not in selected or user.username)}.values())
         random.shuffle(users)
         workers = [acc]
-        if kind != 'profile':
+        limit = min(search['workers'], len(users))
+        if kind != 'profile' and limit > 1:
             seen = {target}
             for reader in local:
                 ident = self.target(reader)
                 if ident not in seen and reader.client is not acc.client and reader.client.is_connected():
                     seen.add(ident)
                     workers.append(reader)
-                if len(workers) >= search.get('workers', 1):
+                if len(workers) >= limit:
                     break
-            workers = workers[:search.get('workers', 1)]
 
         async def details(user, reader):
             if reader is not acc and user.username:
@@ -495,10 +502,7 @@ class ProfileCopies:
     async def preview(self, acc, data, search=None):
         kind, key, selected, count, delay = copy_options(data)
         search = {'checked': 0} if search is None else search
-        try:
-            search['workers'] = max(1, min(5, int(data.get('workers', 1))))
-        except (TypeError, ValueError):
-            search['workers'] = 1
+        search['workers'] = search_workers(data)
         target = self.target(acc)
         async with self.preview_lock:
             search['state'] = 'searching'
@@ -552,6 +556,7 @@ class ProfileCopies:
 
     def start_search(self, acc, data):
         copy_options(data)
+        search_workers(data)
         target = self.target(acc)
         self.check_idle(target)
         search = self.searches.get(target)

@@ -10,10 +10,11 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 from telethon import functions, types
-from telethon.errors import FloodWaitError, UsernameOccupiedError
+from telethon.errors import FloodWaitError, UsernameOccupiedError, UsernamePurchaseAvailableError
 from telethon.helpers import TotalList
 
 import main
+from panel_settings import PanelSettings
 from profile_copy import (DAY, DRAFT_TTL, ProfileCopies, UsernameDiversity,
                           available_username, copy_options, username_candidates)
 
@@ -110,10 +111,41 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
         candidates = username_candidates('SilentRunner', '1')
         reserved = UsernameDiversity({candidates[0]})
         eligible = [name for name in candidates if reserved.allows(name)]
-        read = AsyncMock(side_effect=[UsernameOccupiedError(None), False, True])
+        read = AsyncMock(side_effect=[UsernameOccupiedError(None), UsernamePurchaseAvailableError(None), False, True])
         picked = await available_username(self.client, 'SilentRunner', '1', read, reserved)
-        self.assertEqual(picked, eligible[2])
-        self.assertEqual([call.args[1].username for call in read.await_args_list], eligible[:3])
+        self.assertEqual(picked, eligible[3])
+        self.assertEqual([call.args[1].username for call in read.await_args_list], eligible[:4])
+
+    async def test_search_worker_setting_accepts_twenty_and_loads_after_restart(self):
+        settings = PanelSettings(self.root)
+        request = SimpleNamespace(json=AsyncMock(return_value={'search_workers': 20}))
+        self.assertEqual((await settings.update(request)).status, 200)
+        self.assertEqual(PanelSettings(self.root).get()['search_workers'], 20)
+        for value in [0, 2.5, True]:
+            request.json.return_value = {'search_workers': value}
+            self.assertEqual((await settings.update(request)).status, 400)
+
+    async def test_search_with_limit_twenty_can_use_more_than_five_connected_accounts(self):
+        class Reader(Client):
+            def __init__(self):
+                super().__init__()
+                self.lookups = []
+
+            def is_connected(self):
+                return True
+
+            async def get_input_entity(self, username):
+                self.lookups.append(username)
+                return types.InputPeerUser(int(username.removeprefix('@candidate')), 0)
+
+        self.client.members = [types.User(ident, username=f'candidate{ident}') for ident in range(100, 107)]
+        readers = [Reader() for _ in range(6)]
+        self.accounts.update({f'helper{i}': SimpleNamespace(me=types.User(10 + i), client=reader)
+                              for i, reader in enumerate(readers)})
+        self.data['workers'] = 20
+        draft = await self.preview(self.target)
+        self.assertEqual(draft['source_id'], '100')
+        self.assertTrue(all(len(reader.lookups) == 1 for reader in readers))
 
     def test_username_diversity_rejects_shared_stems_and_word_reordering(self):
         names = UsernameDiversity(['northwind_arc', 'moon_studio', 'ironraven'])

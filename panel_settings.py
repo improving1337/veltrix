@@ -26,11 +26,16 @@ class PanelSettings:
         if not isinstance(payload, dict):
             return web.json_response({'error': 'Некорректные настройки'}, status=400)
         values = self.get()
-        for key, low, high in [('view_spread', 0, 100), ('reaction_spread', 0, 100), ('search_workers', 1, 5)]:
+        for key, low, high in [('view_spread', 0, 100), ('reaction_spread', 0, 100)]:
             value = payload.get(key, values[key])
             if type(value) is not int or not low <= value <= high:
                 return web.json_response({'error': f'Значение должно быть от {low} до {high}'}, status=400)
             values[key] = value
+        workers = payload.get('search_workers', values['search_workers'])
+        if type(workers) is not int or workers < 1:
+            return web.json_response({'error': 'Число аккаунтов для поиска должно быть целым и не меньше 1'},
+                                     status=400)
+        values['search_workers'] = workers
         tabs = payload.get('hidden_tabs', values['hidden_tabs'])
         group = payload.get('profile_group', values['profile_group'])
         if not isinstance(tabs, list) or any(not isinstance(tab, str) or tab not in TABS for tab in tabs):
