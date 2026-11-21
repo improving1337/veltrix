@@ -146,7 +146,7 @@ class EligibilityTests(unittest.IsolatedAsyncioTestCase):
         resume = ScheduleTests.moscow(20, 7) + 360
         quiet = plan_options.quiet_hours({'quiet_hours': {'from': '00:00', 'to': '07:00'}})
         joiner = channels.ChannelJoiner(lambda: {'a': client()})
-        item = {'account': 'a', 'base_delay': 1500, 'at': resume - start}
+        item = {'account': 'a', 'base_delay': 1500, 'at': resume - start, 'state': 'queue'}
         job = {'id': 'job', 'status': 'running', 'quiet': quiet, 'items': [item],
                'stop': asyncio.Event(), 'skip': asyncio.Event()}
         joiner.jobs['job'] = job
@@ -176,6 +176,98 @@ class EligibilityTests(unittest.IsolatedAsyncioTestCase):
               patch('channels.asyncio.wait_for', wait_out_pause)):
             await joiner._run(job, 'public', 'example')
         self.assertEqual(attempts, [resume])
+
+    async def test_restart_keeps_due_time_and_waits_for_same_account(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Path(directory) / 'orders.json'
+            available = {'a': client()}
+            joiner = channels.ChannelJoiner(lambda: available)
+            joiner.load_jobs(storage)
+            joiner.account_ids = lambda: {'a': 99}
+            joiner._subscribed = AsyncMock(return_value=(set(), 0))
+            plan = await joiner.make_plan('@example', 1, 100, 100)
+            waiting = asyncio.Event()
+
+            async def pause(*args):
+                waiting.set()
+                await asyncio.Future()
+
+            joiner._sleep = pause
+            await joiner.start(plan['id'])
+            await asyncio.wait_for(waiting.wait(), 1)
+            item = joiner.jobs[plan['id']]['items'][0]
+            due = item['until']
+            await joiner.suspend_jobs()
+
+            restored = channels.ChannelJoiner(lambda: available)
+            restored.account_connecting = lambda name: name == 'a'
+            restored.account_ids = lambda: {'a': 99}
+            restored.load_jobs(storage)
+            available.clear()
+
+            async def wait_done(job, delay):
+                self.assertAlmostEqual(time.time() + delay, due, places=1)
+                return False
+
+            async def connect():
+                await asyncio.sleep(.01)
+                available['a'] = client()
+
+            restored._sleep = wait_done
+            restored._join = AsyncMock(return_value=('ok', ''))
+            await restored.resume_jobs()
+            await connect()
+            await asyncio.wait_for(restored.jobs[plan['id']]['task'], 3)
+            restored._join.assert_awaited_once()
+            self.assertEqual(restored.jobs[plan['id']]['status'], 'done')
+
+    async def test_restart_does_not_repeat_in_flight_action(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Path(directory) / 'orders.json'
+            clients = {'a': client(), 'b': client()}
+            joiner = channels.ChannelJoiner(lambda: clients)
+            joiner.load_jobs(storage)
+            joiner._subscribed = AsyncMock(return_value=(set(), 0))
+            plan = await joiner.make_plan('@example', 2, 0, 0)
+            started = asyncio.Event()
+
+            async def do_action(*args):
+                started.set()
+                await asyncio.Future()
+
+            joiner._join = do_action
+            await joiner.start(plan['id'])
+            await asyncio.wait_for(started.wait(), 1)
+            await joiner.suspend_jobs()
+
+            restored = channels.ChannelJoiner(lambda: clients)
+            restored.load_jobs(storage)
+            restored._join = AsyncMock(return_value=('ok', ''))
+            await restored.resume_jobs()
+            job = restored.jobs[plan['id']]
+            await asyncio.wait_for(job['task'], 1)
+            restored._join.assert_awaited_once_with(clients[plan['items'][1]['account']], 'public', 'example', None)
+            self.assertIn('неизвестен', job['items'][0]['note'])
+            self.assertEqual([item['state'] for item in job['items']], ['err', 'ok'])
+
+    async def test_stop_is_persisted_before_the_worker_can_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Path(directory) / 'orders.json'
+            clients = {'a': client()}
+            joiner = channels.ChannelJoiner(lambda: clients)
+            joiner.load_jobs(storage)
+            joiner._subscribed = AsyncMock(return_value=(set(), 0))
+            plan = await joiner.make_plan('@example', 1, 90, 90)
+            await joiner.start(plan['id'])
+            joiner.stop(plan['id'])
+            await joiner.suspend_jobs()
+            restored = channels.ChannelJoiner(lambda: clients)
+            restored.load_jobs(storage)
+            await restored.resume_jobs()
+            job = restored.jobs[plan['id']]
+            self.assertEqual(job['status'], 'stopped')
+            self.assertEqual(job['items'][0]['state'], 'skip')
+            self.assertNotIn('task', job)
 
     async def test_freshness_recent_old_absent_unknown(self):
         clients = {'recent': client(2), 'old': client(8), 'no_photo': client(), 'unknown': client(broken=True)}

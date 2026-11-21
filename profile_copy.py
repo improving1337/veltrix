@@ -64,8 +64,6 @@ def copy_options(data):
     if not 1 <= low <= high < 2**31 - 1:
         raise ValueError('Количество: от 1, верхняя граница должна быть не меньше нижней')
     count = (low, high)
-    if count == (1, 1) and not direct:
-        return kind, key, set(selected), count, None
     try:
         delay = tuple(float(str(data.get(k, d)).replace(',', '.'))
                       for k, d in [('delay_from_days', 1), ('delay_to_days', 2)])
@@ -157,13 +155,11 @@ def username_candidates(original, target_id):
         vowels = ('a', 'e', 'i', 'o', 'u', 'ai', 'ea', 'io', 'ou')
         for _ in range(rng.choice((2, 2, 3, 3, 4))):
             syllables.append(rng.choice(onsets) + rng.choice(vowels) + rng.choice(('', '', '', 'n', 'r', 's', 'l')))
-        if len(syllables) > 2 and rng.randrange(5) == 0:
-            return syllables[0] + '_' + ''.join(syllables[1:])
         return ''.join(syllables)
 
     root_forms = [compact]
     if len(words) > 1:
-        root_forms.extend(['_'.join(words), '_'.join(reversed(words)), ''.join(reversed(words))])
+        root_forms.append(''.join(reversed(words)))
     rng.shuffle(root_forms)
     alternatives = []
     for index in range(90):
@@ -172,14 +168,14 @@ def username_candidates(original, target_id):
             alternatives.append(root_forms[index])
         if index < 8:
             root = rng.choice(words) if len(words) > 1 else compact
-            stem_space = 32 - len(fresh) - 1
+            stem_space = 32 - len(fresh)
             if index % 2:
-                alternatives.append(f'{fresh}_{root[:stem_space]}')
+                alternatives.append(f'{fresh}{root[:stem_space]}')
             else:
-                alternatives.append(f'{root[:stem_space]}_{fresh}')
+                alternatives.append(f'{root[:stem_space]}{fresh}')
         alternatives.append(fresh)
     return [name for name in dict.fromkeys(alternatives) if name != original.casefold()
-            and re.fullmatch(r'[a-z][a-z_]{3,30}[a-z]', name)]
+            and re.fullmatch(r'[a-z]{5,32}', name)]
 
 
 async def available_username(client, original, target_id, read, reserved=()):
@@ -516,7 +512,7 @@ class ProfileCopies:
             try:
                 source, values, photos = await asyncio.wait_for(
                     self.select_source(acc, kind, key, selected, count, token, search), SEARCH_TIMEOUT)
-                delays = [0] + [random.uniform(*delay) * DAY for _ in photos[1:]] if photos else []
+                delays = [random.uniform(*delay) * DAY for _ in photos]
                 draft = {'token': token, 'target': target, 'source_id': str(source.id), 'values': values,
                          'delays': delays, 'expires': self.clock() + DRAFT_TTL}
                 self.drafts[token] = draft
@@ -618,7 +614,8 @@ class ProfileCopies:
                                              draft['values'].get('bio'), draft['values'].get('birthday'))
         if signature_matches(job['signature'], self.signatures()):
             raise ValueError('Похожий профиль уже перенесён. Создайте новый предпросмотр.')
-        job.update(state='waiting', due=self.clock(), uploaded=0, errors=[], replace_photos=bool(job['delays']))
+        job.update(state='waiting', due=self.clock(), uploaded=0, errors=[],
+                   apply_profile_first=True, replace_photos=bool(job['delays']))
         username = job['values'].get('username')
         if username and not self.username_diversity(except_token=token).allows(username):
             raise ValueError('Юзернейм стал слишком похож на другой профиль. Создайте новый предпросмотр.')
@@ -637,22 +634,30 @@ class ProfileCopies:
         uploaded = job['uploaded']
         errors = list(job['errors'])
         delays = job['delays']
+        apply_profile = job.get('apply_profile_first', False)
+        replace_photos = job.get('replace_photos', False)
         try:
-            if job.get('replace_photos') and self.clear_photos is not None:
-                await self.clear_photos(acc)
-            if uploaded < len(delays):
-                data = (self.photos / job['token'] / f'{uploaded}.jpg').read_bytes()
-                await asyncio.wait_for(self.upload_avatar(acc, data), 120)
-                uploaded += 1
-            if job['values'] or job.get('replace_photos'):
+            if apply_profile:
                 errors.extend(await self.apply_fields(acc, job['values']))
+            else:
+                if replace_photos and self.clear_photos is not None:
+                    await self.clear_photos(acc)
+                if uploaded < len(delays):
+                    data = (self.photos / job['token'] / f'{uploaded}.jpg').read_bytes()
+                    await asyncio.wait_for(self.upload_avatar(acc, data), 120)
+                    uploaded += 1
+                if job['values']:
+                    errors.extend(await self.apply_fields(acc, job['values']))
         except Exception as exc:
             errors.append(f'Последовательность остановлена: {exc or type(exc).__name__}. Проверьте профиль в Telegram.')
             state, due = 'failed', None
         else:
             state = 'waiting' if uploaded < len(delays) else 'done'
-            due = self.clock() + delays[uploaded] if state == 'waiting' else None
-        self.put({**job, 'values': {}, 'replace_photos': False, 'uploaded': uploaded, 'due': due, 'state': state, 'errors': errors})
+            base = job['due'] if apply_profile else self.clock()
+            due = base + delays[uploaded] if state == 'waiting' else None
+        self.put({**job, 'values': {}, 'apply_profile_first': False,
+                  'replace_photos': replace_photos and apply_profile and state == 'waiting',
+                  'uploaded': uploaded, 'due': due, 'state': state, 'errors': errors})
         if state != 'waiting':
             self.remove_photos(job['token'])
 

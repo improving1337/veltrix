@@ -2892,6 +2892,10 @@ async def main():
     automatic_multi.register(app, live_clients, BASE_DIR,
                        account_ids=lambda: {n: a.me.id for n, a in ACCOUNTS.items()
                                             if a.me is not None}, preferences=preferences.get)
+    app[channels.ORDER_JOBS_DIRECTORY] = BASE_DIR / "order_jobs"
+    app[channels.ORDER_ACCOUNT_CONNECTING] = (
+        lambda name: name in ACCOUNTS and ACCOUNTS[name].error_kind not in ("session", "other"))
+    app[channels.ORDER_ACCOUNT_IDS] = lambda: {n: a.me.id for n, a in ACCOUNTS.items() if a.me is not None}
     channels.register(app, live_clients)
     multi.register_all(app, live_clients)
     unsub.register_all(app, live_clients)
@@ -2923,8 +2927,8 @@ async def main():
             await asyncio.gather(connect_task, return_exceptions=True)
         channels_task.cancel()
         await asyncio.gather(channels_task, return_exceptions=True)
-        await presence.keeper.stop()   # все, кто сейчас в сети по расписанию, выходят из сети
         await runner.cleanup()
+        await presence.keeper.stop()   # все, кто сейчас в сети по расписанию, выходят из сети
         await asyncio.gather(*(a.client.disconnect() for a in ACCOUNTS.values()), return_exceptions=True)
 
 

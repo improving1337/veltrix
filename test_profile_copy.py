@@ -103,7 +103,7 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(len(candidates), len(set(candidates)))
                 self.assertNotIn(original.lower(), candidates)
                 self.assertTrue(all(5 <= len(value) <= 32 and value[0].isalpha() and value[-1].isalpha()
-                                    and not any(char.isdigit() for char in value) for value in candidates))
+                                    and value.isalpha() for value in candidates))
         self.assertEqual(username_candidates('123', '1'), [])
 
     async def test_username_check_skips_locally_reserved_and_retries_occupied_candidates(self):
@@ -142,7 +142,7 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(draft['values'], {'first_name': 'Source', 'last_name': 'One', 'source_username': 'source_one',
                                           'username': self.client.checked[0], 'bio': 'Visible bio', 'birthday': '04.05'})
         self.assertNotEqual(draft['values']['username'], 'source_one')
-        self.assertEqual(draft['delays'], [0, 1.5 * DAY, 1.5 * DAY])
+        self.assertEqual(draft['delays'], [1.5 * DAY] * 3)
         self.assertEqual(self.client.downloads[:3], [(3, 'x'), (2, 'x'), (1, 'x')])
         self.apply.assert_not_awaited()
         self.upload.assert_not_awaited()
@@ -153,8 +153,8 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job['state'], 'waiting')
         self.assertEqual(job['due'], self.now + 1.5 * DAY)
         self.apply.assert_awaited_once_with(self.target, draft['values'])
-        self.clear.assert_awaited_once_with(self.target)
-        self.upload.assert_awaited_once_with(self.target, b'oldest')
+        self.clear.assert_not_awaited()
+        self.upload.assert_not_awaited()
         with self.assertRaises(ValueError):
             await self.service.confirm(self.target, draft['token'])
 
@@ -163,8 +163,12 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
         newer = await self.preview(self.second)
         self.assertEqual(newer['source_id'], '30')
         await self.service.advance('1', self.target)
-        self.upload.assert_awaited_once()
+        self.upload.assert_not_awaited()
         self.now = job['due'] + 300
+        await self.service.advance('1', self.target)
+        self.clear.assert_awaited_once_with(self.target)
+        self.upload.assert_awaited_once_with(self.target, b'oldest')
+        self.now += 1.5 * DAY
         await self.service.advance('1', self.target)
         self.upload.assert_awaited_with(self.target, b'middle')
         self.now += 1.5 * DAY
@@ -182,9 +186,11 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
             await self.service.confirm(self.target, draft['token'])
         self.assertFalse((self.service.photos / draft['token']).exists())
         draft = await self.preview(self.target)
+        job = await self.service.confirm(self.target, draft['token'])
+        self.now = job['due']
         self.upload.side_effect = asyncio.CancelledError()
         with self.assertRaises(asyncio.CancelledError):
-            await self.service.confirm(self.target, draft['token'])
+            await self.service.advance('1', self.target)
         restarted = self.make_service()
         self.assertEqual(restarted.status(self.target)['state'], 'interrupted')
         await restarted.advance('1', self.target)
@@ -218,7 +224,7 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 copy_options({**self.data, 'delay_from_days': minimum, 'delay_to_days': maximum})
         self.assertEqual(copy_options({'group':'', 'fields':[]})[1], 'minecraft_beseda764')
-        self.assertEqual(copy_options({**self.data, 'avatar_count': 1, 'delay_from_days': ''})[-1], None)
+        self.assertEqual(copy_options({**self.data, 'avatar_count': 1})[-1], (1.5, 1.5))
         for count in ('', 0, -1, 2.5, True):
             with self.subTest(count=count), self.assertRaises(ValueError):
                 copy_options({**self.data, 'avatar_count': count})
@@ -323,7 +329,7 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
         Image.new('RGB', (40, 40), 'blue').save(image, format='JPEG')
         self.client.variants = {(1, 'x'): b'damaged download', (1, 'm'): image.getvalue()}
         draft = await self.preview(self.target)
-        self.assertEqual(draft['delays'], [0])
+        self.assertEqual(draft['delays'], [1.5 * DAY])
         self.assertEqual(self.client.downloads, [(1, 'x'), (1, 'm')])
         with Image.open(self.service.photos / draft['token'] / '0.jpg') as prepared:
             prepared.verify()

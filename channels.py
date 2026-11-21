@@ -14,13 +14,17 @@
     GET  /api/channels/job                                     -> {"jobs": [...]} — все задачи (можно несколько одновременно)
 """
 import asyncio
-import itertools
+import json
+from pathlib import Path
 import random
 import re
 import time
 import uuid
 
+from aiohttp import web
+
 import plan_options
+from template_library import atomic_json_save
 
 
 def parse_link(link):
@@ -40,7 +44,11 @@ def parse_link(link):
     raise ValueError("Не похоже на ссылку на канал (нужна t.me/... или @username)")
 
 
-_SEQ = itertools.count(1001)   # сквозной номер заказа (#1001, #1002, ...)
+_NEXT_SEQ = 1001
+ORDER_JOBS_DIRECTORY = web.AppKey("order_jobs_directory", Path)
+ORDER_ACCOUNT_CONNECTING = web.AppKey("order_account_connecting")
+ORDER_ACCOUNT_IDS = web.AppKey("order_account_ids")
+RUNTIME_JOB_FIELDS = {"task", "stop", "skip", "resumed"}
 
 _USERNAMES = lambda: {}
 
@@ -67,6 +75,47 @@ class ChannelJoiner:
         self.get_clients = get_clients
         self.plans = {}
         self.jobs = {}  # job_id -> job; несколько задач работают параллельно
+        self.storage = None
+        self.account_connecting = lambda name: False
+        self.account_ids = lambda: {}
+
+    def save_jobs(self):
+        if self.storage is not None:
+            jobs = [{key: value for key, value in job.items() if key not in RUNTIME_JOB_FIELDS}
+                    for job in self.jobs.values()]
+            self.storage.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            atomic_json_save(self.storage, jobs)
+
+    def load_jobs(self, storage):
+        global _NEXT_SEQ
+        self.storage = storage
+        try:
+            records = json.loads(storage.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        for job in records:
+            _NEXT_SEQ = max(_NEXT_SEQ, job["seq"] + 1)
+            for item in job["items"]:
+                if item["state"] == "active":
+                    item.update(state="err", note="Исход действия неизвестен после перезапуска", until=None)
+                elif job.get("stop_requested") and item["state"] in ("wait", "queue"):
+                    item.update(state="skip", until=None)
+            if job.get("stop_requested"):
+                job["status"] = "stopped"
+            self.jobs[job["id"]] = job
+        self.save_jobs()
+
+    async def resume_jobs(self, app=None):
+        for job in self.jobs.values():
+            if job["status"] == "running":
+                job.update(stop=asyncio.Event(), skip=asyncio.Event(), resumed=True)
+                job["task"] = asyncio.create_task(self._run(job, job["kind"], job["key"]))
+
+    async def suspend_jobs(self, app=None):
+        tasks = [job["task"] for job in self.jobs.values() if job.get("task") and not job["task"].done()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     # ---------- план ----------
     def _alive(self):
@@ -196,13 +245,15 @@ class ChannelJoiner:
 
     # ---------- запуск ----------
     async def start(self, plan_id):
+        global _NEXT_SEQ
         plan = self.plans.get(plan_id)
         if not plan:
             raise ValueError("План устарел — построй его заново")
         finish = plan_options.deadline(plan["finish_at"])
         started = time.time()
         plan["total"] = plan_options.schedule_order(plan["items"], started, finish, plan["quiet"])
-        self.plans.pop(plan_id)
+        previous_jobs = self.jobs.copy()
+        ids = self.account_ids()
         # храним максимум 10 завершённых задач
         done = [k for k, v in self.jobs.items() if v["status"] != "running"]
         for k in done[:-9] if len(done) > 9 else []:
@@ -211,33 +262,78 @@ class ChannelJoiner:
             "id": plan["id"], "link": plan["link"], "title": plan["title"],
             "status": "running", "total": plan["total"], "finish_at": plan.get("finish_at"), "extra": plan.get("extra"), "started": started, "quiet": plan["quiet"],
             "items": [{"account": i["account"], "delay": i["delay"], "at": i["at"], "base_delay": i["base_delay"],
+                       "telegram_id": ids.get(i["account"]),
                        "state": "queue", "note": "", "until": None} for i in plan["items"]],
             "stop": asyncio.Event(), "skip": asyncio.Event(),
-            "seq": next(_SEQ), "service": self.service,
+            "seq": _NEXT_SEQ, "service": self.service, "kind": plan["kind"], "key": plan["key"],
         }
         self.jobs[job["id"]] = job
+        try:
+            self.save_jobs()
+        except OSError:
+            self.jobs = previous_jobs
+            raise
+        _NEXT_SEQ += 1
+        self.plans.pop(plan_id)
         job["task"] = asyncio.ensure_future(self._run(job, plan["kind"], plan["key"]))
         return {"job": self._pub(job)}
 
     async def _run(self, job, kind, key):
+        previous = job.get("started")
         try:
-            for it in job["items"]:
-                if await self._wait_for_account(job, it):
-                    break
-                it["state"], it["until"] = "active", None
-                client = self.get_clients().get(it["account"])
-                if not client or not client.is_connected():
-                    it["state"], it["note"], it["finished"] = "err", "аккаунт не подключён", time.time()
+            for item in job["items"]:
+                if item["state"] not in ("queue", "wait"):
+                    previous = item.get("finished") or previous
                     continue
-                it["state"], it["note"] = await self._join(client, kind, key, self._action_extra(job, it))
-                it["finished"] = time.time()
+                if await self._wait_for_account(job, item, previous):
+                    break
+                client = await self._ready_client(job, item)
+                if job["stop"].is_set():
+                    break
+                if not client:
+                    item.update(state="err", note=item["note"] or "аккаунт не подключён", until=None)
+                else:
+                    item.update(state="active", until=None, note="")
+                    self.save_jobs()
+                    item["state"], item["note"] = await self._perform(job, item, client, kind, key)
+                previous = item["finished"] = time.time()
+                self.save_jobs()
             job["status"] = "stopped" if job["stop"].is_set() else "done"
-        except Exception as e:  # не даём задаче зависнуть в «running»
-            job["status"], job["error"] = "done", str(e)
-        finally:
-            for it in job["items"]:
-                if it["state"] in ("queue", "wait"):
-                    it["state"], it["until"] = "skip", None
+        except asyncio.CancelledError:
+            # The persisted checkpoint remains available for the next instance.
+            raise
+        except Exception as exc:
+            job["status"], job["error"] = "done", str(exc)
+        for item in job["items"]:
+            if item["state"] in ("queue", "wait"):
+                item.update(state="skip", until=None)
+            elif item["state"] == "active":
+                item.update(state="err", note="Исход действия неизвестен", until=None)
+        self.save_jobs()
+
+    async def _ready_client(self, job, item):
+        name = item["account"]
+        while not job["stop"].is_set():
+            client = self.get_clients().get(name)
+            if client and client.is_connected():
+                expected_id = item.get("telegram_id")
+                if expected_id is not None and self.account_ids().get(name) != expected_id:
+                    item["note"] = "под этим именем подключён другой Telegram-аккаунт"
+                    return None
+                if not await self._wait_out_quiet(job, item):
+                    return client
+                break
+            if not job.get("resumed") or not self.account_connecting(name):
+                return None
+            item["note"] = "ожидаю подключения аккаунта"
+            try:
+                await asyncio.wait_for(job["stop"].wait(), 2)
+            except asyncio.TimeoutError:
+                pass
+        return None
+
+    async def _perform(self, job, item, client, kind, key):
+        return await self._join(client, kind, key, self._action_extra(job, item))
 
     def _action_extra(self, job, item):
         extra = job.get("extra")
@@ -245,19 +341,22 @@ class ChannelJoiner:
             return extra
         return {**(extra or {}), "wait_before_action": lambda: self._wait_out_quiet(job, item)}
 
-    async def _wait_for_account(self, job, item):
+    async def _wait_for_account(self, job, item, previous=None):
         now = time.time()
         quiet = job.get("quiet")
-        due = (job["started"] + item["at"] if job.get("finish_at")
-               else plan_options.after_quiet(now + item["base_delay"], quiet))
+        due = item.get("until") if item["state"] == "wait" else None
+        if due is None:
+            base = previous if job.get("resumed") and previous is not None else now
+            due = (job["started"] + item["at"] if job.get("finish_at")
+                   else plan_options.after_quiet(base + item["base_delay"], quiet))
         item["state"], item["until"] = "wait", due
         job["skip"].clear()
+        self.save_jobs()
         if await self._sleep(job, due - now):
             return True
         return await self._wait_out_quiet(job, item)
 
-    @staticmethod
-    async def _wait_out_quiet(job, item):
+    async def _wait_out_quiet(self, job, item):
         now = time.time()
         quiet = job.get("quiet")
         while (end := plan_options.quiet_end(now, quiet)) is not None:
@@ -266,6 +365,8 @@ class ChannelJoiner:
             if finish is not None and end <= finish:
                 due = min(due, finish)
             item["until"] = due
+            if item["state"] == "wait":
+                self.save_jobs()
             # Acceleration can skip ordinary delays, never the pause itself.
             try:
                 await asyncio.wait_for(job["stop"].wait(), due - now)
@@ -295,8 +396,13 @@ class ChannelJoiner:
         if not running:
             raise ValueError("Заказ уже не выполняется")
         for j in running:
-            if any(i["state"] == "wait" for i in j["items"]):
+            waiting = next((i for i in j["items"] if i["state"] == "wait"), None)
+            if waiting is not None:
+                now = time.time()
+                if plan_options.quiet_end(now, j.get("quiet")) is None:
+                    waiting["until"] = now
                 j["skip"].set()
+        self.save_jobs()
         return {"ok": True}
 
     @staticmethod
@@ -346,6 +452,9 @@ class ChannelJoiner:
         if not running:
             raise ValueError("Нет активной подписки")
         for j in running:
+            j["stop_requested"] = True
+        self.save_jobs()
+        for j in running:
             j["stop"].set()
         return {"ok": True}
 
@@ -368,10 +477,15 @@ class ChannelJoiner:
 
 def register(app, get_clients, prefix="channels", joiner_cls=None):
     """Добавляет роуты /api/channels/* в aiohttp-приложение (авторизация — ваша auth_mw)."""
-    from aiohttp import web
-
     joiner = (joiner_cls or ChannelJoiner)(get_clients)
     joiner.service = prefix
+    directory = app.get(ORDER_JOBS_DIRECTORY)
+    if directory is not None:
+        joiner.load_jobs(directory / (prefix + ".json"))
+        joiner.account_connecting = app.get(ORDER_ACCOUNT_CONNECTING, joiner.account_connecting)
+        joiner.account_ids = app.get(ORDER_ACCOUNT_IDS, joiner.account_ids)
+        app.on_startup.append(joiner.resume_jobs)
+        app.on_cleanup.append(joiner.suspend_jobs)
 
     async def body(request):
         try:

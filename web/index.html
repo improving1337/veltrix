@@ -1805,12 +1805,12 @@ function showProfileCopyReview(account, base, draft, onConfirm, onClose){
   body.append(details);
   const plan=base+'/'+draft.token;
   if(draft.delays.length){
-    body.append(el('h3','',`Аватарки · ${draft.delays.length}`),el('p','status','После подтверждения прежние фото профиля будут удалены.'));
+    body.append(el('h3','',`Аватарки · ${draft.delays.length}`),el('p','status','Прежние фото профиля будут удалены перед установкой первой новой аватарки.'));
     const photos=el('div','profile-copy-gallery');
     draft.delays.forEach((delay,index)=>{
       const item=el('figure'),image=new Image();
       image.alt=`Аватарка ${index+1}`;image.loading='lazy';image.src=plan+'/photos/'+index;
-      item.append(image,el('figcaption','',index?`Через ${profileCopyDays(delay)} дн. после предыдущей`:'Сразу после подтверждения'));
+      item.append(image,el('figcaption','',index?`Через ${profileCopyDays(delay)} дн. после предыдущей`:`Через ${profileCopyDays(delay)} дн. после подтверждения`));
       photos.append(item);
     });
     body.append(photos);
@@ -1838,7 +1838,10 @@ function showProfileCopyReview(account, base, draft, onConfirm, onClose){
   });
   dialog.showModal();no.focus();
 }
+const PROFILE_COPY_PREFS_KEY='veltrix-profile-copy-preferences';
 function profileCopyCard(account,onApplied){
+  let prefs={};
+  try{prefs=JSON.parse(localStorage.getItem(PROFILE_COPY_PREFS_KEY))||{}}catch{}
   const card=el('section','profile-card profile-copy-card'),group=inp('',PANEL_SETTINGS.profile_group);
   const mode=el('select');
   for(const [key,label] of [['group','Случайный участник группы'],['profile','Конкретный профиль']]){
@@ -1846,17 +1849,23 @@ function profileCopyCard(account,onApplied){
   }
   const options=el('div','profile-copy-fields'),checks={};
   for(const [key,label] of Object.entries(PROFILE_COPY_FIELDS).filter(([key])=>!['first_name','last_name'].includes(key))){
-    const check=el('input');check.type='checkbox';checks[key]=check;
+    const check=el('input');check.type='checkbox';check.checked=prefs.fields?.includes(key)||false;checks[key]=check;
     const row=el('label','profile-copy-option');row.append(check,el('span','',label));options.append(row);
   }
-  const avatarSettings=el('div','profile-copy-avatar-settings'),minimum=inp('3'),maximum=inp('5');
+  const avatarSettings=el('div','profile-copy-avatar-settings'),minimum=inp(prefs.avatar_min??'3'),maximum=inp(prefs.avatar_max??'5');
   const bounds=el('div','profile-copy-delays');
   for(const field of [minimum,maximum]){field.type='number';field.min='1';field.step='1';field.inputMode='numeric'}
   bounds.append(fld('Аватарок от',minimum),fld('Аватарок до',maximum));
-  const delays=el('div','profile-copy-delays'),from=inp('1'),to=inp('2');
+  const delays=el('div','profile-copy-delays'),from=inp(prefs.delay_from_days??'1'),to=inp(prefs.delay_to_days??'2');
   for(const input of [from,to]){input.type='number';input.min='0';input.step='any'}
   delays.append(fld('Задержка от, дней',from),fld('Задержка до, дней',to));
   avatarSettings.append(bounds,delays);
+  const savePreferences=()=>{
+    prefs={avatar_min:minimum.value,avatar_max:maximum.value,delay_from_days:from.value,
+      delay_to_days:to.value,fields:Object.keys(checks).filter(key=>checks[key].checked)};
+    try{localStorage.setItem(PROFILE_COPY_PREFS_KEY,JSON.stringify(prefs))}catch{}
+  };
+  for(const field of [minimum,maximum,from,to,...Object.values(checks)])field.addEventListener('input',savePreferences);
   const sourceField=fld('Ссылка на группу',group);
   mode.onchange=()=>{
     const direct=mode.value==='profile';
@@ -1872,7 +1881,7 @@ function profileCopyCard(account,onApplied){
     el('div','status','Галочки отмечают обязательные поля. Остальные значения переносятся, если доступны.'),options,avatarSettings,actions,progress);
   const base=`/api/accounts/${enc(account.name)}/profile-copy`;
   const searchPath=base+'/search';
-  let searching=false,active=false,timer,searchToken=null,generation=0;
+  let searching=false,active=false,timer,searchToken=null,generation=0,lastUploaded=null;
   const buttons=()=>{
     preview.disabled=searching||active;
     stop.hidden=!searchToken;
@@ -1884,6 +1893,8 @@ function profileCopyCard(account,onApplied){
     if(!card.isConnected)return;
     active=['waiting','running'].includes(job?.state);buttons();
     if(!job?.state){progress.textContent='';return}
+    if(lastUploaded!==null&&job.uploaded>lastUploaded)onApplied({},true).catch(e=>errToast(e.message));
+    lastUploaded=job.uploaded;
     const states={waiting:'Ожидает следующей аватарки',running:'Применяю изменения',done:job.errors?.length?'Выполнено с ошибками':'Очередь выполнена',
       failed:'Очередь остановлена',interrupted:'Очередь прервана'};
     const due=job.state==='waiting'&&job.due?new Date(job.due*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'}):'';
@@ -1914,7 +1925,7 @@ function profileCopyCard(account,onApplied){
         const draft=search.draft;
         showProfileCopyReview(account,base,draft,job=>{
           renderJob(job);
-          onApplied(draft.values,!!draft.delays.length).catch(e=>errToast(e.message));
+          onApplied(draft.values,false).catch(e=>errToast(e.message));
         },clearSearch);
         return;
       }

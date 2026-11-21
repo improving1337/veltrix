@@ -149,28 +149,11 @@ class MultiJoiner(ChannelJoiner):
         out["steps"] = p.get("steps", [])
         return out
 
-    async def _run(self, job, kind, key):
+    async def _perform(self, job, item, client, kind, key):
         try:
-            for it in job["items"]:
-                if await self._wait_for_account(job, it):
-                    break
-                it["state"], it["until"] = "active", None
-                client = self.get_clients().get(it["account"])
-                if not client or not client.is_connected():
-                    it["state"], it["note"], it["finished"] = "err", "аккаунт не подключён", time.time()
-                    continue
-                try:
-                    it["state"], it["note"] = await self._account(job, it, client, key)
-                except Exception as e:   # неожиданная ошибка не должна оставлять аккаунт «в работе»
-                    it["state"], it["note"] = "err", f"{type(e).__name__}: {e}"[:200]
-                it["finished"] = time.time()
-            job["status"] = "stopped" if job["stop"].is_set() else "done"
-        except Exception as e:
-            job["status"], job["error"] = "done", str(e)
-        finally:
-            for it in job["items"]:
-                if it["state"] in ("queue", "wait"):
-                    it["state"], it["until"] = "skip", None
+            return await self._account(job, item, client, key)
+        except Exception as exc:
+            return "err", f"{type(exc).__name__}: {exc}"[:200]
 
     async def _account(self, job, it, client, key):
         """Аккаунт выходит в сеть -> делает все действия -> выходит из сети. -> (state, note)"""
