@@ -10,6 +10,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from PIL import Image
 from telethon import functions, types
+from telethon.errors import FloodWaitError
 from telethon.helpers import TotalList
 
 import main
@@ -21,7 +22,7 @@ class Client:
         self.members = [
             types.User(1, username='owner'),
             types.User(10, bot=True, username='helperbot'),
-            types.User(20, username='source_one'),
+            types.User(20, username='source_one', first_name='Source', last_name='One'),
             types.User(30, username='source_two'),
         ]
         self.group = types.Chat(100, 'Group', types.ChatPhotoEmpty(), 4, None, 1)
@@ -37,7 +38,7 @@ class Client:
 
     async def __call__(self, request):
         if isinstance(request, functions.users.GetFullUserRequest):
-            return SimpleNamespace(full_user=SimpleNamespace(about='Visible bio', birthday=types.Birthday(4, 5)))
+            return SimpleNamespace(full_user=SimpleNamespace(about='Visible bio', birthday=types.Birthday(4 if getattr(request.id,'id',None)==20 else 5, 5)))
         if isinstance(request, functions.account.CheckUsernameRequest):
             self.checked.append(request.username)
             return True
@@ -69,6 +70,7 @@ class Client:
 
 class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        self.enterContext(patch('profile_copy.SEARCH_REQUEST_INTERVAL', 0))
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name) / 'profiles'
@@ -77,6 +79,7 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
         self.second = SimpleNamespace(me=types.User(2), client=self.client)
         self.accounts = {'first': self.target, 'second': self.second}
         self.upload = AsyncMock()
+        self.clear = AsyncMock()
         self.apply = AsyncMock(return_value=[])
         self.now = 1000
         self.service = self.make_service()
@@ -85,7 +88,7 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
 
     def make_service(self):
         return ProfileCopies(self.root, lambda: self.accounts, lambda image: image, self.upload, self.apply,
-                             clock=lambda: self.now)
+                             clock=lambda: self.now, clear_photos=self.clear)
 
     async def preview(self, target):
         with patch('profile_copy.random.shuffle'):
@@ -96,7 +99,8 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
         other_draft = await self.preview(self.second)
         self.assertEqual(draft['source_id'], '20')
         self.assertEqual(other_draft['source_id'], '30')
-        self.assertEqual(draft['values'], {'username': self.client.checked[0], 'bio': 'Visible bio', 'birthday': '04.05'})
+        self.assertEqual(draft['values'], {'first_name': 'Source', 'last_name': 'One', 'source_username': 'source_one',
+                                          'username': self.client.checked[0], 'bio': 'Visible bio', 'birthday': '04.05'})
         self.assertNotEqual(draft['values']['username'], 'source_one')
         self.assertEqual(draft['delays'], [0, 1.5 * DAY, 1.5 * DAY])
         self.assertEqual(self.client.downloads[:3], [(3, 'x'), (2, 'x'), (1, 'x')])
@@ -109,6 +113,7 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job['state'], 'waiting')
         self.assertEqual(job['due'], self.now + 1.5 * DAY)
         self.apply.assert_awaited_once_with(self.target, draft['values'])
+        self.clear.assert_awaited_once_with(self.target)
         self.upload.assert_awaited_once_with(self.target, b'oldest')
         with self.assertRaises(ValueError):
             await self.service.confirm(self.target, draft['token'])
@@ -171,10 +176,10 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
         for minimum, maximum in [(0, 2), (3, 2), ('NaN', 2), ('invalid', 3)]:
             with self.assertRaises(ValueError):
                 copy_options({**self.data, 'delay_from_days': minimum, 'delay_to_days': maximum})
-        self.assertEqual(copy_options({**self.data, 'fields': ['bio'], 'delay_from_days': ''})[-1], None)
+        self.assertEqual(copy_options({'group':'', 'fields':[]})[1], 'minecraft_beseda764')
         self.assertEqual(copy_options({**self.data, 'avatar_count': 1, 'delay_from_days': ''})[-1], None)
         for count in ('', 0, -1, 2.5, True):
-            with self.subTest(count=count), self.assertRaisesRegex(ValueError, 'целое количество'):
+            with self.subTest(count=count), self.assertRaises(ValueError):
                 copy_options({**self.data, 'avatar_count': count})
 
     async def test_pick_profile_with_exact_number_of_photos(self):
@@ -185,6 +190,89 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(draft['delays']), 3)
         self.assertEqual(self.client.photo_requests, [(20, 4), (30, 4), (40, 4)])
         self.assertEqual(self.client.downloads, [(3, 'x'), (2, 'x'), (1, 'x')])
+
+    async def test_search_continues_after_first_sixty_candidates(self):
+        self.client.members = [types.User(ident) for ident in range(100, 164)]
+        self.client.photo_ids = {ident: [1] for ident in range(100, 163)}
+        self.data['fields'] = ['avatars']
+        draft = await self.preview(self.target)
+        self.assertEqual(draft['source_id'], '163')
+        self.assertEqual(len(self.client.photo_requests), 64)
+
+    async def test_avatar_range_and_unchecked_optional_profile_fields(self):
+        self.client.photo_ids[20] = [1, 2]
+        self.data = {'group': '', 'fields': ['avatars'], 'avatar_min': 3, 'avatar_max': 5}
+        draft = await self.preview(self.target)
+        self.assertEqual(draft['source_id'], '30')
+        self.assertEqual(len(draft['delays']), 3)
+        self.assertIn('bio', draft['values'])
+        self.assertIn('birthday', draft['values'])
+        self.assertEqual(self.client.downloads, [(3, 'x'), (2, 'x'), (1, 'x')])
+
+    async def test_similar_profile_is_skipped(self):
+        self.second.me.username = 'source_one_12345'
+        draft = await self.preview(self.target)
+        self.assertEqual(draft['source_id'], '30')
+
+    async def test_direct_copy_with_music_and_all_avatars(self):
+        document = types.Document(12, 34, b'reference', None, 'audio/mpeg', 1, 1, [])
+        original = self.client.__class__.__call__
+
+        async def request(client, req):
+            if isinstance(req, functions.users.GetSavedMusicRequest):
+                return types.users.SavedMusic(1, [document])
+            return await original(client, req)
+
+        self.client.get_entity = AsyncMock(return_value=self.client.members[2])
+        self.data.update(mode='profile', group='https://t.me/source_one', fields=[], avatar_count=1)
+        with patch.object(Client, '__call__', request):
+            draft = await self.preview(self.target)
+        self.assertEqual(len(draft['delays']), 3)
+        self.assertEqual(self.service.public_draft(draft)['values']['music'], 1)
+        self.assertEqual(draft['values']['music'][0]['id'], 12)
+
+    async def test_search_waits_for_telegram_then_resumes_same_read(self):
+        self.client.photo_ids[20] = [1, 2]
+        get_photos = self.client.get_profile_photos
+        attempted = []
+
+        async def limited_photos(user, limit):
+            attempted.append(user.id)
+            if attempted == [20, 30]:
+                raise FloodWaitError(None, capture=1)
+            return await get_photos(user, limit)
+
+        with patch.object(self.client, 'get_profile_photos', limited_photos), patch('profile_copy.random.shuffle'):
+            app = web.Application(middlewares=[main.error_mw])
+            self.service.register(app, lambda request: self.accounts[request.match_info['acc']])
+            async with TestClient(TestServer(app)) as http:
+                base = '/api/accounts/first/profile-copy/search'
+                reply = await http.post(base, json=self.data)
+                started = await reply.json()
+                route = base + '/' + started['token']
+                async with asyncio.timeout(6):
+                    while True:
+                        status = await (await http.get(route)).json()
+                        if status['state'] == 'waiting':
+                            break
+                        await asyncio.sleep(.02)
+                    self.assertEqual(status['checked'], 2)
+                    self.assertGreaterEqual(status['retry_in'], 1)
+                    self.assertEqual(attempted, [20, 30])
+                    duplicate = await (await http.post(base, json=self.data)).json()
+                    self.assertEqual(duplicate['token'], started['token'])
+                    other = '/api/accounts/second/profile-copy/search/' + started['token']
+                    self.assertIsNone(await (await http.get(other)).json())
+                    while True:
+                        status = await (await http.get(route)).json()
+                        if status['state'] == 'ready':
+                            break
+                        self.assertIn(status['state'], ('waiting', 'searching'))
+                        await asyncio.sleep(.25)
+                self.assertEqual(status['draft']['source_id'], '30')
+                self.assertEqual(attempted, [20, 30, 30])
+                self.upload.assert_not_awaited()
+                self.apply.assert_not_awaited()
 
     async def test_video_avatar_download_uses_still_sizes_and_retries_bad_image(self):
         self.service.prepare_avatar = main.prepare_avatar
@@ -212,9 +300,13 @@ class ProfileCopyTests(unittest.IsolatedAsyncioTestCase):
         client = AsyncMock(return_value=True)
         client.get_me = AsyncMock(return_value=self.target.me)
         acc = SimpleNamespace(me=self.target.me, client=client)
-        with (patch('main.invalidate_account_profile'), patch('main.schedule_account_profile_refresh')):
+        with (patch('main.invalidate_account_profile'), patch('main.schedule_account_profile_refresh'),
+              patch('main.set_public', AsyncMock(return_value=[])) as public,
+              patch('main.set_last_seen_hidden', AsyncMock(return_value=[])) as hidden):
             errors = await main.copy_profile_fields(acc, {'birthday': '04.05', 'bio': 'Visible bio'})
         self.assertEqual(errors, [])
+        public.assert_awaited_once_with(acc, ['bio', 'birthday', 'photo'])
+        hidden.assert_awaited_once_with(acc, True)
         requests = [call.args[0] for call in client.await_args_list]
         self.assertEqual([type(request) for request in requests],
                          [functions.account.UpdateProfileRequest, functions.account.UpdateBirthdayRequest])

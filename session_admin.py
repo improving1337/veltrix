@@ -87,6 +87,12 @@ class SessionAdmin:
                 pass
 
     async def inspect(self, request):
+        return await self.inspect_sessions(request, reset=False)
+
+    async def reset_other_sessions(self, request):
+        return await self.inspect_sessions(request, reset=True)
+
+    async def inspect_sessions(self, request, reset):
         data = await request.json()
         name = data.get('name') if isinstance(data, dict) else None
         if not isinstance(name, str) or not name:
@@ -102,6 +108,12 @@ class SessionAdmin:
                 auths = result.authorizations
                 if not any(a.current for a in auths):
                     raise RuntimeError('CurrentAuthorizationMissing')
+                if reset and len(auths) > 1:
+                    if not await self.call(account.client(functions.auth.ResetAuthorizationsRequest())):
+                        raise RuntimeError('ResetNotConfirmed')
+                    auths = (await self.call(account.client(functions.account.GetAuthorizationsRequest()))).authorizations
+                    if len(auths) != 1 or not auths[0].current:
+                        raise RuntimeError('ResetNotConfirmed')
             except Exception as exc:
                 return web.json_response({'error': 'Проверка Telegram не выполнена: '+type(exc).__name__}, status=503)
             checked = time.time()
@@ -317,6 +329,7 @@ class SessionAdmin:
     def register(self, app):
         app.router.add_get('/api/2fa', self.inventory)
         app.router.add_post('/api/2fa/check', self.inspect)
+        app.router.add_post('/api/2fa/reset-others', self.reset_other_sessions)
         app.router.add_post('/api/2fa/reissue', self.start)
         app.router.add_post('/api/2fa/reissue-one', self.start_one)
         app.router.add_post('/api/2fa/password', self.password)

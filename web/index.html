@@ -567,6 +567,18 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 .auto-emoji-options{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0}.auto-emoji-choice{display:inline-flex;align-items:center;gap:7px;border:1px solid #34343f;border-radius:8px;padding:8px 11px;background:#171820;font-size:19px}.auto-emoji-choice input{width:14px;height:14px;margin:0;accent-color:#8c75e8}#auto-reaction-prompt{width:100%;resize:vertical;min-height:100px;font-size:13px}
 .bulk-game-matches{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;margin:16px 0}.bulk-game-match{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid #30313b;border-radius:8px;font-size:12px}.bulk-game-match input{width:15px;height:15px;flex:none}.bulk-game-match span{flex:1}.bulk-game-table{width:100%;min-width:950px;border-collapse:collapse;font-size:12px}.bulk-game-table th,.bulk-game-table td{padding:10px;text-align:left;border-bottom:1px solid #30313b}.bulk-game-table th{color:#9894a5}#bulk-game-variants{max-width:160px}
 #v-cs3bet .cbrow{grid-template-columns:minmax(190px,1fr) minmax(130px,.7fr) minmax(170px,.9fr) auto auto auto!important}#v-cs3bet .cbopen{width:auto!important;min-width:75px}@media(max-width:1050px){#v-cs3bet .cbrow{grid-template-columns:repeat(3,minmax(0,1fr))!important}}@media(max-width:650px){#v-cs3bet .cbrow{grid-template-columns:repeat(2,minmax(0,1fr))!important}#v-cs3bet .cbinfo{grid-column:1/-1}}
+
+.account-counters{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+#v-accounts .acc-table-head,#v-accounts .acc-row{grid-template-columns:minmax(155px,1.3fr) minmax(110px,.9fr) 115px 110px 115px 95px 155px 126px!important;min-width:1170px!important}
+#acc-mobile-column{display:none}
+@media(max-width:750px){
+ #v-accounts .acc-table-head,#v-accounts .acc-row{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)!important;min-width:0!important}
+ #v-accounts .acc-table-head button:not([data-acc-sort=name]),#v-accounts .acc-row>:not(:first-child):not(.acc-mobile-value){display:none!important}
+ #acc-mobile-column{display:block;min-width:0;width:100%}
+}
+.order-graph-scroll{overflow:auto;margin:10px 14px}.order-graph-scroll svg{display:block;min-width:100%;height:220px}
+.order-graph-tools{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:0 14px}
+.order-graph-tools input{width:min(120px,35vw);padding:0}
 </style>
 <style id="veltrix-theme">
 /* VELTRIX UI — graphite dashboard treatment adapted from the supplied Ember
@@ -985,6 +997,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
 <button type="button" id="t-miniapp" class="v-nav-item" title="Mini App"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="v-nav-label">Mini App</span></button>
 <button type="button" id="t-cs3bet" class="v-nav-item" title="CS3BET"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4m-2-2v4"/><circle cx="15.5" cy="11.5" r=".6"/><circle cx="18.5" cy="13.5" r=".6"/><path d="M5.1 6h13.8A4 4 0 0 1 23 10l-1.1 7a2.4 2.4 0 0 1-4.2 1.1l-2.2-2.7h-7L6.3 18A2.4 2.4 0 0 1 2 17l-1-7a4 4 0 0 1 4.1-4Z"/></svg><span class="v-nav-label">CS3BET</span></button>
 <button type="button" id="t-automatic" class="v-nav-item" title="Autopilot"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(35 12 12)"/><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(-35 12 12)"/><circle cx="12" cy="12" r="2"/></svg><span class="v-nav-label">Autopilot</span></button>
+<button type="button" id="t-settings" class="v-nav-item" title="Настройки"><span aria-hidden="true">⚙</span><span class="v-nav-label">Настройки</span></button>
 </div></div>
   <div class="v-side-bottom"><span class="v-connection"><i id="live" class="live" aria-label="Состояние соединения"></i><span>Server status</span></span><span class="v-version">Veltrix · Console</span></div>
  </nav>
@@ -1030,7 +1043,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
    <div id="auto-emoji-options" class="auto-emoji-options"></div>
    <label class="fld"><span>Промпт для анализа публикаций</span><textarea id="auto-reaction-prompt" rows="4" maxlength="6000" placeholder="Как выбирать реакции по содержанию публикации"></textarea></label>
    <p class="auto-note">Цель по реакциям случайно выбирается для каждого нового поста в пределах лимита. Если ❤️ разрешено, оно получает минимум 40%, а в голосовании с ❤️ — больше любого другого варианта.</p>
-   <p class="auto-note">Просмотры: цель выбирается для каждого поста в диапазоне ±10% от настройки, ограничивается доступными аккаунтами и сохраняется между перезапусками.</p>
+   <p class="auto-note">Просмотры: цель выбирается для каждого поста в диапазоне, заданном в настройках панели, ограничивается доступными аккаунтами и сохраняется между перезапусками.</p>
   </div>
   <div class="auto-panel"><div class="auto-head"><div><h3>Профиль просмотров · 24 часа</h3><small>Перетаскивай вершины колонок или используй стрелки клавиатуры</small></div><div><button id="auto-default" class="btn ghost" style="width:auto">По умолчанию</button></div></div>
    <div id="auto-plot" class="auto-plot" aria-label="24 редактируемых столбца с долями просмотров"></div><div id="auto-hours" class="auto-hours"></div><div class="auto-note" id="auto-sum">Сумма: 100%</div>
@@ -1053,7 +1066,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
   </div>
   </div></div></div></section>
  <section id="v-accounts" class="view on">
-  <div class="accwrap"><div class="sectionhead"><div><h2>Список аккаунтов</h2><p class="subline">Выбери аккаунт, чтобы открыть настройки</p></div><span id="acc-count" class="counter"></span></div><div class="searchbar"><input id="acc-search" placeholder="Поиск по имени, username или файлу…" autocomplete="off"><button id="acc-add" class="btn" type="button">Добавить</button></div><div class="acc-table-wrap" aria-label="Таблица подключённых аккаунтов">
+  <div class="accwrap"><div class="sectionhead"><div><h2>Список аккаунтов</h2><p class="subline">Выбери аккаунт, чтобы открыть настройки</p></div><div class="account-counters"><span id="acc-active" class="counter"></span><span id="acc-count" class="counter"></span></div></div><div class="searchbar"><input id="acc-search" placeholder="Поиск по имени, username или файлу…" autocomplete="off"><button id="acc-add" class="btn" type="button">Добавить</button></div><div class="acc-table-wrap" aria-label="Таблица подключённых аккаунтов">
      <div class="acc-table-head" role="row">
        <button class="ex-sort" data-acc-sort="name">Визуальное имя <span class="arrow">↑</span></button>
        <button class="ex-sort" data-acc-sort="username">Какой юз <span class="arrow"></span></button>
@@ -1062,11 +1075,14 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
        <button class="ex-sort" data-acc-sort="avatar_count">Кол-во аватарок <span class="arrow"></span></button>
        <button class="ex-sort" data-acc-sort="music_count">Кол-во песен <span class="arrow"></span></button>
        <button class="ex-sort" data-acc-sort="last_avatar_change">Последняя смена аватарки <span class="arrow"></span></button>
+       <button class="ex-sort" data-acc-sort="spam_status">Спамбан <span class="arrow"></span></button>
+       <select id="acc-mobile-column" aria-label="Второй столбец"><option value="username">Какой юз</option><option value="session_count">Число сессий</option><option value="birthday">Дата рождения</option><option value="avatar_count">Кол-во аватарок</option><option value="music_count">Кол-во песен</option><option value="last_avatar_change">Смена аватарки</option><option value="spam_status">Спамбан</option></select>
      </div>
      <div id="grid" class="acc-table"></div>
    </div><div id="acc-load-errors" class="acc-load-errors" hidden></div><p class="acc-table-note">Цвет числа: зелёный — своя сессия, жёлтый — внешняя, красный — нет подключения. Число — результат последней проверки; обновить можно в профиле.</p></div>
   <aside id="detail"></aside>
  </section>
+ <section id="v-settings" class="view"><div class="accwrap"><div class="sectionhead"><h2>Настройки</h2></div><section id="panel-settings-form" class="profile-card"></section></div></section>
  <section id="v-examples" class="view">
   <div class="accwrap">
    <div class="sectionhead"><div><h2>Шаблоны</h2><p class="subline">Библиотека согласованных профилей: имя, username, био, дата рождения и история фотографий</p></div></div>
@@ -1201,7 +1217,7 @@ function avatar(src,label,size=44){
 const avUrl=a=>`/api/accounts/${enc(a.name)}/avatar?v=${a.avatar_ver}`;
 const chatAv=(acc,id)=>`/api/accounts/${enc(acc)}/chats/${id}/avatar`;
 
-const VELTRIX_NAMES={accounts:'Profiles',examples:'Identity',upload:'Deploy',twofa:'2FA',messages:'Inbox',orders:'Toolkit',miniapp:'Mini App',cs3bet:'CS3BET',automatic:'Autopilot'};
+const VELTRIX_NAMES={accounts:'Profiles',examples:'Identity',upload:'Deploy',twofa:'2FA',messages:'Inbox',orders:'Toolkit',miniapp:'Mini App',cs3bet:'CS3BET',automatic:'Autopilot',settings:'Настройки'};
 function veltrixCloseMobile(){document.body.classList.remove('v-menu-open');$('#veltrix-mobile-backdrop').hidden=true}
 function showTab(t){
   // A category always reopens at its home screen, never at a nested service.
@@ -1220,8 +1236,47 @@ function showTab(t){
   $('#veltrix-breadcrumb').textContent=VELTRIX_NAMES[t]||'VELTRIX';
   document.title=(VELTRIX_NAMES[t]||'Control')+' — VELTRIX';
   veltrixCloseMobile();
-  for(const n of["accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
+  for(const n of["accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic","settings"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
 }
+let PANEL_SETTINGS={hidden_tabs:[],view_spread:10,reaction_spread:20,search_workers:5,profile_group:'https://t.me/minecraft_beseda764'};
+function applyPanelSettings(){
+  for(const tab of Object.keys(VELTRIX_NAMES)){
+    const button=$('#t-'+tab);
+    const node=tab==='orders'?button.closest('.veltrix-toolkit-parent'):button;
+    node.hidden=PANEL_SETTINGS.hidden_tabs.includes(tab);
+    if(tab==='orders'&&node.hidden)$('#toolkit-services').hidden=true;
+  }
+}
+function renderPanelSettings(){
+  const root=$('#panel-settings-form'),tabs=el('div','profile-copy-fields');
+  root.replaceChildren(el('h3','','Вкладки слева'));
+  for(const [tab,label] of Object.entries(VELTRIX_NAMES)){
+    if(tab==='settings')continue;
+    const input=el('input');input.type='checkbox';input.checked=!PANEL_SETTINGS.hidden_tabs.includes(tab);input.value=tab;
+    const row=el('label','profile-copy-option');row.append(input,label);tabs.append(row);
+  }
+  const number=(key,min,max)=>{
+    const field=el('input');field.type='number';field.min=min;field.max=max;field.value=PANEL_SETTINGS[key];return field;
+  };
+  const views=number('view_spread',0,100),reacts=number('reaction_spread',0,100),workers=number('search_workers',1,5);
+  const group=el('input');group.value=PANEL_SETTINGS.profile_group;
+  const button=el('button','btn','Сохранить'),status=el('div','status');
+  root.append(tabs,fld('Разброс просмотров Автопилота (±%)',views),fld('Разброс реакций ниже лимита (%)',reacts),
+    fld('Аккаунтов для поиска профилей (до 5)',workers),fld('Группа по умолчанию',group),button,status);
+  button.onclick=async()=>{
+    try{
+      PANEL_SETTINGS=await api('/api/panel-settings',{method:'POST',json:{
+        hidden_tabs:[...tabs.querySelectorAll('input:not(:checked)')].map(input=>input.value),
+        view_spread:views.valueAsNumber,reaction_spread:reacts.valueAsNumber,search_workers:workers.valueAsNumber,profile_group:group.value}});
+      applyPanelSettings();AUTO_MULTI.formSignature='';
+      status.className='status ok';status.textContent='Сохранено. Разброс применяется к новым постам.';
+    }catch(e){status.className='status err';status.textContent=e.message;}
+  };
+}
+$('#t-settings').onclick=()=>{showTab('settings');renderPanelSettings()};
+api('/api/panel-settings').then(data=>{
+  if(Array.isArray(data?.hidden_tabs)){PANEL_SETTINGS=data;applyPanelSettings()}
+}).catch(()=>{});
 $("#t-accounts").onclick=()=>showTab("accounts");
 $("#t-messages").onclick=()=>{showTab("messages");refreshInbox()};
 $("#t-miniapp").onclick=async()=>{showTab("miniapp");if(!S.accounts.length)await loadAccounts();
@@ -1642,6 +1697,9 @@ setInterval(()=>{document.querySelectorAll('[data-retry-at]').forEach(e=>{
 })},1000);
 // Дата в списке берётся из Telegram (date объекта Photo). Пустые значения всегда в конце.
 const ACC_SORT={key:'name',direction:1};
+const mobileAccountColumn=$('#acc-mobile-column');
+try{mobileAccountColumn.value=localStorage.getItem('veltrix-accounts-column')||'username'}catch{}
+mobileAccountColumn.onchange=()=>{try{localStorage.setItem('veltrix-accounts-column',mobileAccountColumn.value)}catch{}renderAccounts()};
 function accDateValue(value, birthday=false){
   if(!value)return null;
   const str=String(value);
@@ -1657,6 +1715,7 @@ function accSortValue(a,key){
   if(key==='name')return(fullName(a)||a.name||'').trim().toLocaleLowerCase('ru');
   if(key==='username')return(a.username||'').trim().toLocaleLowerCase('ru');
   if(key==='session_count')return a.security?.session_count??null;
+  if(key==='spam_status')return a.spam_status?.label??null;
   if(key==='birthday')return accDateValue(p.birthday,true);
   if(key==='avatar_count')return Number.isFinite(p.avatar_count)?p.avatar_count:null;
   if(key==='music_count')return Number.isFinite(p.music_count)?p.music_count:null;
@@ -1695,6 +1754,8 @@ function renderAccounts(){
     b.classList.toggle('active',active);
     const arrow=b.querySelector('.arrow');if(arrow)arrow.textContent=active?(ACC_SORT.direction===1?'↑':'↓'):'';
   });
+  const active=new Set(S.accounts.filter(a=>a.connected).map(a=>a.id||a.name));
+  $('#acc-active').textContent='Активных: '+active.size;
   const count=$('#acc-count');if(count)count.textContent=`${shown.length} из ${S.accounts.length}`;
   if(!shown.length)g.append(el('div','empty',S.accounts.length?'Ничего не найдено':'Нет аккаунтов'));
   for(const a of shown){
@@ -1714,7 +1775,10 @@ function renderAccounts(){
       el('span','acc-cell',p.birthday||'—'),
       el('span','acc-cell',Number.isFinite(p.avatar_count)?String(p.avatar_count):'—'),
       el('span','acc-cell',Number.isFinite(p.music_count)?String(p.music_count):'—'),
-      el('span','acc-cell',accDateDisplay(p.last_avatar_change))];
+      el('span','acc-cell',accDateDisplay(p.last_avatar_change)),
+      el('span','acc-cell',a.spam_status?.label||'Не проверен')];
+    const keys=['name','username','session_count','birthday','avatar_count','music_count','last_avatar_change','spam_status'];
+    vals[keys.indexOf(mobileAccountColumn.value||'username')]?.classList.add('acc-mobile-value');
     for(let i=0;i<vals.length;i++){
       if(i!==0)vals[i].title=vals[i].textContent;
       c.append(vals[i]);
@@ -1724,7 +1788,7 @@ function renderAccounts(){
 }
 const fld=(l,i)=>{const w=el("label","fld");w.append(el("span","",l),i);return w};
 const inp=(v,p)=>{const i=el("input");i.value=v||"";i.placeholder=p||"";return i};
-const PROFILE_COPY_FIELDS={username:'Юзернейм',birthday:'День рождения',bio:'Био',avatars:'Аватарки'};
+const PROFILE_COPY_FIELDS={first_name:'Имя',last_name:'Фамилия',username:'Юзернейм',birthday:'День рождения',bio:'Био',avatars:'Аватарки',music:'Музыка'};
 const profileCopyDays=n=>new Intl.NumberFormat('ru-RU',{maximumFractionDigits:3}).format(n/86400);
 function showProfileCopyReview(account, base, draft, onConfirm, onClose){
   const dialog=el('dialog','profile-copy-dialog'),review=el('div','profile-copy-review');
@@ -1733,7 +1797,7 @@ function showProfileCopyReview(account, base, draft, onConfirm, onClose){
   head.append(title,el('div','',`${fullName(account)||account.name} · источник ${draft.source_id}`));
   const body=el('main'),details=el('dl');
   for(const [key,value] of Object.entries(draft.values)){
-    details.append(el('dt','',PROFILE_COPY_FIELDS[key]),el('dd','',key==='username'?'@'+value:value));
+    details.append(el('dt','',PROFILE_COPY_FIELDS[key]),el('dd','',key==='username'?'@'+value:key==='music'?value+' треков':value));
   }
   if(!draft.values.username && account.username){
     details.append(el('dt','','Юзернейм'),el('dd','','@'+account.username));
@@ -1741,7 +1805,7 @@ function showProfileCopyReview(account, base, draft, onConfirm, onClose){
   body.append(details);
   const plan=base+'/'+draft.token;
   if(draft.delays.length){
-    body.append(el('h3','',`Аватарки · ${draft.delays.length}`));
+    body.append(el('h3','',`Аватарки · ${draft.delays.length}`),el('p','status','После подтверждения прежние фото профиля будут удалены.'));
     const photos=el('div','profile-copy-gallery');
     draft.delays.forEach((delay,index)=>{
       const item=el('figure'),image=new Image();
@@ -1775,32 +1839,46 @@ function showProfileCopyReview(account, base, draft, onConfirm, onClose){
   dialog.showModal();no.focus();
 }
 function profileCopyCard(account,onApplied){
-  const card=el('section','profile-card profile-copy-card'),group=inp('','https://t.me/group');
+  const card=el('section','profile-card profile-copy-card'),group=inp('',PANEL_SETTINGS.profile_group);
+  const mode=el('select');
+  for(const [key,label] of [['group','Случайный участник группы'],['profile','Конкретный профиль']]){
+    const item=el('option','',label);item.value=key;mode.append(item);
+  }
   const options=el('div','profile-copy-fields'),checks={};
-  for(const [key,label] of Object.entries(PROFILE_COPY_FIELDS)){
+  for(const [key,label] of Object.entries(PROFILE_COPY_FIELDS).filter(([key])=>!['first_name','last_name'].includes(key))){
     const check=el('input');check.type='checkbox';checks[key]=check;
     const row=el('label','profile-copy-option');row.append(check,el('span','',label));options.append(row);
   }
-  const avatarSettings=el('div','profile-copy-avatar-settings'),count=inp('3');
-  count.type='number';count.min='1';count.step='1';count.inputMode='numeric';count.className='profile-copy-count';
+  const avatarSettings=el('div','profile-copy-avatar-settings'),minimum=inp('3'),maximum=inp('5');
+  const bounds=el('div','profile-copy-delays');
+  for(const field of [minimum,maximum]){field.type='number';field.min='1';field.step='1';field.inputMode='numeric'}
+  bounds.append(fld('Аватарок от',minimum),fld('Аватарок до',maximum));
   const delays=el('div','profile-copy-delays'),from=inp('1'),to=inp('2');
   for(const input of [from,to]){input.type='number';input.min='0';input.step='any'}
   delays.append(fld('Задержка от, дней',from),fld('Задержка до, дней',to));
-  avatarSettings.append(fld('Точное количество аватарок',count),delays);
-  const updateAvatarSettings=()=>{
-    avatarSettings.hidden=!checks.avatars.checked;
-    delays.hidden=!checks.avatars.checked||Number(count.value)<=1;
+  avatarSettings.append(bounds,delays);
+  const sourceField=fld('Ссылка на группу',group);
+  mode.onchange=()=>{
+    const direct=mode.value==='profile';
+    bounds.hidden=options.hidden=direct;
+    group.placeholder=direct?'https://t.me/username':PANEL_SETTINGS.profile_group;
+    sourceField.firstChild.textContent=direct?'Ссылка на профиль':'Ссылка на группу';
   };
-  checks.avatars.onchange=count.oninput=updateAvatarSettings;
-  updateAvatarSettings();
-  const preview=el('button','btn ghost','Предпросмотр'),status=el('div','status'),progress=el('div','status');
-  const actions=el('div','profile-copy-actions');actions.append(preview,status);
+  const preview=el('button','btn ghost','Предпросмотр'),stop=el('button','ui-btn','Остановить поиск');
+  const status=el('div','status'),progress=el('div','status');
+  const actions=el('div','profile-copy-actions');actions.append(preview,stop,status);
   status.setAttribute('role','status');progress.setAttribute('aria-live','polite');
-  card.append(el('h3','','Скопировать случайный профиль'),fld('Ссылка на группу Telegram',group),
-    options,avatarSettings,actions,progress);
+  card.append(el('h3','','Скопировать случайный профиль'),fld('Источник',mode),sourceField,
+    el('div','status','Галочки отмечают обязательные поля. Остальные значения переносятся, если доступны.'),options,avatarSettings,actions,progress);
   const base=`/api/accounts/${enc(account.name)}/profile-copy`;
-  let searching=false,active=false,timer;
-  const buttons=()=>{preview.disabled=searching||active};
+  const searchPath=base+'/search';
+  let searching=false,active=false,timer,searchToken=null,generation=0;
+  const buttons=()=>{
+    preview.disabled=searching||active;
+    stop.hidden=!searchToken;
+    for(const input of [mode,group,minimum,maximum,from,to,...Object.values(checks)])input.disabled=searching;
+  };
+  buttons();
   function renderJob(job){
     clearTimeout(timer);
     if(!card.isConnected)return;
@@ -1822,29 +1900,74 @@ function profileCopyCard(account,onApplied){
       progress.className='status err';progress.textContent=e.message;
     }
   }
-  preview.onclick=async()=>{
-    const fields=Object.keys(checks).filter(key=>checks[key].checked);
-    if(!fields.length||!group.value.trim()){
-      status.className='status err';status.textContent='Укажите ссылку на группу и выберите поля.';return;
+  const clearSearch=()=>{
+    searchToken=null;searching=false;buttons();
+  };
+  async function watchSearch(search){
+    if(!search||!card.isConnected){clearSearch();return}
+    const own=++generation;
+    searchToken=search.token;searching=true;buttons();
+    while(card.isConnected&&own===generation&&search){
+      if(search.state==='error')throw new Error(search.error);
+      if(search.state==='ready'&&card.closest('.view')?.classList.contains('on')!==false){
+        searchToken=null;buttons();status.textContent='';
+        const draft=search.draft;
+        showProfileCopyReview(account,base,draft,job=>{
+          renderJob(job);
+          onApplied(draft.values,!!draft.delays.length).catch(e=>errToast(e.message));
+        },clearSearch);
+        return;
+      }
+      const checked=search.checked?' · Проверено: '+search.checked:'';
+      const messages={waiting:`Пауза Telegram: ${search.retry_in} сек. Поиск продолжится автоматически.`,
+        queued:'Поиск в очереди…',searching:'Подбираю профиль…',ready:'Предпросмотр готов'};
+      status.className='status';status.textContent=messages[search.state]+checked;
+      await new Promise(resolve=>setTimeout(resolve,search.state==='ready'?3000:1000));
+      if(!card.isConnected||own!==generation)return;
+      try{search=await api(searchPath+'/'+searchToken)}
+      catch(e){if(own!==generation)return;throw e}
     }
-    if(checks.avatars.checked&&(!Number.isInteger(count.valueAsNumber)||count.valueAsNumber<1)){
-      status.className='status err';status.textContent='Укажите целое количество аватарок больше нуля.';count.focus();return;
+    if(own===generation){clearSearch();status.textContent=''}
+  }
+  const searchError=e=>{
+    clearSearch();status.className='status err';status.textContent=e.message;
+  };
+  stop.onclick=async()=>{
+    if(!searchToken)return;
+    const token=searchToken;
+    ++generation;
+    stop.disabled=true;
+    try{
+      await api(searchPath+'/'+token,{method:'DELETE'});
+      clearSearch();status.className='status';status.textContent='Поиск остановлен.';
+    }catch(e){searchError(e)}
+    finally{stop.disabled=false}
+  };
+  preview.onclick=async()=>{
+    const direct=mode.value==='profile';
+    const fields=direct?[]:Object.keys(checks).filter(key=>checks[key].checked);
+    if(direct&&!group.value.trim()){
+      status.className='status err';status.textContent='Укажите ссылку на профиль.';return;
+    }
+    if(!direct&&(!Number.isInteger(minimum.valueAsNumber)||!Number.isInteger(maximum.valueAsNumber)||
+        minimum.valueAsNumber<1||maximum.valueAsNumber<minimum.valueAsNumber)){
+      status.className='status err';status.textContent='Укажите целый диапазон аватарок от 1.';minimum.focus();return;
     }
     searching=true;buttons();status.className='status';status.textContent='Подбираю профиль…';
     try{
-      const data={group:group.value.trim(),fields,avatar_count:count.valueAsNumber,delay_from_days:from.value,delay_to_days:to.value};
-      const draft=await api(base,{method:'POST',json:data});
-      if(!card.isConnected){api(base+'/'+draft.token,{method:'DELETE'}).catch(()=>{});return}
-      status.textContent='';
-      showProfileCopyReview(account,base,draft,job=>{
-        renderJob(job);
-        onApplied(draft.values,!!draft.delays.length).catch(e=>errToast(e.message));
-      },()=>{searching=false;buttons()});
-    }catch(e){
-      searching=false;buttons();status.className='status err';status.textContent=e.message;
-    }
+      const data={group:group.value.trim()||(direct?'':PANEL_SETTINGS.profile_group),mode:mode.value,fields,
+        avatar_min:direct?1:minimum.valueAsNumber,avatar_max:direct?1:maximum.valueAsNumber,
+        workers:PANEL_SETTINGS.search_workers,delay_from_days:from.value,delay_to_days:to.value};
+      await watchSearch(await api(searchPath,{method:'POST',json:data}));
+    }catch(e){searchError(e)}
   };
-  setTimeout(refresh,0);
+  setTimeout(async()=>{
+    refresh();
+    try{
+      const previous=await api(searchPath);
+      if(previous&&!searching)await watchSearch(previous);
+    }catch(e){if(card.isConnected)searchError(e)}
+  },0);
   return card;
 }
 function renderDetail(){
@@ -1952,7 +2075,7 @@ function renderDetail(){
   const fn=inp(a.first_name,"Имя"),ln=inp(a.last_name,"Фамилия"),un=inp(a.username,"username без @");
   const bio=el("textarea");bio.rows=3;bio.maxLength=70;bio.placeholder="О себе (до 70 символов)";
   const bd=inp("","ДД.ММ.ГГГГ или ДД.ММ (пусто — убрать)");
-  const vis=el("div","status"),opn=el("button","btn ghost","Открыть био и день рождения всем");
+  const vis=el("div","status"),opn=el("button","btn ghost","Открыть био, день рождения и аватарки всем");
   let full=null;bio.disabled=bd.disabled=true;
   const showVis=f=>{const w=v=>v===true?"все":v===false?"не все":"неизвестно";vis.className="status";
     vis.textContent=`Видно: био — ${w(f.bio_public)}, день рождения — ${w(f.birthday_public)}`};
@@ -2000,7 +2123,7 @@ function renderDetail(){
   opn.onclick=async()=>{
     say("Открываю…");
     try{const r=await api(`/api/accounts/${enc(a.name)}/open`,{method:"POST"});showVis(r);
-      r.errors.length?say(r.errors.join("; "),"err"):say("Теперь био и день рождения видны всем","ok")}
+      r.errors.length?say(r.errors.join("; "),"err"):say("Теперь био, день рождения и аватарки видны всем","ok")}
     catch(e){say(e.message,"err")}
   };
   lsC.onchange=async()=>{
@@ -2024,6 +2147,7 @@ function renderDetail(){
     if(S.sel!==a.name)return;
     const latest=S.accounts.find(z=>z.name===a.name);
     if(values.username&&latest)un.value=latest.username;
+    if(latest&&values.first_name){fn.value=latest.first_name;ln.value=latest.last_name}
     if(values.bio||values.birthday){
       await loadFull(false);
       if(values.bio&&full)bio.value=full.bio;
@@ -2536,6 +2660,7 @@ const ICON={
  channels:'<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/>',
  reactions:'<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>',
  views:'<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/>',
+ polls:'<path d="M4 20h16M7 17v-5m5 5V7m5 10V4"/>',
  reposts:'<path d="m15 5 6 6-6 6v-4H9a5 5 0 0 0-5 5v-3a6 6 0 0 1 6-6h5z"/>',
  multi:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
  starts:'<polygon points="7 4 20 12 7 20 7 4"/>',
@@ -2562,6 +2687,7 @@ const SERVICES=[
  {id:"channels",name:"Подписчики",grad:["#2aabee","#1a7fd1"],link:"Ссылка на канал",ph:"https://t.me/channel или https://t.me/+invite",hint:"подписка на канал"},
  {id:"reactions",name:"Реакции",grad:["#f472b6","#ec4899"],link:"Ссылка на пост",ph:"https://t.me/channel/123",emoji:true,hint:"реакция на пост"},
  {id:"views",name:"Просмотры",grad:["#34d399","#10b981"],link:"Ссылка на пост",ph:"https://t.me/channel/123",hint:"просмотр поста"},
+ {id:"polls",name:"Опросы",grad:["#6366f1","#8b5cf6"],link:"Ссылка на пост с опросом",ph:"https://t.me/channel/123",poll:true,hint:"голосование по выбранным вариантам"},
  {id:"reposts",name:"Репосты",grad:["#38bdf8","#4f46e5"],link:"Ссылка на пост",ph:"https://t.me/channel/123",hint:"пересылка поста в «Избранное» каждого аккаунта"},
  {id:"multi",name:"Мульти",grad:["#8b5cf6","#6d4aff"],link:"Ссылка на пост",ph:"https://t.me/channel/123",emoji:true,chans:true,uniq:true,hint:"в сеть → подписка → просмотр → реакция → кнопка → из сети",already:"Уже подписаны на все указанные каналы, исключены из плана"},
  {id:"starts",name:"Старты",grad:["#fb7185","#ef4444"],link:"Ссылка на бота",ph:"https://t.me/mybot?start=ref123",hint:"запуск бота по ссылке",already:"Уже запускали бота (есть переписка), исключены из плана"},
@@ -2783,16 +2909,46 @@ function renderNew(){
   const freshness=inp('freshness_days',{type:'number',min:'0',max:'36500',placeholder:'0 — без фильтра'});freshness.id='order-freshness';
   field('clock','Свежесть аккаунтов, дней',freshness);
   body.append(el('div','othint','Не использовать аккаунты, у которых аватарка менялась за последние указанные дни. Если дату проверить не удалось, аккаунт также исключается. 0 — без фильтра.'));
+  if(sv.poll){
+    const fetchOptions=el('button','ui-btn','Узнать варианты'),choices=el('div','ofield');
+    fetchOptions.type='button';body.append(fetchOptions,choices);
+    const renderChoices=()=>{
+      choices.replaceChildren();
+      if(!F.poll||F.poll.link!==F.v.link.trim())return;
+      choices.append(el('strong','',F.poll.question));
+      for(const option of F.poll.options){
+        const input=el('input','oinp');input.type='number';input.min='0';input.step='1';input.value=F.v.votes?.[option.id]||0;
+        input.oninput=()=>{
+          F.v.votes[option.id]=input.valueAsNumber;
+          if(F.plan){cancelPlan();renderPlanBox()}
+        };
+        choices.append(fld(option.text,input));
+      }
+    };
+    link.addEventListener('input',()=>{F.poll=null;F.v.votes={};renderChoices()});
+    fetchOptions.onclick=async()=>{
+      const address=F.v.link.trim();
+      fetchOptions.disabled=true;
+      try{
+        const poll=await api('/api/polls/options',{method:'POST',json:{link:address}});
+        if(F.v.link.trim()!==address)return;
+        await cancelPlan();renderPlanBox();
+        F.poll={...poll,link:address};F.v.votes=Object.fromEntries(poll.options.map(option=>[option.id,0]));renderChoices();
+      }catch(e){errToast(e.message)}finally{fetchOptions.disabled=false}
+    };
+    renderChoices();
+  }
   const extras=()=>{
     const extra={freshness_days:F.v.freshness_days||0};
     if(sv.emoji)extra.emoji=F.v.emoji;
     if(sv.chans)extra.channels=(F.v.chans||[]).flatMap(x=>String(x).split(/[\s,;]+/)).map(x=>x.trim()).filter(Boolean);
     if(sv.uniq)extra.unique=!!F.v.uniq;
+    if(sv.poll)extra.votes=F.v.votes;
     return extra;
   };
   const count=inp('count',{type:'number',min:'1'});count.id='order-count';
   const max=el('button','order-max','Max');max.type='button';max.id='order-max';max.title='Максимум аккаунтов с учётом ссылки, свежести и ограничений услуги';
-  const countBox=el('div','order-count-box');countBox.append(count,max);field('users','Количество аккаунтов',countBox);
+  const countBox=el('div','order-count-box');countBox.append(count,max);if(!sv.poll)field('users','Количество аккаунтов',countBox);
   max.onclick=async()=>{
     max.disabled=true;const svc=F.svc,payload={link:F.v.link.trim(),extra:extras()},signature=JSON.stringify(payload);
     try{const result=await api(`/api/${svc}/available`,{method:'POST',json:payload});
@@ -2869,6 +3025,43 @@ async function excludeFromPlan(account){
     if(OR.form===F&&F.plan&&F.plan.id===p.id){F.plan=np;renderPlanBox()}
   }catch(e){errToast(e.message)}
 }
+function orderTimeline(plan){
+  const tools=el('div','order-graph-tools'),scroll=el('div','order-graph-scroll');
+  const zoom=el('input');zoom.type='range';zoom.min='1';zoom.max='8';zoom.value='1';
+  zoom.setAttribute('aria-label','Масштаб времени');
+  const svg=(tag,attrs,parent)=>{
+    const node=document.createElementNS('http://www.w3.org/2000/svg',tag);
+    Object.entries(attrs).forEach(([key,value])=>node.setAttribute(key,value));
+    parent.append(node);return node;
+  };
+  const render=()=>{
+    const width=Math.max(360,scroll.clientWidth||480)*Number(zoom.value);
+    scroll.replaceChildren();
+    const chart=svg('svg',{viewBox:`0 0 ${width} 220`,width,role:'img','aria-label':'Накопительное количество аккаунтов по времени'},scroll);
+    const duration=Math.max(1,plan.total),left=48,right=width-32,base=176,top=22;
+    const x=seconds=>left+(right-left)*seconds/duration;
+    const y=count=>base-(base-top)*count/Math.max(1,plan.items.length);
+    const label=(xx,yy,value,anchor='middle')=>{svg('text',{x:xx,y:yy,'text-anchor':anchor,fill:'#c4c0d1','font-size':11},chart).textContent=value};
+    for(let i=0;i<=4;i++){
+      const seconds=duration*i/4,time=x(seconds);
+      svg('line',{x1:time,y1:top,x2:time,y2:base,stroke:'#32313d'},chart);
+      label(time,196,durR(seconds));
+    }
+    const counts=new Set([0,Math.round(plan.items.length/2),plan.items.length]);
+    for(const count of counts){
+      svg('line',{x1:left,y1:y(count),x2:right,y2:y(count),stroke:'#32313d'},chart);
+      label(left-8,y(count)+4,String(count),'end');
+    }
+    let d=`M${left} ${base}`;
+    plan.items.forEach((item,index)=>{d+=` H${x(item.at)} V${y(index+1)}`});
+    svg('path',{d,stroke:'#a994ff','stroke-width':2,fill:'none'},chart);
+    label((left+right)/2,215,'Время от запуска');
+  };
+  zoom.oninput=render;
+  tools.append('Аккаунты · масштаб времени',zoom);
+  setTimeout(render,0);
+  return {tools,scroll};
+}
 function renderPlanBox(){
   const out=$("#or-plan");if(!out)return;out.replaceChildren();
   const F=OR.form,p=F.plan,sv=SV[F.svc];if(!p)return;
@@ -2879,13 +3072,19 @@ function renderPlanBox(){
   if(p.check_errors)box.append(el("div","orn bad",`Не удалось проверить ${p.check_errors} акк. — они ${sv.chkExcl?"исключены из плана":"остались в плане"}`));
   if(p.finish_at)box.append(el('div','orn','Последний аккаунт: '+new Date(p.finish_at*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК'));
   if(p.steps&&p.steps.length)box.append(el("div","orn","Каждый аккаунт: "+p.steps.join(" → ")));
+  const details=el('div');details.hidden=true;
+  const graph=orderTimeline(p),toggle=el('button','ui-btn','Показать текст плана');
+  graph.tools.append(toggle);box.append(graph.tools,graph.scroll,details);
+  toggle.onclick=()=>{
+    details.hidden=!details.hidden;toggle.textContent=details.hidden?'Показать текст плана':'Скрыть текст плана';
+  };
   p.items.forEach((it,i)=>{
     const row=el("div","oitem queue"),ic=el("div","oist");ic.append(ico("clock"));
     const b=el("div","oib");b.append(accLabel(it),
-      el("div","ois acc",`через ${durR(it.delay)}`+(i?" после предыдущего":"")+` (общее ${durR(it.at)})`));
+      el("div","ois acc",`${it.option?it.option+" · ":""}через ${durR(it.delay)}`+(i?" после предыдущего":"")+` (общее ${durR(it.at)})`));
     const xb=el("button","oix");xb.title="Исключить аккаунт из плана";xb.append(ico("x"));
     xb.onclick=()=>{xb.disabled=true;excludeFromPlan(it.account)};
-    row.append(ic,b,xb);box.append(row);
+    row.append(ic,b,xb);details.append(row);
   });
   box.append(el("div","orn","Общее время: "+durR(p.total)+" · аккаунтов: "+p.items.length));
   const b=el("div","orbtnrow"),ok=el("button","orbig primary"),no=el("button","orbig");
@@ -2903,12 +3102,13 @@ function renderPlanBox(){
   b.append(ok,no);box.append(b);out.append(box);
 }
 $("#t-orders").onclick=openOrders;
-const VELTRIX_SERVICE_ICONS={channels:'users',reactions:'zap',views:'eye',reposts:'forward',multi:'layers',starts:'play',btn:'mouse-pointer',unsub:'user-minus'};
+const VELTRIX_SERVICE_ICONS={channels:'users',reactions:'zap',views:'eye',reposts:'forward',polls:'bars',multi:'layers',starts:'play',btn:'mouse-pointer',unsub:'user-minus'};
 const VELTRIX_SERVICE_SVG={
  users:'<circle cx="12" cy="7" r="3.5"/><path d="M5 20v-2a7 7 0 0 1 14 0v2"/>',
  zap:'<path d="m13 2-9 12h7l-1 8 10-12h-7z"/>',
  eye:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
  forward:ICON.reposts,
+ bars:ICON.polls,
  layers:'<path d="m12 3 9 5-9 5-9-5 9-5Zm-9 10 9 5 9-5M3 17l9 5 9-5"/>',
  play:'<path d="m8 5 11 7-11 7V5z"/>',
  'mouse-pointer':'<path d="M5 3v16l4-4 4 6 3-2-4-6h7L5 3z"/>',
@@ -2970,7 +3170,16 @@ function passwordControl(password){
 }
 function profileSessionCard(a){
  const card=el('section','profile-card profile-session'),title=el('div','profile-card-title'),refresh=el('button','ui-btn','↻ Обновить сессии');refresh.id='profile-session-refresh';
- title.append(el('h3','','Сессии и 2FA'),refresh);card.append(title);
+ const reset=el('button','ui-btn','Отключить все кроме своей'),actions=el('div','ui-actions');
+ const spam=el('button','ui-btn','Проверить спамбан'),spamLabel=el('div','status',a.spam_status?.label||'Спамбан: не проверен');
+ reset.disabled=spam.disabled=!a.connected;actions.append(refresh,reset);title.append(el('h3','','Сессии и 2FA'),actions);card.append(title);
+ spam.onclick=async()=>{
+   spam.disabled=true;spamLabel.textContent='Проверяю через @SpamBot…';
+   try{a.spam_status=await api('/api/accounts/'+enc(a.name)+'/spam-status',{method:'POST'});
+     spamLabel.textContent='Спамбан: '+a.spam_status.label;spamLabel.title=a.spam_status.reply;renderAccounts();
+   }catch(e){spamLabel.textContent=e.message}finally{spam.disabled=false}
+ };
+ card.append(spam,spamLabel);
  const summary=el('div','session-summary'),count=el('strong','session-big '+sessionClass(a),a.security?.session_count??'—'),origin=el('span',sessionClass(a),a.session_owned?'Своя · создана панелью':'Внешняя · импортирована');
  summary.append(count,origin);card.append(summary);
  const checked=el('div','status'),status=el('div','status'),list=el('div','session-devices'),password=el('div','profile-password');
@@ -2978,16 +3187,19 @@ function profileSessionCard(a){
  card.append(checked,status,list,el('div','status',a.security?.next_sessions_check?'Следующая автоматическая проверка: '+twofaDate(a.security.next_sessions_check)+' МСК':'Автоматическая проверка ещё не назначена'),el('div','status profile-helper','Цвет — происхождение. Обновление не отзывает сессии.'),el('h4','','Пароль 2FA'),password);
  api('/api/2fa?name='+enc(a.name)).then(data=>{if(S.sel!==a.name)return;const item=data.items.find(item=>item.name===a.name);password.replaceChildren();if(item?.password)password.append(passwordControl(item.password));else password.textContent='Пароль не создан панелью';if(item){a.session_owned=item.owned;origin.textContent=item.owned?'Своя · создана панелью':'Внешняя · импортирована';origin.className=sessionClass(a);count.className='session-big '+sessionClass(a);}}).catch(error=>{password.textContent=error.message;});
  refresh.disabled=!a.connected;
- refresh.onclick=async()=>{
-  refresh.disabled=true;status.textContent='Запрашиваю авторизации у Telegram…';
-  try{const result=await api('/api/2fa/check',{method:'POST',json:{name:a.name}});
+ const inspect=async(revoke)=>{
+  refresh.disabled=reset.disabled=true;status.textContent=revoke?'Отзываю другие сессии…':'Запрашиваю авторизации у Telegram…';
+  try{const result=await api(revoke?'/api/2fa/reset-others':'/api/2fa/check',{method:'POST',json:{name:a.name}});
    if(S.sel!==a.name)return;a.session_owned=result.owned;a.security={...a.security,session_count:result.count,sessions_checked_at:result.checked_at};
    count.textContent=result.count;count.className='session-big '+sessionClass(a);origin.className=sessionClass(a);origin.textContent=result.owned?'Своя · создана панелью':'Внешняя · импортирована';
    checked.textContent='Проверено: '+twofaDate(result.checked_at)+' МСК';status.textContent=result.count===1?'Telegram подтвердил одну текущую авторизацию':'Других авторизаций: '+(result.count-1);
    list.replaceChildren();for(const auth of result.authorizations)list.append(el('div','session-device',(auth.current?'● Текущая':'○ Другая')+' · '+(auth.app||'Telegram')+' · '+(auth.device||'Устройство не указано')+' · '+twofaDate(auth.created_at)));
    renderAccounts();
-  }catch(error){status.textContent='Не удалось обновить: '+error.message+' Предыдущее число не подтверждено заново.';}finally{refresh.disabled=!a.connected;}
- };return card;
+  }catch(error){status.textContent='Не удалось обновить: '+error.message+' Предыдущее число не подтверждено заново.';}finally{refresh.disabled=reset.disabled=!a.connected;}
+ };
+ refresh.onclick=()=>inspect(false);
+ reset.onclick=()=>{if(confirm('Отключить все другие сессии этого аккаунта?'))inspect(true)};
+ return card;
 }
 const twofaDate=value=>value?new Date(typeof value==='number'?value*1000:value).toLocaleString('ru-RU',{timeZone:'Europe/Moscow',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).replace(',',''):'—';
 let twofaBusy=false;
@@ -3432,7 +3644,7 @@ function autoMultiForms(d,force=false){
     };
     const viewBlock=makeRange('max_views','Просмотры · базовое число');
     const spread=el('small','auto-note'),viewSlider=viewBlock.querySelector('input[type=range]'),rangeChange=viewSlider.oninput;
-    const updateSpread=()=>{const base=+viewSlider.value;spread.textContent='На пост: '+Math.min(count,Math.ceil(base*9/10))+'–'+Math.min(count,Math.floor(base*11/10))+' · ±10%';};viewSlider.oninput=()=>{rangeChange();updateSpread();};updateSpread();viewBlock.append(spread);
+    const updateSpread=()=>{const base=+viewSlider.value,pct=PANEL_SETTINGS.view_spread;spread.textContent='На пост: '+Math.min(count,Math.ceil(base*(100-pct)/100))+'–'+Math.min(count,Math.floor(base*(100+pct)/100))+' · ±'+pct+'%';};viewSlider.oninput=()=>{rangeChange();updateSpread();};updateSpread();viewBlock.append(spread);
     const viewToggle=el('label','');viewToggle.className='auto-views-toggle';
     const viewCheck=el('input','');viewCheck.type='checkbox';viewCheck.checked=c.views_enabled!==false;viewCheck.dataset.key='views_enabled';
     viewCheck.onchange=()=>{row.dataset.dirty='1'};
@@ -3440,7 +3652,7 @@ function autoMultiForms(d,force=false){
     const reactionBlock=makeRange('max_reactions','Лимит реакций на пост');
     const reactionSpread=el('small','auto-note'),reactionSlider=reactionBlock.querySelector('input[type=range]'),reactionChange=reactionSlider.oninput;
     const updateReactionSpread=()=>{
-      const limit=+reactionSlider.value,min=limit?Math.max(1,Math.floor(limit*4/5)):0;
+      const limit=+reactionSlider.value,min=limit?Math.max(1,Math.floor(limit*(100-PANEL_SETTINGS.reaction_spread)/100)):0;
       reactionSpread.textContent='На пост: '+min+'–'+limit;
     };
     reactionSlider.oninput=()=>{reactionChange();updateReactionSpread()};updateReactionSpread();reactionBlock.append(reactionSpread);

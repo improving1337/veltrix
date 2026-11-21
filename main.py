@@ -41,6 +41,7 @@ import account_deploy
 import session_admin
 import account_security
 import profile_copy
+import panel_settings
 
 # ============== НАСТРОЙКИ ==============
 BASE_DIR = Path(__file__).resolve().parent
@@ -50,7 +51,9 @@ SORTING_DIR = BASE_DIR / "Sorting"    # сюда кидаешь файлы, он
 WEB_DIR = BASE_DIR / "web"            # index.html
 TEMP_DIR = BASE_DIR / "temp"
 TEMPLATE_AVATARS = BASE_DIR / "template_avatars"  # <user_id>/01.jpg ... 05.jpg
-TEMPLATE_ROSTER_FILE = BASE_DIR / "template_roster.json"  # просмотренный и отобранный набор
+SPAM_STATUS_FILE = BASE_DIR / 'security' / 'spam_status.json'
+SPAM_STATUS = template_library.json_load(SPAM_STATUS_FILE)
+TEMPLATE_ROSTER_FILE = BASE_DIR / "template_roster.json"   # просмотренный и отобранный набор
 # Pterodactyl обычно передаёт назначенный внешний порт через SERVER_PORT.
 # PORT оставлен как запасной вариант для обычного запуска вне хостинга.
 HOST = "0.0.0.0"
@@ -292,7 +295,7 @@ def ser_message(m):
 
 def ser_account(a):
     me = a.me
-    return {"name": a.name, "connected": me is not None, "status": a.status,
+    return {"name": a.name, "connected": bool(me is not None and a.client.is_connected()), "spam_status": SPAM_STATUS.get(str(me.id)) if me else None, "status": a.status,
             "id": me.id if me else None, "phone": (me.phone or "") if me else "",
             "first_name": (me.first_name or "") if me else "", "last_name": (me.last_name or "") if me else "",
             "username": (me.username or "") if me else "", "avatar_ver": int(a.avatar_ver), "presence": presence.keeper.info(a.name),
@@ -352,6 +355,7 @@ async def _refresh_account_profile(acc):
                 logging.warning('[PROFILE] %s music count: %s: %s', acc.name, type(exc).__name__, exc)
             if acc.me is not None and acc.me.id == meta['telegram_id']:
                 ACCOUNT_PROFILE_CACHE[acc.name] = meta
+                acc.copy_profile_meta = meta
     finally:
         task = ACCOUNT_PROFILE_TASKS.get(acc.name)
         if task is asyncio.current_task():
@@ -1312,7 +1316,7 @@ async def api_last_seen(request):
 
 async def api_open(request):
     acc = get_acc(request)
-    errors = await set_public(acc, ["bio", "birthday"])
+    errors = await set_public(acc, ["bio", "birthday", "photo"])
     return web.json_response({"errors": errors, **await full_info(acc)})
 
 async def apply_template_to_account(acc, tpl):
@@ -1477,6 +1481,12 @@ async def upload_avatar(acc, data, *, prepared=False):
 
 async def copy_profile_fields(acc, fields):
     requests = []
+    if fields.get('first_name'):
+        requests.append(('Имя', functions.account.UpdateProfileRequest(
+            first_name=fields['first_name'], last_name=fields['last_name'])))
+    for doc in reversed(fields.get('music', [])):
+        requests.append(('Музыка', functions.account.SaveMusicRequest(
+            id=types.InputDocument(doc['id'], doc['access_hash'], base64.b64decode(doc['file_reference'])), unsave=False)))
     if 'username' in fields and fields['username'] != acc.me.username:
         requests.append(('Юзернейм', functions.account.UpdateUsernameRequest(fields['username'])))
     if 'bio' in fields:
@@ -1498,9 +1508,58 @@ async def copy_profile_fields(acc, fields):
         acc.me = await asyncio.wait_for(acc.client.get_me(), 15)
     except (RPCError, asyncio.TimeoutError):
         pass
+    errors.extend(await set_public(acc, ["bio", "birthday", "photo"]))
+    errors.extend(await set_last_seen_hidden(acc, True))
     invalidate_account_profile(acc)
     schedule_account_profile_refresh(acc, force=True)
     return errors
+
+
+async def clear_old_avatars(acc):
+    photos = await asyncio.wait_for(acc.client.get_profile_photos('me', limit=None), 60)
+    if photos:
+        existing = [utils.get_input_photo(photo) for photo in photos]
+        for start in range(0, len(existing), 50):
+            batch = existing[start:start+50]
+            deleted = await asyncio.wait_for(acc.client(functions.photos.DeletePhotosRequest(batch)), 30)
+            if set(deleted) != {photo.id for photo in batch}:
+                raise ValueError('Telegram не подтвердил удаление всех прежних аватарок')
+        # The existing upload helper compares before/after photo IDs.
+        me = await asyncio.wait_for(acc.client.get_me(), 20)
+        if me is not None:
+            acc.me = me
+        acc.avatar_ver = time.time()
+
+
+async def api_spam_status(request):
+    acc = get_acc(request)
+    if getattr(acc, 'spam_checking', False):
+        fail('Проверка уже выполняется')
+    acc.spam_checking = True
+    try:
+        async with acc.client.conversation('@SpamBot', timeout=20, exclusive=True) as chat:
+            await chat.send_message('/start')
+            message = await chat.get_response()
+        raw = message.raw_text or ''
+        lowered = raw.casefold()
+        if re.search(r'no limits|no restrictions|нет ограничений|не ограничен|ограничений нет', lowered):
+            status = 'Отсутствует'
+        elif re.search(r'permanent|навсегда|бессроч|перманент', lowered):
+            status = 'Вечный'
+        elif re.search(r'geo.?restrict|country|your region|вашей стране|вашем регионе|по гео', lowered):
+            status = 'По гео'
+        elif re.search(r'until|до \d|временн|temporar', lowered):
+            status = 'Временный'
+        elif re.search(r'limit|restrict|огранич', lowered):
+            status = 'Есть ограничение'
+        else:
+            status = 'Не определён'
+        entry = {'label': status, 'reply': raw, 'checked_at': time.time()}
+        SPAM_STATUS[str(acc.me.id)] = entry
+        template_library.atomic_json_save(SPAM_STATUS_FILE, SPAM_STATUS)
+        return web.json_response(entry)
+    finally:
+        acc.spam_checking = False
 
 
 async def api_set_avatar(request):
@@ -2755,8 +2814,11 @@ async def main():
     deploy.on_created = lambda name: sessions.mark_owned(ACCOUNTS[name]) if name in ACCOUNTS else None
     copies = profile_copy.ProfileCopies(BASE_DIR / 'profile_copies', lambda: ACCOUNTS, prepare_avatar,
                                         lambda acc, data: upload_avatar(acc, data, prepared=True),
-                                        copy_profile_fields)
+                                        copy_profile_fields, clear_photos=clear_old_avatars)
     copies.register(app, get_acc)
+    preferences = panel_settings.PanelSettings(BASE_DIR)
+    app.router.add_get('/api/panel-settings', preferences.read)
+    app.router.add_post('/api/panel-settings', preferences.update)
 
     async def background(app):
         async def expire_logins():
@@ -2788,6 +2850,7 @@ async def main():
         web.get(r"/api/accounts/{acc}/profile-photos/{pid:\d+}/image", api_account_photo_image),
         web.delete(r"/api/accounts/{acc}/profile-photos/{pid:\d+}", api_account_photo_delete),
         web.post("/api/accounts/{acc}/profile", api_profile),
+        web.post("/api/accounts/{acc}/spam-status", api_spam_status),
         web.get("/api/accounts/{acc}/full", api_full),
         web.post("/api/accounts/{acc}/open", api_open),
         web.post("/api/accounts/{acc}/last-seen", api_last_seen),
@@ -2828,7 +2891,7 @@ async def main():
     channels.set_usernames(lambda: {n: (a.me.username or "") for n, a in ACCOUNTS.items() if a.me is not None})
     automatic_multi.register(app, live_clients, BASE_DIR,
                        account_ids=lambda: {n: a.me.id for n, a in ACCOUNTS.items()
-                                            if a.me is not None})
+                                            if a.me is not None}, preferences=preferences.get)
     channels.register(app, live_clients)
     multi.register_all(app, live_clients)
     unsub.register_all(app, live_clients)

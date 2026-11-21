@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from telethon.errors import ChatForwardsRestrictedError
+from telethon import functions, types
 
 import automatic
 import channels
@@ -119,6 +120,27 @@ def client(age=None, broken=False):
 
 
 class EligibilityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_poll_options_and_scheduled_votes(self):
+        choices = [types.PollAnswer(types.TextWithEntities(label, []), key)
+                   for label, key in [('Первый', b'a'), ('Второй', b'b')]]
+        poll = types.Poll(1, types.TextWithEntities('Вопрос', []), choices, 0)
+        clients = {str(i): AsyncMock() for i in range(3)}
+        for selected in clients.values():
+            selected.is_connected = lambda: True
+            selected.get_entity = AsyncMock(return_value=NS(title='Channel'))
+            selected.get_input_entity = AsyncMock(return_value=types.InputPeerChannel(1, 2))
+            selected.get_messages = AsyncMock(return_value=NS(media=types.MessageMediaPoll(poll, types.PollResults())))
+        joiner = posts.PollJoiner(lambda: clients)
+        link = 'https://t.me/example/123'
+        self.assertEqual((await joiner.options(link))['options'][1], {'id': '62', 'text': 'Второй'})
+        plan = await joiner.make_plan(link, None, 0, 0, {'votes': {'61': 2, '62': 1}})
+        self.assertCountEqual([item['option'] for item in plan['items']], ['Первый', 'Первый', 'Второй'])
+        await joiner.start(plan['id'])
+        await joiner.jobs[plan['id']]['task']
+        requests = [client.await_args.args[0] for client in clients.values()]
+        self.assertTrue(all(isinstance(request, functions.messages.SendVoteRequest) for request in requests))
+        self.assertCountEqual([request.options[0] for request in requests], [b'a', b'a', b'b'])
+
     async def test_acceleration_cannot_trigger_action_in_quiet_hours(self):
         start = ScheduleTests.moscow(20, 0)
         resume = ScheduleTests.moscow(20, 7) + 360

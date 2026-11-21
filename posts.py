@@ -124,7 +124,88 @@ class RepostJoiner(PostBase):
             return explain(e)
 
 
+class PollJoiner(PostBase):
+    async def options(self, link):
+        from telethon.tl import types
+        _, (channel, mid) = self.parse(link)
+        client = next(iter(self._alive().values()), None)
+        if client is None:
+            raise ValueError("Нет подключённых аккаунтов")
+        message = await client.get_messages(channel, ids=mid)
+        media = getattr(message, "media", None)
+        if not isinstance(media, types.MessageMediaPoll):
+            raise ValueError("В этом посте нет опроса")
+        if media.poll.closed:
+            raise ValueError("Опрос уже закрыт")
+        return {"question": media.poll.question.text,
+                "options": [{"id": option.option.hex(), "text": option.text.text}
+                            for option in media.poll.answers]}
+
+    async def make_plan(self, link, count, dmin, dmax, extra=None):
+        extra = extra or {}
+        votes = extra.get("votes")
+        if not isinstance(votes, dict):
+            raise ValueError("Узнайте варианты опроса и задайте количество голосов")
+        poll = await self.options(link)
+        labels = {option["id"]: option["text"] for option in poll["options"]}
+        if any(option not in labels or type(number) is not int or number < 0 for option, number in votes.items()):
+            raise ValueError("Укажите целое неотрицательное число голосов для каждого варианта")
+        count = sum(votes.values())
+        if count < 1:
+            raise ValueError("Задайте хотя бы один голос")
+        public = await super().make_plan(link, count, dmin, dmax, extra.copy())
+        plan = self.plans[public["id"]]
+        size = len(plan["items"])
+        raw = {option: number * size for option, number in votes.items()}
+        allocation = {option: value // count for option, value in raw.items()}
+        left = size - sum(allocation.values())
+        for option in sorted(votes, key=lambda key: -(raw[key] % count))[:left]:
+            allocation[option] += 1
+        selected = [option for option, number in allocation.items() for _ in range(number)]
+        random.shuffle(selected)
+        plan["extra"]["votes_by_account"] = dict(zip((item["account"] for item in plan["items"]), selected))
+        plan["poll_labels"] = labels
+        return self._public_plan(plan)
+
+    @staticmethod
+    def _public_plan(plan):
+        result = PostBase._public_plan(plan)
+        votes = plan.get("extra", {}).get("votes_by_account", {})
+        labels = plan.get("poll_labels", {})
+        for item in result["items"]:
+            item["option"] = labels.get(votes.get(item["account"]), "")
+        return result
+
+    def _action_extra(self, job, item):
+        extra = super()._action_extra(job, item)
+        return {**extra, "option": extra["votes_by_account"][item["account"]]}
+
+    @staticmethod
+    async def _join(client, kind, key, extra=None):
+        from telethon.tl.functions.messages import SendVoteRequest
+        channel, mid = key
+        try:
+            source = await client.get_input_entity(channel)
+            if await plan_options.wait_before_action(extra):
+                return "skip", "остановлено"
+            await client(SendVoteRequest(source, mid, [bytes.fromhex(extra["option"])]))
+            return "ok", "голос отправлен"
+        except Exception as exc:
+            return explain(exc)
+
+
 def register_all(app, get_clients):
     channels.register(app, get_clients, prefix="reactions", joiner_cls=ReactionJoiner)
     channels.register(app, get_clients, prefix="views", joiner_cls=ViewsJoiner)
     channels.register(app, get_clients, prefix="reposts", joiner_cls=RepostJoiner)
+    poll = channels.register(app, get_clients, prefix="polls", joiner_cls=PollJoiner)
+
+    async def options(request):
+        from aiohttp import web
+        data = await request.json()
+        try:
+            return web.json_response(await poll.options(data.get("link")))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    app.router.add_post("/api/polls/options", options)

@@ -15,6 +15,18 @@ class Request:
 
 
 class SessionAdminTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reset_keeps_current_and_verifies_remaining_authorizations(self):
+        from telethon import functions
+        current, other = NS(current=True), NS(current=False)
+        client = AsyncMock(side_effect=[NS(authorizations=[current, other]), True, NS(authorizations=[current])])
+        client.is_connected = lambda: True
+        client.session = self.source.client.session
+        self.source.client = client
+        response = await self.manager.reset_other_sessions(Request({'name': 'imported'}))
+        self.assertEqual(response.status, 200)
+        self.assertTrue(isinstance(client.await_args_list[1].args[0], functions.auth.ResetAuthorizationsRequest))
+        self.assertEqual(self.security.state['accounts']['imported']['session_count'], 1)
+
     async def asyncSetUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         for folder in ['Account','Session','temp']:(self.root/folder).mkdir()

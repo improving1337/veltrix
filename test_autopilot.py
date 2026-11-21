@@ -15,6 +15,20 @@ from automatic_multi import Hub, _JsonRequest, channel_key
 
 
 class AutopilotTests(unittest.IsolatedAsyncioTestCase):
+    async def test_panel_spreads_are_frozen_for_each_post(self):
+        mon = self.monitor
+        settings = {'view_spread': 25, 'reaction_spread': 30}
+        mon.preferences = lambda: settings
+        mon.state.update(max_views=40, max_reactions=20)
+        with patch('automatic.random.randint', side_effect=lambda lo, hi: lo):
+            old = mon.add_post(self.message(1, 'Test'), self.now.isoformat())
+            settings.update(view_spread=0, reaction_spread=0)
+            self.assertEqual(mon.view_target(old), 30)
+            self.assertEqual(old['reaction_budget'], 14)
+            new = mon.add_post(self.message(2, 'Test'), self.now.isoformat())
+            self.assertEqual(mon.view_target(new), 40)
+            self.assertEqual(new['reaction_budget'], 20)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)

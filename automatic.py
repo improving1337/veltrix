@@ -198,8 +198,8 @@ def reaction_allocation(total, proportions, heart_dominant=False):
     return {'❤️': minimum, **dict(zip(others, apportion(total - minimum, others.values())))}
 
 
-def random_reaction_target(limit):
-    return random.randint(max(1, limit * 4 // 5), limit) if limit > 0 else 0
+def random_reaction_target(limit, spread=20):
+    return random.randint(max(1, limit * (100-spread) // 100), limit) if limit > 0 else 0
 
 
 def validated_reaction_plan(data, configured_max, allowed=None):
@@ -427,13 +427,14 @@ def post_age_seconds(post, now=None):
 class Monitor:
     """Independent 24-hour windows for monitoring and optional execution."""
 
-    def __init__(self, storage, clients, account_ids=None, env_directory=None):
+    def __init__(self, storage, clients, account_ids=None, env_directory=None, preferences=None):
         self.storage = Path(storage)
         # Channel state may be saved one directory below the application root.
         # The DeepSeek credential is shared by all channels; it is never
         # stored alongside an individual channel JSON.
         self.env_directory = Path(env_directory) if env_directory is not None else self.storage.parent
         self.clients = clients
+        self.preferences = preferences or (lambda: {})
         # Optional Telegram user IDs from the application's authenticated accounts.
         # Different session filenames may represent the same real Telegram account.
         self.account_ids = account_ids or (lambda: {})
@@ -588,7 +589,9 @@ class Monitor:
         return len(self.live_accounts())
 
     def capture_settings(self):
-        return deepcopy({key: self.state[key] for key in POST_SETTINGS})
+        cfg = self.preferences()
+        return deepcopy({key: self.state[key] for key in POST_SETTINGS}) | {
+            'view_spread': cfg.get('view_spread', 10), 'reaction_spread': cfg.get('reaction_spread', 20)}
 
     def post_settings(self, post):
         return post.get('settings', self.state)
@@ -646,9 +649,10 @@ class Monitor:
             return 0
         budget = post.get('view_budget')
         if not isinstance(budget, dict) or budget.get('base') != base:
-            high = base * 11 // 10
+            spread = settings.get('view_spread', 10)
+            high = base * (100+spread) // 100
             limit = available if 'settings' not in post else high
-            low = min(limit, (base * 9 + 9) // 10)
+            low = min(limit, (base * (100-spread) + 99) // 100)
             high = min(limit, high)
             budget = {'base': base, 'target': random.randint(low, max(low, high))}
             post['view_budget'] = budget
@@ -781,7 +785,7 @@ class Monitor:
             'reaction_breakdown': [], 'first_seen': now, 'last_checked': None,
             'execution': {},
             'settings': settings,
-            'reaction_budget': random_reaction_target(int(settings['max_reactions'])),
+            'reaction_budget': random_reaction_target(int(settings['max_reactions']), settings['reaction_spread']),
             'suggestion': (None if (getattr(message, 'message', '') or '') else
                            {'status': 'unavailable', 'message': 'Для анализа DeepSeek нужен текст новости'}),
             'samples': [], 'missing': False,

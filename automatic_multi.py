@@ -32,11 +32,12 @@ def channel_key(link):
 
 
 class Hub:
-    def __init__(self, directory, clients, account_ids=None):
+    def __init__(self, directory, clients, account_ids=None, preferences=None):
         self.directory = Path(directory)
         self.registry_path = self.directory / 'automatic_channels.json'
         self.clients = clients
         self.account_ids = account_ids
+        self.preferences = preferences
         self.monitors = {}
         # Shared cross-channel limits, so adding channels does not multiply the
         # number of simultaneous Telegram actions / DeepSeek HTTP requests.
@@ -89,7 +90,7 @@ class Hub:
         ident = channel_key(link)
         if ident not in self.monitors:
             mon = Monitor(self.storage_for(link), self.clients, self.account_ids,
-                          env_directory=self.directory)
+                          env_directory=self.directory, preferences=self.preferences)
             mon.action_semaphore = self.action_semaphore
             mon.analysis_semaphore = self.analysis_semaphore
             mon.membership_requests = self.membership_requests
@@ -225,8 +226,8 @@ class Hub:
         self.save()
 
 
-def register(app, clients, directory, account_ids=None):
-    hub = Hub(directory, clients, account_ids)
+def register(app, clients, directory, account_ids=None, preferences=None):
+    hub = Hub(directory, clients, account_ids, preferences)
     app['automatic_hub'] = hub
     app.on_startup.append(hub.startup)
     app.on_cleanup.append(hub.shutdown)
