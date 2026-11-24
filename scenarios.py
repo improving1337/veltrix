@@ -195,6 +195,45 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
+def action_key(step):
+    return digest([step["account"], step["action"], step["target"], step["args"].get("text")])
+
+
+def simulate(plan, journal, now):
+    """Project one possible timeline using local history and the configured delays."""
+    start = plan["start"] or now
+    clock = start
+    known = set()
+    steps = []
+    for step in plan["steps"]:
+        action = step["action"]
+        ready = clock
+        status = "planned"
+        if action == "wait":
+            clock += random.uniform(*step["delay"])
+        else:
+            clock = plan_options.after_quiet(clock, plan["quiet"])
+            key = action_key(step)
+            if step["unique"]:
+                if action in ("sub", "unsub"):
+                    status = "membership"
+                elif key in journal:
+                    status = "recorded"
+                elif key in known:
+                    status = "depends"
+            known.add(key)
+        begins = ready if action == "wait" else clock
+        if action == "online":
+            until = clock + step["args"]["seconds"]
+            if plan["quiet"]:
+                day = plan_options.DAY
+                local = (clock + plan_options.MOSCOW_OFFSET) % day
+                until = min(until, clock + (plan["quiet"][0] - local) % day)
+            clock = until
+        steps.append({"ready": ready, "begins": begins, "ends": clock, "status": status})
+    return {"start": start, "finish": clock, "steps": steps}
+
+
 class Scenarios:
     def __init__(self, directory, accounts):
         self.path = Path(directory) / "security" / "scenarios.json"
@@ -299,8 +338,7 @@ class Scenarios:
                     self.save()
                     continue
                 entry = self.connected().get(step["account"])
-                key = digest([step["account"], step["action"], step["target"],
-                              step["args"].get("text")])
+                key = action_key(step)
                 if entry is None:
                     status, note = "err", "Аккаунт сейчас недоступен"
                 elif step["unique"] and step["action"] not in ("sub", "unsub") and key in self.state["journal"]:
@@ -413,7 +451,9 @@ class Scenarios:
                 plan = self.plan(data)
                 token = digest(plan)
                 if command == "preview":
-                    return web.json_response(plan | {"token": token}, headers={"Cache-Control": "no-store"})
+                    simulation = simulate(plan, self.state["journal"], time.time())
+                    return web.json_response(plan | {"token": token, "simulation": simulation},
+                                             headers={"Cache-Control": "no-store"})
                 if token != data.get("token"):
                     raise ValueError("Сценарий или список аккаунтов изменился. Построй предпросмотр заново.")
                 if (run and run["status"] in STATUSES) or (self.task and not self.task.done()):

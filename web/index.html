@@ -597,6 +597,16 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
  .scenario-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
  .scenario-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
  .scenario-actions{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}
+ .scenario-heading-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-left:auto}
+ .scenario-plan{margin-bottom:16px;scroll-margin-top:12px}
+ .scenario-timeline{overflow:auto;max-height:52vh}
+ .scenario-timeline table{width:100%;border-collapse:collapse;text-align:left;font-size:13px}
+ .scenario-timeline th,.scenario-timeline td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+ .scenario-timeline th{position:sticky;top:0;background:#171820}
+ .scenario-timeline td:nth-child(2){min-width:122px}.scenario-timeline td:last-child{min-width:185px;white-space:pre-wrap}
+ .scenario-wiki{width:min(660px,calc(100% - 28px));max-height:85dvh;color:#f4f4f7;overflow:auto}
+ .scenario-wiki::backdrop{background:#000a}.scenario-wiki dt{margin-top:12px}.scenario-wiki dd{margin:4px 0 0}
+ .scenario-wiki code,.scenario-wiki pre{overflow-wrap:anywhere;white-space:pre-wrap}
  .scenario-layout details{margin:12px 0}.scenario-layout summary{cursor:pointer}
  .scenario-layout textarea,.scenario-layout pre{font-family:ui-monospace,monospace;line-height:1.55}
  .scenario-layout pre{white-space:pre-wrap;overflow-wrap:anywhere}
@@ -1109,7 +1119,43 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
  </section>
  <section id="v-scenarios" class="view">
   <div class="accwrap">
-   <div class="sectionhead"><h2>Сценарии</h2></div>
+   <div class="sectionhead"><h2>Сценарии</h2><div class="scenario-heading-actions">
+    <button type="button" id="scenario-preview" class="ui-btn">Предпросмотр</button>
+    <button type="button" id="scenario-wiki-open" class="ui-btn">Вики</button>
+   </div></div>
+   <div id="scenario-error" class="status err" role="alert"></div>
+   <section id="scenario-plan" class="profile-card scenario-plan" hidden>
+    <h3>Имитация запуска</h3>
+    <p id="scenario-plan-summary" class="status"></p>
+    <p class="status">Время примерное и указано по МСК. Задержки Telegram и результаты запросов проверяются при запуске.</p>
+    <div class="scenario-timeline"><table>
+     <thead><tr><th scope="col">Шаг</th><th scope="col">Время</th><th scope="col">Аккаунт</th><th scope="col">Действие</th></tr></thead>
+     <tbody id="scenario-plan-text"></tbody>
+    </table></div>
+    <div class="scenario-actions"><button id="scenario-run" class="btn" disabled>Подтвердить запуск</button></div>
+   </section>
+   <dialog id="scenario-wiki" class="profile-card scenario-wiki" aria-labelledby="scenario-wiki-title">
+    <div class="profile-card-title"><h3 id="scenario-wiki-title">Вики сценариев</h3><form method="dialog"><button class="ui-btn">Закрыть</button></form></div>
+    <h4>Пример</h4>
+    <pre>accounts = all - [6632326105]
+
+for acc in accounts:
+    views(acc, "https://t.me/test/1", unique=True)
+    sub(acc, "@test", unique=True)
+    wait(10, 15)</pre>
+    <p>Внутри цикла шаги выполняются по порядку для каждого аккаунта. Ссылки и текст указывай в кавычках.</p>
+    <dl>
+     <dt><code>all</code>, <code>[123, 456]</code>, <code>group("Основные")</code></dt><dd>Выбор подключённых аккаунтов, списка Telegram ID или сохранённой группы. Можно указать один ID через <code>account=123</code>.</dd>
+     <dt><code>param("post")</code></dt><dd>Значение из JSON-параметров, например <code>{"post": "https://t.me/test/1"}</code>.</dd>
+     <dt><code>unique=True</code></dt><dd>Для подписок проверяет текущий статус в Telegram. Для других действий использует историю успешных шагов сценариев.</dd>
+     <dt><code>views(acc, post)</code>, <code>repost(acc, post)</code>, <code>button(acc, post)</code></dt><dd>Просмотр, пересылка в «Избранное» и нажатие первой кнопки под постом.</dd>
+     <dt><code>react(acc, post, "❤️")</code>, <code>poll(acc, post, 1)</code></dt><dd>Реакция и голосование. Нумерация вариантов начинается с 1.</dd>
+     <dt><code>sub(acc, channel)</code>, <code>unsub(acc, channel)</code>, <code>start(acc, bot)</code></dt><dd>Подписка, отписка и запуск бота. Можно передать ссылку на бота с параметром <code>start</code>.</dd>
+     <dt><code>send(acc, "@username", "Текст")</code></dt><dd>Сообщение получателю. Вместо <code>@username</code> можно указать <code>me</code> для «Избранного».</dd>
+     <dt><code>online(acc, 60)</code>, <code>wait(10)</code>, <code>wait(10, 15)</code></dt><dd>Онлайн на заданное время, фиксированная пауза и случайная пауза из диапазона. Все значения в секундах.</dd>
+    </dl>
+    <p>«Предпросмотр» строит имитацию без запросов в Telegram. «Подтвердить запуск» запускает сценарий.</p>
+   </dialog>
    <div class="scenario-layout">
     <section class="profile-card">
      <label class="fld"><span>Код</span><textarea id="scenario-code" rows="11" spellcheck="false">for acc in all:
@@ -1132,29 +1178,12 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
       <input id="scenario-template-name" aria-label="Имя шаблона" placeholder="Имя шаблона">
       <div class="scenario-actions"><button id="scenario-template-save" class="btn">Сохранить шаблон</button><button id="scenario-template-delete" class="btn">Удалить шаблон</button></div>
      </details>
-     <details><summary>Команды</summary><pre>accounts = all - [6632326105]
-group("Основные")
-param("post")
-views(acc, post, unique=True)
-sub(acc, channel, unique=True)
-unsub(acc, channel, unique=True)
-react(acc, post, "❤️")
-poll(acc, post, 1)
-repost(acc, post)
-start(acc, bot)
-button(acc, post)
-online(acc, 60)
-send(acc, "@username", "Текст")
-wait(10, 15)</pre></details>
-     <div class="scenario-actions"><button id="scenario-preview" class="btn">Предпросмотр</button><button id="scenario-run" class="btn" disabled>Подтвердить запуск</button></div>
-     <div id="scenario-error" class="status err" role="alert"></div>
     </section>
     <section class="profile-card">
      <h3>Журнал</h3>
      <div id="scenario-status" class="status"></div>
      <div class="scenario-actions" id="scenario-controls" hidden><button data-command="pause" class="btn">Пауза</button><button data-command="resume" class="btn">Продолжить</button><button data-command="skip" class="btn">Пропустить шаг</button><button data-command="stop" class="btn">Остановить</button></div>
      <pre id="scenario-log" class="scenario-output"></pre>
-     <section id="scenario-plan" hidden><h3>План</h3><pre id="scenario-plan-text" class="scenario-output"></pre></section>
     </section>
    </div>
   </div>
@@ -1662,6 +1691,38 @@ async function scenarioRefresh(){
   }catch(error){$('#scenario-error').textContent=error.message;}
   finally{SC.refreshing=false;}
 }
+const scenarioDate=new Intl.DateTimeFormat('ru-RU',{
+  timeZone:'Europe/Moscow',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'
+});
+function scenarioShowPlan(result){
+  const simulation=result.simulation;
+  const date=value=>scenarioDate.format(new Date(value*1000));
+  const labels={views:'Просмотр',sub:'Подписка',unsub:'Отписка',react:'Реакция',poll:'Голосование',repost:'Репост в «Избранное»',
+    start:'Запуск бота',button:'Первая кнопка под постом',online:'Выход в онлайн',send:'Сообщение',wait:'Пауза'};
+  const statuses={recorded:'Будет пропущено по истории',membership:'Подписка будет проверена при запуске',
+    depends:'Пропуск, если предыдущий такой шаг выполнится'};
+  const accounts=new Set(result.steps.filter(step=>step.account!==undefined).map(step=>step.account));
+  $('#scenario-plan-summary').textContent='Шагов: '+result.steps.length+' · Аккаунтов: '+accounts.size+
+    ' · '+date(simulation.start)+' → '+date(simulation.finish);
+  const body=$('#scenario-plan-text'),rows=document.createDocumentFragment();
+  result.steps.forEach((step,index)=>{
+    const projected=simulation.steps[index];
+    const {emoji,option,text,seconds}=step.args||{};
+    const detail=step.action==='wait'?step.delay.join('–')+' сек':emoji??option??text??(seconds===undefined?'':seconds+' сек');
+    const timing=projected.ends>projected.begins?date(projected.begins)+' → '+date(projected.ends):date(projected.begins);
+    const quiet=projected.begins>projected.ready?'Отложено из-за времени пропуска':'';
+    const row=el('tr');
+    for(const value of [String(index+1),timing,[step.label,step.account].filter(Boolean).join(' · ')||'—',
+      [labels[step.action],step.target,detail,quiet,statuses[projected.status]].filter(Boolean).join('\n')]){
+      row.append(el('td','',String(value)));
+    }
+    rows.append(row);
+  });
+  body.replaceChildren(rows);
+  const plan=$('#scenario-plan');
+  plan.hidden=false;
+  plan.scrollIntoView({block:'nearest'});
+}
 async function scenarioCommand(command, getPayload=()=>({})){
   if(SC.busy)return;
   SC.busy=true;
@@ -1674,15 +1735,7 @@ async function scenarioCommand(command, getPayload=()=>({})){
     if(command==='preview'){
       if(JSON.stringify(payload)!==JSON.stringify(scenarioPayload()))return;
       SC.token=result.token;
-      const label=result.steps.length+' шагов'+(result.start?' · запуск '+scenarioClock.format(result.start*1000)+' МСК':'');
-      const delays=result.steps.map(step=>step.delay||[step.args?.seconds||0,step.args?.seconds||0]);
-      const minimum=delays.reduce((sum,delay)=>sum+delay[0],0),maximum=delays.reduce((sum,delay)=>sum+delay[1],0);
-      const timing=maximum?'Паузы и онлайн '+(minimum===maximum?maximum:minimum+'–'+maximum)+' сек без учёта запросов':'';
-      $('#scenario-plan-text').textContent=[[label,timing].filter(Boolean).join(' · '),...result.steps.map((step,index)=>
-        (index+1)+'. '+(step.action==='wait'?'Пауза '+step.delay.join('–')+' сек':
-        [step.label,step.action,step.target,step.args.text||step.args.option||step.args.emoji||step.args.seconds,
-          step.unique?'unique':''].filter(Boolean).join(' · ')))].join('\n');
-      $('#scenario-plan').hidden=false;
+      scenarioShowPlan(result);
     }else{
       if(['start','group','template'].includes(command))scenarioInvalidate();
       scenarioRender(result);
@@ -1695,6 +1748,7 @@ async function scenarioCommand(command, getPayload=()=>({})){
 }
 $('#t-scenarios').onclick=()=>{showTab('scenarios');scenarioRefresh()};
 for(const id of ['code','params','start','from','to','stop-error'])$('#scenario-'+id).oninput=scenarioInvalidate;
+$('#scenario-wiki-open').onclick=()=>$('#scenario-wiki').showModal();
 $('#scenario-preview').onclick=()=>{scenarioInvalidate();scenarioCommand('preview',scenarioPayload)};
 $('#scenario-run').onclick=()=>scenarioCommand('start',()=>({...scenarioPayload(),token:SC.token}));
 $('#scenario-controls').onclick=event=>{

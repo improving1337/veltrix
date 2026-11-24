@@ -1,6 +1,7 @@
 import base64
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -59,6 +60,10 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.get(path)).status, 401)
                 preview = await (await client.post(path + "/preview", headers=auth, json=body)).json()
                 self.assertEqual(action.await_count, 0)
+                self.assertIsNone(self.service.state["run"])
+                self.assertFalse(self.service.path.exists())
+                self.assertEqual([step["status"] for step in preview["simulation"]["steps"]],
+                                 ["planned", "depends"])
                 response = await client.post(path + "/start", headers=auth, json=body | {"token": "bad"})
                 self.assertEqual(response.status, 400)
                 response = await client.post(path + "/start", headers=auth, json=body | {"token": preview["token"]})
@@ -69,6 +74,22 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored.snapshot()["run"]["status"], "finished")
         self.assertEqual([x["status"] for x in restored.snapshot()["run"]["log"]], ["ok", "skip"])
         self.assertEqual(len(restored.state["journal"]), 1)
+
+    async def test_simulation_observes_midnight_pause_and_local_history(self):
+        now = datetime(2026, 11, 24, 20, 59, 45, tzinfo=timezone.utc).timestamp()
+        plan = self.service.plan({
+            "code": 'wait(25, 30)\nviews(all, "t.me/channel/1", unique=True)\nsub(all, "@channel", unique=True)',
+            "quiet_hours": {"from": "00:00", "to": "07:00"},
+        })
+        journal = {scenarios.action_key(plan["steps"][1]): True}
+        with patch("scenarios.random.uniform", side_effect=[25, 360]):
+            simulation = scenarios.simulate(plan, journal, now)
+        wait, view, subscription = simulation["steps"]
+        self.assertEqual(wait["ends"], now + 25)
+        self.assertEqual(view["begins"], datetime(2026, 11, 25, 4, 6, tzinfo=timezone.utc).timestamp())
+        self.assertEqual(view["status"], "recorded")
+        self.assertEqual(subscription["status"], "membership")
+        self.assertEqual(subscription["begins"], view["begins"])
 
     async def test_in_flight_restart_waits_for_operator(self):
         plan = self.service.plan({"code": 'send(all, "me", "hello")'})
