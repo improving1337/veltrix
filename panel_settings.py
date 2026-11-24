@@ -5,7 +5,7 @@ from aiohttp import web
 
 from template_library import atomic_json_save, json_load
 
-TABS = {'accounts', 'examples', 'upload', 'twofa', 'messages', 'orders', 'miniapp', 'cs3bet', 'automatic'}
+TABS = {'accounts', 'examples', 'upload', 'twofa', 'messages', 'orders', 'miniapp', 'cs3bet', 'automatic', 'vpn'}
 DEFAULTS = {'hidden_tabs': [], 'view_spread': 10, 'reaction_spread': 20, 'search_workers': 5,
             'profile_group': 'https://t.me/minecraft_beseda764'}
 

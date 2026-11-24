@@ -579,6 +579,21 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 .order-graph-scroll{overflow:auto;margin:10px 14px}.order-graph-scroll svg{display:block;min-width:100%;height:220px}
 .order-graph-tools{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:0 14px}
 .order-graph-tools input{width:min(120px,35vw);padding:0}
+
+.vpn-root{width:min(100% - 28px,960px);margin:0 auto;padding:28px 0 60px}
+.vpn-center{min-height:55dvh;display:grid;align-content:center;justify-items:center;text-align:center;gap:16px}
+.vpn-center h2,.vpn-settings h2{margin:0}.vpn-result{width:min(100%,560px);display:grid;gap:12px}
+.vpn-actions{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px}
+.vpn-settings{display:grid;gap:20px}.vpn-settings .fld{min-width:0}
+.vpn-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.vpn-row{display:grid;grid-template-columns:minmax(0,1fr) 100px 135px auto;align-items:end;gap:8px}
+.vpn-row .fld{margin:0!important}.vpn-row .ui-actions{padding-bottom:4px}
+.vpn-table-wrap{overflow:auto}.vpn-table{width:100%;min-width:460px;border-collapse:collapse}
+.vpn-table th,.vpn-table td{text-align:left;padding:10px;border-bottom:1px solid #30303a}
+.vpn-table th .ui-btn{justify-content:flex-start}
+.vpn-active{color:#63d6a3}.vpn-ending{color:#ebbd65}.vpn-expired{color:#f5828f}.vpn-pending{color:#9c9aad}
+.vpn-remaining{font-variant-numeric:tabular-nums;white-space:nowrap}
+@media(max-width:600px){.vpn-row,.vpn-fields{grid-template-columns:minmax(0,1fr)}}
 </style>
 <style id="veltrix-theme">
 /* VELTRIX UI — graphite dashboard treatment adapted from the supplied Ember
@@ -997,6 +1012,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
 <button type="button" id="t-miniapp" class="v-nav-item" title="Mini App"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="v-nav-label">Mini App</span></button>
 <button type="button" id="t-cs3bet" class="v-nav-item" title="CS3BET"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4m-2-2v4"/><circle cx="15.5" cy="11.5" r=".6"/><circle cx="18.5" cy="13.5" r=".6"/><path d="M5.1 6h13.8A4 4 0 0 1 23 10l-1.1 7a2.4 2.4 0 0 1-4.2 1.1l-2.2-2.7h-7L6.3 18A2.4 2.4 0 0 1 2 17l-1-7a4 4 0 0 1 4.1-4Z"/></svg><span class="v-nav-label">CS3BET</span></button>
 <button type="button" id="t-automatic" class="v-nav-item" title="Autopilot"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(35 12 12)"/><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(-35 12 12)"/><circle cx="12" cy="12" r="2"/></svg><span class="v-nav-label">Autopilot</span></button>
+<button type="button" id="t-vpn" class="v-nav-item" title="VPN"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3 5 6v6c0 4 3 7 7 9 4-2 7-5 7-9V6z"/><path d="m9 12 2 2 4-4"/></svg><span class="v-nav-label">VPN</span></button>
 <button type="button" id="t-settings" class="v-nav-item" title="Настройки"><span aria-hidden="true">⚙</span><span class="v-nav-label">Настройки</span></button>
 </div></div>
   <div class="v-side-bottom"><span class="v-connection"><i id="live" class="live" aria-label="Состояние соединения"></i><span>Server status</span></span><span class="v-version">Veltrix · Console</span></div>
@@ -1082,6 +1098,9 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
    </div><div id="acc-load-errors" class="acc-load-errors" hidden></div><p class="acc-table-note">Цвет числа: зелёный — своя сессия, жёлтый — внешняя, красный — нет подключения. Число — результат последней проверки; обновить можно в профиле.</p></div>
   <aside id="detail"></aside>
  </section>
+ <section id="v-vpn" class="view">
+  <div id="vpn-root" class="vpn-root"></div>
+</section>
  <section id="v-settings" class="view"><div class="accwrap"><div class="sectionhead"><h2>Настройки</h2></div><section id="panel-settings-form" class="profile-card"></section></div></section>
  <section id="v-examples" class="view">
   <div class="accwrap">
@@ -1217,7 +1236,7 @@ function avatar(src,label,size=44){
 const avUrl=a=>`/api/accounts/${enc(a.name)}/avatar?v=${a.avatar_ver}`;
 const chatAv=(acc,id)=>`/api/accounts/${enc(acc)}/chats/${id}/avatar`;
 
-const VELTRIX_NAMES={accounts:'Profiles',examples:'Identity',upload:'Deploy',twofa:'2FA',messages:'Inbox',orders:'Toolkit',miniapp:'Mini App',cs3bet:'CS3BET',automatic:'Autopilot',settings:'Настройки'};
+const VELTRIX_NAMES={accounts:'Profiles',examples:'Identity',upload:'Deploy',twofa:'2FA',messages:'Inbox',orders:'Toolkit',miniapp:'Mini App',cs3bet:'CS3BET',automatic:'Autopilot',vpn:'VPN',settings:'Настройки'};
 function veltrixCloseMobile(){document.body.classList.remove('v-menu-open');$('#veltrix-mobile-backdrop').hidden=true}
 function showTab(t){
   // A category always reopens at its home screen, never at a nested service.
@@ -1236,7 +1255,7 @@ function showTab(t){
   $('#veltrix-breadcrumb').textContent=VELTRIX_NAMES[t]||'VELTRIX';
   document.title=(VELTRIX_NAMES[t]||'Control')+' — VELTRIX';
   veltrixCloseMobile();
-  for(const n of["accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic","settings"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
+  for(const n of["accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic","vpn","settings"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
 }
 let PANEL_SETTINGS={hidden_tabs:[],view_spread:10,reaction_spread:20,search_workers:5,profile_group:'https://t.me/minecraft_beseda764'};
 function applyPanelSettings(){
@@ -1275,6 +1294,194 @@ function renderPanelSettings(){
     }catch(e){status.className='status err';status.textContent=e.message;}
   };
 }
+const VPN={result:null,busy:false,error:'',sort:'username',direction:1};
+function vpnDays(seconds){
+  const minutes=Math.ceil(Math.max(0,seconds)/60);
+  return `${Math.floor(minutes/1440)} дн. ${Math.floor(minutes/60)%24} ч. ${minutes%60} мин.`;
+}
+function vpnEditDate(record, refresh){
+  const dialog=el('dialog','profile-copy-dialog'),box=el('div','profile-copy-review'),header=el('header'),body=el('main'),footer=el('footer');
+  header.append(el('h2','','Дата получения подписки'));
+  const input=el('input');input.type='datetime-local';
+  input.value=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit',
+    hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date(record.issued_at*1000)).replace(' ','T');
+  input.step='1';
+  const status=el('div','status');
+  body.append(fld('Дата и время по МСК',input),status);
+  const save=el('button','ui-btn ui-primary','Сохранить'),close=el('button','ui-btn','Отмена');
+  close.onclick=()=>dialog.close();
+  save.onclick=async()=>{
+    save.disabled=true;
+    try{
+      const timestamp=Date.parse(input.value+'+03:00')/1000;
+      if(!Number.isFinite(timestamp))throw new Error('Укажите дату и время по МСК');
+      const state=await api('/api/vpn/records/'+enc(record.id),{method:'PATCH',json:{issued_at:timestamp}});
+      dialog.close();refresh(state.records);
+    }catch(e){status.className='status err';status.textContent=e.message}
+    finally{save.disabled=false}
+  };
+  footer.append(save,close);box.append(header,body,footer);dialog.append(box);document.body.append(dialog);
+  dialog.addEventListener('close',()=>dialog.remove(),{once:true});dialog.showModal();
+}
+function vpnTable(root, records){
+  const labels={active:'Активна',ending:'Активна',expired:'Закончилась',pending:'Ожидает ссылку'};
+  const order={active:0,ending:1,expired:2,pending:3};
+  let checked=performance.now();
+  function replace(next){records=next;checked=performance.now();draw()}
+  function draw(){
+    const elapsed=Math.max(0,(performance.now()-checked)/1000);
+    const table=el('table','vpn-table'),head=el('thead'),line=el('tr');
+    line.append(el('th','',''));
+    for(const [key,label] of [['username','Username аккаунта'],['status','Статус'],['remaining','Сколько осталось']]){
+      const cell=el('th'),sort=el('button','ui-btn',label+(VPN.sort===key?(VPN.direction===1?' ↑':' ↓'):''));
+      if(VPN.sort===key)cell.setAttribute('aria-sort',VPN.direction===1?'ascending':'descending');
+      sort.onclick=()=>{VPN.direction=VPN.sort===key?-VPN.direction:1;VPN.sort=key;draw()};
+      cell.append(sort);line.append(cell);
+    }
+    line.append(el('th','',''));head.append(line);table.append(head);
+    const body=el('tbody');
+    const sorted=records.map(record=>{
+      if(record.remaining===null)return record;
+      const remaining=Math.max(0,record.remaining-elapsed);
+      return {...record,remaining,status:remaining===0?'expired':remaining<432000?'ending':'active'};
+    }).sort((a,b)=>{
+      let compare;
+      if(VPN.sort==='status')compare=order[a.status]-order[b.status];
+      else if(VPN.sort==='remaining')compare=(a.remaining??-1)-(b.remaining??-1);
+      else compare=(a.username||a.name).localeCompare(b.username||b.name,undefined,{sensitivity:'base'});
+      return VPN.direction*compare;
+    });
+    for(const record of sorted){
+      const row=el('tr'),remove=el('button','ui-btn','✕'),actions=el('td'),cell=el('td'),identity=record.username?'@'+record.username:record.name;
+      remove.setAttribute('aria-label','Исключить '+identity);
+      remove.onclick=async()=>{
+        if(!confirm('Исключить '+identity+' из списка подписок?'))return;
+        remove.disabled=true;
+        try{replace((await api('/api/vpn/records/'+enc(record.id),{method:'DELETE'})).records)}
+        catch(e){errToast(e.message);remove.disabled=false}
+      };
+      cell.append(remove);
+      if(record.issued_at!==null){
+        const edit=el('button','ui-btn','Изменить дату');edit.onclick=()=>vpnEditDate(record,replace);actions.append(edit);
+      }
+      row.append(cell,el('td','',identity),el('td','vpn-'+record.status,labels[record.status]),
+        el('td','vpn-remaining',record.remaining===null?'—':vpnDays(record.remaining)),actions);
+      body.append(row);
+    }
+    if(!sorted.length){
+      const row=el('tr'),empty=el('td','','Подписок пока нет');empty.colSpan=5;row.append(empty);body.append(row);
+    }
+    table.append(body);root.replaceChildren(table);
+  }
+  draw();
+  const timer=setInterval(()=>{if(!root.isConnected)clearInterval(timer);else draw()},60000);
+  return replace;
+}
+function vpnSettings(root,state){
+  const section=el('section','profile-card vpn-settings'),head=el('div','profile-card-title'),back=el('button','ui-btn','← Назад');
+  head.append(el('h2','','Настройки VPN'),back);back.onclick=vpnRender;
+  const settings=state.settings;
+  const channel=inp(settings.channel,'https://t.me/канал'),bot=inp(settings.bot,'@bot'),host=inp(settings.host,'zestful.bond');
+  const fields=el('div','vpn-fields'),stepList=el('div'),status=el('div','status');
+  const integer=(value,min,max)=>{
+    const field=el('input');field.type='number';field.min=min;field.max=max;field.step='1';field.value=value;return field;
+  };
+  const poll=integer(settings.poll_delay,1,30),attempts=integer(settings.attempts,1,10);
+  fields.append(fld('Канал для подписки',channel),fld('Бот',bot),fld('Домен ссылки',host),
+    fld('Пауза между проверками, сек.',poll),fld('Число проверок ссылки',attempts));
+  const steps=settings.steps.map(step=>({...step}));
+  function drawSteps(){
+    stepList.replaceChildren();
+    steps.forEach((step,index)=>{
+      const row=el('div','vpn-row'),text=inp(step.label,'Например, Ваша подписка');
+      const position=integer(step.position,0,100),delay=integer(step.delay,0,30);
+      text.oninput=()=>{step.label=text.value};
+      position.oninput=()=>{step.position=position.valueAsNumber};
+      delay.oninput=()=>{step.delay=delay.valueAsNumber};
+      const actions=el('div','ui-actions'),up=el('button','ui-btn','↑'),down=el('button','ui-btn','↓'),remove=el('button','ui-btn','✕');
+      up.disabled=index===0;down.disabled=index===steps.length-1;remove.disabled=steps.length===1;
+      up.setAttribute('aria-label','Поднять шаг '+(index+1));down.setAttribute('aria-label','Опустить шаг '+(index+1));
+      remove.setAttribute('aria-label','Удалить шаг '+(index+1));
+      up.onclick=()=>{[steps[index-1],steps[index]]=[steps[index],steps[index-1]];drawSteps()};
+      down.onclick=()=>{[steps[index+1],steps[index]]=[steps[index],steps[index+1]];drawSteps()};
+      remove.onclick=()=>{steps.splice(index,1);drawSteps()};
+      actions.append(up,down,remove);
+      row.append(fld('Шаг '+(index+1)+' · текст кнопки',text),fld('№ кнопки',position),fld('Задержка, сек.',delay),actions);
+      stepList.append(row);
+    });
+  }
+  drawSteps();
+  const commands=el('div','ui-actions'),add=el('button','ui-btn','Добавить шаг'),save=el('button','ui-btn ui-primary','Сохранить настройки');
+  add.onclick=()=>{if(steps.length<12){steps.push({label:'',position:0,delay:0});drawSteps()}};
+  save.onclick=async()=>{
+    save.disabled=true;
+    try{
+      await api('/api/vpn/settings',{method:'POST',json:{channel:channel.value,bot:bot.value,host:host.value,
+        poll_delay:poll.valueAsNumber,attempts:attempts.valueAsNumber,steps}});
+      status.className='status ok';status.textContent='Настройки сохранены';
+    }catch(e){status.className='status err';status.textContent=e.message}
+    finally{save.disabled=false}
+  };
+  commands.append(add,save);
+  const table=el('div','vpn-table-wrap');
+  section.append(head,fields,el('h3','','Кнопки бота по порядку'),
+    el('div','status','Номер 0 означает поиск по тексту. Пустое поле канала пропускает подписку.'),stepList,commands,status,
+    el('h3','','Подписки аккаунтов'),table);
+  vpnTable(table,state.records);root.replaceChildren(section);
+}
+function vpnRender(){
+  const root=$('#vpn-root');root.replaceChildren();
+  const body=el('section','vpn-center'),actions=el('div','vpn-actions'),status=el('div','status');
+  status.setAttribute('role','status');body.append(el('h2','','VPN'));root.append(body);
+  if(VPN.result){
+    const result=VPN.result,panel=el('div','profile-card vpn-result'),url=inp(result.url);
+    url.readOnly=true;url.setAttribute('aria-label','Ссылка на подписку VPN');
+    const copy=el('button','ui-btn ui-primary','Скопировать'),hide=el('button','ui-btn','Скрыть');
+    const mail=el('button','ui-btn','Получить на почту'),form=el('form','vpn-result'),recipient=inp('','name@example.com');
+    recipient.type='email';recipient.required=true;form.hidden=true;
+    const send=el('button','ui-btn ui-primary','Отправить');send.type='submit';
+    copy.onclick=async()=>{
+      try{await navigator.clipboard.writeText(result.url)}
+      catch{url.select();if(!document.execCommand('copy')){status.textContent='Выделил ссылку для копирования';return}}
+      status.className='status ok';status.textContent='Ссылка скопирована';
+    };
+    hide.onclick=()=>{VPN.result=null;vpnRender()};
+    mail.onclick=()=>{form.hidden=!form.hidden;if(!form.hidden)recipient.focus()};
+    form.onsubmit=async event=>{
+      event.preventDefault();send.disabled=true;
+      try{
+        await api('/api/vpn/email',{method:'POST',json:{recipient:recipient.value,receipt:result.receipt}});
+        status.className='status ok';status.textContent='Письмо отправлено';form.hidden=true;
+      }catch(e){status.className='status err';status.textContent=e.message}
+      finally{send.disabled=false}
+    };
+    form.append(fld('Куда отправить ссылку',recipient),send);
+    actions.append(copy,hide,mail);panel.append(url,actions,form,status);body.append(panel);
+    return;
+  }
+  const getLink=el('button','ui-btn ui-primary','Получить ссылку'),settingsButton=el('button','ui-btn','Настройки');
+  getLink.disabled=VPN.busy;
+  if(VPN.busy)status.textContent='Получаю ссылку у Telegram…';
+  else if(VPN.error){status.className='status err';status.textContent=VPN.error}
+  getLink.onclick=async()=>{
+    if(VPN.busy)return;
+    VPN.busy=true;VPN.error='';vpnRender();
+    try{VPN.result=await api('/api/vpn/issue',{method:'POST'})}
+    catch(e){VPN.error=e.message}
+    finally{VPN.busy=false;if(S.tab==='vpn')vpnRender()}
+  };
+  settingsButton.disabled=VPN.busy;
+  settingsButton.onclick=async()=>{
+    settingsButton.disabled=getLink.disabled=true;
+    try{
+      const state=await api('/api/vpn');
+      if(S.tab==='vpn')vpnSettings(root,state);
+    }catch(e){status.className='status err';status.textContent=e.message}
+    finally{settingsButton.disabled=getLink.disabled=false}
+  };
+  actions.append(getLink,settingsButton);body.append(actions,status);
+}
+$('#t-vpn').onclick=()=>{showTab('vpn');VPN.result=null;VPN.error='';vpnRender()};
 $('#t-settings').onclick=()=>{showTab('settings');renderPanelSettings()};
 api('/api/panel-settings').then(data=>{
   if(Array.isArray(data?.hidden_tabs)){PANEL_SETTINGS=data;applyPanelSettings()}

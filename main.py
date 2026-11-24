@@ -42,6 +42,7 @@ import session_admin
 import account_security
 import profile_copy
 import panel_settings
+import vpn
 
 # ============== НАСТРОЙКИ ==============
 BASE_DIR = Path(__file__).resolve().parent
@@ -2820,6 +2821,7 @@ async def main():
     preferences = panel_settings.PanelSettings(BASE_DIR)
     app.router.add_get('/api/panel-settings', preferences.read)
     app.router.add_post('/api/panel-settings', preferences.update)
+    vpn.VpnSubscriptions(BASE_DIR, lambda: ACCOUNTS).register(app)
 
     async def background(app):
         async def expire_logins():

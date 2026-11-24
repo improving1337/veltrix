@@ -1,0 +1,157 @@
+import tempfile
+import unittest
+from base64 import b64encode
+from pathlib import Path
+from types import SimpleNamespace as NS
+from unittest.mock import AsyncMock, patch
+
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+from telethon import functions, types
+
+import main
+import vpn
+
+URL = 'https://zestful.bond/sub/id?key=A%2Fb%3D&trial=1'
+
+
+class Telegram:
+    def __init__(self, ready_after=3):
+        self.commands = []
+        self.clicks = []
+        self.stage = 0
+        self.checks = 0
+        self.ready_after = ready_after
+
+    def is_connected(self):
+        return True
+
+    async def __call__(self, request):
+        self.commands.append(request)
+
+    async def get_entity(self, name):
+        return NS(bot=True, username=name)
+
+    async def send_message(self, bot, text):
+        self.commands.append(text)
+        self.stage = 1
+        return NS(id=20)
+
+    def button(self, text, next_stage):
+        async def click():
+            self.clicks.append(text)
+            self.stage = next_stage
+        return NS(text=text, button=types.KeyboardButton(text, types.InlineButtonTypeCallback(b'btn')),
+                  data=b'btn', url=None, click=click)
+
+    async def get_messages(self, peer, limit):
+        stale = NS(id=10, raw_text='https://zestful.bond/old', out=False, buttons=None, entities=[])
+        if self.stage == 1:
+            message = NS(id=21, raw_text='Меню', out=False, buttons=[[self.button('⭐ Ваша подписка', 2)]])
+        elif self.stage == 2:
+            message = NS(id=21, raw_text='Подписки', out=False,
+                         buttons=[[self.button('Другой пункт', 9), self.button('Получить пробный доступ', 3)]])
+        elif self.stage == 3:
+            message = NS(id=22, raw_text='Подтвердите', out=False, buttons=[[self.button('Получить доступ', 4)]])
+        else:
+            self.checks += 1
+            if self.checks < self.ready_after:
+                return [stale]
+            message = NS(id=23, raw_text='Подписка готова, ссылка: ' + URL, out=False, buttons=None, entities=[])
+        return [message, stale]
+
+
+class VpnTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.now = 200 * vpn.DAYS
+        self.telegram = Telegram()
+        self.account = NS(me=types.User(123, username='example'), client=self.telegram, name='example.json')
+        self.accounts = {'example': self.account}
+        self.sleep = AsyncMock()
+        self.mail_args = []
+
+    def make_service(self):
+        def mail(*args):
+            self.mail_args.append(args)
+        return vpn.VpnSubscriptions(self.root, lambda: self.accounts, lambda: self.now, self.sleep, mail)
+
+    async def test_issue_complete_link_once_and_mail_through_authenticated_routes(self):
+        service = self.make_service()
+        app = web.Application(middlewares=[main.auth_mw])
+        service.register(app)
+        headers = {'Authorization': 'Basic ' + b64encode(f'{main.PANEL_USER}:test'.encode()).decode(), 'X-Panel': '1'}
+        with patch.object(main, 'PANEL_PASSWORD', 'test'):
+            async with TestClient(TestServer(app)) as http:
+                self.assertEqual((await http.get('/api/vpn')).status, 401)
+                response = await http.post('/api/vpn/issue', headers=headers)
+                self.assertEqual(response.status, 200)
+                result = await response.json()
+                self.assertEqual(result['url'], URL)
+                self.assertEqual([call.args[0] for call in self.sleep.await_args_list], [1, 5, 5, 5])
+                self.assertIsInstance(self.telegram.commands[0], functions.channels.JoinChannelRequest)
+                self.assertEqual(self.telegram.commands[1], '/start')
+                self.assertEqual(self.telegram.clicks, ['⭐ Ваша подписка', 'Получить пробный доступ', 'Получить доступ'])
+                self.assertEqual((await http.post('/api/vpn/issue', headers=headers)).status, 400)
+                response = await http.post('/api/vpn/email', headers=headers, json={
+                    'recipient': 'user+vpn@example.org', 'receipt': result['receipt'], 'url': 'https://example.org'})
+                self.assertEqual(response.status, 200)
+                self.assertEqual(self.mail_args, [(self.root, 'user+vpn@example.org', URL)])
+                snapshot = await (await http.get('/api/vpn', headers=headers)).json()
+                self.assertNotIn(result['receipt'], str(snapshot))
+                self.assertNotIn(URL, str(snapshot))
+                self.assertEqual(snapshot['records'][0]['remaining'], 31 * vpn.DAYS)
+
+    async def test_pending_link_can_be_recovered_after_restart_without_repeating_click(self):
+        self.telegram.ready_after = 4
+        with self.assertRaisesRegex(ValueError, 'пока не прислал'):
+            await self.make_service().issue()
+        restored = self.make_service()
+        self.assertEqual(restored.snapshot()['records'][0]['status'], 'pending')
+        self.assertEqual((await restored.issue())['url'], URL)
+        self.assertEqual(self.telegram.clicks.count('Получить доступ'), 1)
+        self.assertEqual(self.telegram.checks, 4)
+
+    async def test_record_age_boundary_and_exclusion_are_persisted(self):
+        self.telegram.ready_after = 1
+        service = self.make_service()
+        await service.issue()
+        service.edit('123', self.now - 26 * vpn.DAYS)
+        self.assertEqual(service.snapshot()['records'][0]['status'], 'active')
+        self.now += 60
+        self.assertEqual(service.snapshot()['records'][0]['status'], 'ending')
+        self.now += 5 * vpn.DAYS
+        self.assertEqual(service.snapshot()['records'][0]['status'], 'expired')
+        service.edit('123', exclude=True)
+        restored = self.make_service()
+        self.assertEqual(restored.snapshot()['records'], [])
+        with self.assertRaisesRegex(ValueError, 'Нет подключённых аккаунтов'):
+            await restored.issue()
+
+    def test_links_exact_host_and_hidden_entities(self):
+        entity = types.MessageEntityTextUrl(0, 7, URL)
+        message = NS(raw_text='https://zestful.bond.evil.net/something https://zestful.bond@evil.net/path',
+                     entities=[entity], buttons=None)
+        self.assertEqual(vpn.match_link(message, 'zestful.bond'), URL)
+        message.entities = []
+        self.assertIsNone(vpn.match_link(message, 'zestful.bond'))
+        precise = NS(raw_text='🔑 ' + URL + '.', buttons=None,
+                     entities=[types.MessageEntityUrl(3, len(URL))])
+        self.assertEqual(vpn.match_link(precise, 'zestful.bond'), URL)
+
+    def test_gmail_uses_tls_and_configured_credentials(self):
+        with (patch.dict('os.environ', {'GMAIL_EMAIL': 'sender@gmail.com', 'GMAIL_APP_PASSWORD': 'one two'}),
+              patch('vpn.smtplib.SMTP_SSL') as connect):
+            server = connect.return_value.__enter__.return_value
+            vpn.send_gmail(self.root, 'receiver@example.com', URL)
+        self.assertEqual(connect.call_args.args, ('smtp.gmail.com', 465))
+        self.assertTrue(connect.call_args.kwargs['context'].check_hostname)
+        server.login.assert_called_once_with('sender@gmail.com', 'onetwo')
+        message = server.send_message.call_args.args[0]
+        self.assertEqual(str(message['To']), 'receiver@example.com')
+        self.assertEqual(message.get_content().strip(), URL)
+        for recipient in ('user@example.com\r\nBcc: other@example.com', 'one@example.com,two@example.com'):
+            with self.assertRaises(ValueError):
+                vpn.recipient_address(recipient)
