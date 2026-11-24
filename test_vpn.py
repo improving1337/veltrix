@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import smtplib
+import socket
 from base64 import b64encode
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -142,7 +144,8 @@ class VpnTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(vpn.match_link(precise, 'zestful.bond'), URL)
 
     def test_gmail_uses_tls_and_configured_credentials(self):
-        with (patch.dict('os.environ', {'GMAIL_EMAIL': 'sender@gmail.com', 'GMAIL_APP_PASSWORD': 'one two'}),
+        with (patch.dict('os.environ', {'GMAIL_EMAIL': 'sender@gmail.com', 'GMAIL_APP_PASSWORD': 'one two',
+                                       'GMAIL_SMTP_PORT': '465'}),
               patch('vpn.smtplib.SMTP_SSL') as connect):
             server = connect.return_value.__enter__.return_value
             vpn.send_gmail(self.root, 'receiver@example.com', URL)
@@ -155,3 +158,30 @@ class VpnTests(unittest.IsolatedAsyncioTestCase):
         for recipient in ('user@example.com\r\nBcc: other@example.com', 'one@example.com,two@example.com'):
             with self.assertRaises(ValueError):
                 vpn.recipient_address(recipient)
+
+    def test_gmail_port_587_enables_tls_before_login(self):
+        with (patch.dict('os.environ', {'GMAIL_EMAIL': 'sender@gmail.com', 'GMAIL_APP_PASSWORD': 'test',
+                                       'GMAIL_SMTP_PORT': '587'}),
+              patch('vpn.smtplib.SMTP') as connect):
+            server = connect.return_value.__enter__.return_value
+            vpn.send_gmail(self.root, 'receiver@example.com', URL)
+        connect.assert_called_once_with('smtp.gmail.com', 587, timeout=20)
+        self.assertEqual([call[0] for call in server.method_calls], ['starttls', 'login', 'send_message'])
+        self.assertTrue(server.starttls.call_args.kwargs['context'].check_hostname)
+
+    def test_gmail_diagnostics_distinguish_dns_connection_and_rejected_delivery(self):
+        with patch.dict('os.environ', {'GMAIL_EMAIL': 'sender@gmail.com', 'GMAIL_APP_PASSWORD': 'test',
+                                      'GMAIL_SMTP_PORT': '465'}):
+            for error, pattern in [(socket.gaierror(-3, 'temporary'), 'разрешить имя smtp.gmail.com'),
+                                   (TimeoutError(), 'Нет соединения с smtp.gmail.com:465')]:
+                with (patch('vpn.smtplib.SMTP_SSL', side_effect=error),
+                      self.assertRaisesRegex(ValueError, pattern)):
+                    vpn.send_gmail(self.root, 'receiver@example.com', URL)
+            with patch('vpn.smtplib.SMTP_SSL') as connect:
+                server = connect.return_value.__enter__.return_value
+                server.send_message.side_effect = smtplib.SMTPDataError(554, b'raw response')
+                with self.assertRaisesRegex(ValueError, r'Gmail вернул ошибку SMTP 554\.'):
+                    vpn.send_gmail(self.root, 'receiver@example.com', URL)
+                server.send_message.side_effect = None
+                connect.return_value.__exit__.side_effect = smtplib.SMTPServerDisconnected()
+                vpn.send_gmail(self.root, 'receiver@example.com', URL)

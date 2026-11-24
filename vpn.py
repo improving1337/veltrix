@@ -6,6 +6,7 @@ import logging
 import re
 import secrets
 import smtplib
+import socket
 import ssl
 import time
 from email.headerregistry import Address
@@ -138,20 +139,54 @@ def send_gmail(directory, recipient, link):
     password = env_value('GMAIL_APP_PASSWORD', directory).replace(' ', '')
     if not sender or not password:
         raise ValueError('В .env нужны GMAIL_EMAIL и GMAIL_APP_PASSWORD')
+    port = env_value('GMAIL_SMTP_PORT', directory) or '465'
+    if port not in ('465', '587'):
+        raise ValueError('GMAIL_SMTP_PORT должен быть 465 или 587')
     sender = recipient_address(sender)
     message = EmailMessage()
     message['From'] = sender
     message['To'] = recipient
     message['Subject'] = 'Ссылка на подписку VPN'
     message.set_content(link)
+    host = 'smtp.gmail.com'
+    context = ssl.create_default_context()
+    sending = accepted = False
     try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=20, context=ssl.create_default_context()) as server:
+        if port == '465':
+            connection = smtplib.SMTP_SSL(host, 465, timeout=20, context=context)
+        else:
+            connection = smtplib.SMTP(host, 587, timeout=20)
+        with connection as server:
+            if port == '587':
+                server.starttls(context=context)
             server.login(sender, password)
+            sending = True
             server.send_message(message)
+            accepted = True
+    except socket.gaierror:
+        raise ValueError('Хостинг не смог разрешить имя smtp.gmail.com. Проверьте DNS и доступ к Gmail SMTP.') from None
     except smtplib.SMTPAuthenticationError:
         raise ValueError('Gmail отклонил вход. Проверьте адрес и пароль приложения.') from None
+    except smtplib.SMTPRecipientsRefused:
+        raise ValueError('Gmail отклонил адрес получателя. Проверьте, как он введён.') from None
+    except smtplib.SMTPNotSupportedError:
+        raise ValueError('SMTP-сервер не предложил безопасный вход. Проверьте доступ к Gmail SMTP и режим TLS.') from None
+    except ssl.SSLError:
+        if accepted:
+            return
+        if sending:
+            raise ValueError('Защищённое соединение оборвалось во время отправки. Проверьте папку «Отправленные».') from None
+        raise ValueError(f'Не удалось установить защищённое соединение с {host}:{port}. '
+                         'Проверьте TLS и сертификаты на хостинге.') from None
+    except smtplib.SMTPResponseException as exc:
+        if not accepted:
+            raise ValueError(f'Gmail вернул ошибку SMTP {exc.smtp_code}.') from None
     except (OSError, smtplib.SMTPException):
-        raise ValueError('Не удалось отправить письмо через Gmail') from None
+        if accepted:
+            return  # The server already accepted the message before QUIT failed.
+        if sending:
+            raise ValueError('Gmail оборвал соединение во время отправки. Проверьте папку «Отправленные».') from None
+        raise ValueError(f'Нет соединения с {host}:{port}. Проверьте исходящий TCP-доступ на хостинге.') from None
 
 
 class VpnSubscriptions:
