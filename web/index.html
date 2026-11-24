@@ -594,6 +594,14 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 .vpn-active{color:#63d6a3}.vpn-ending{color:#ebbd65}.vpn-expired{color:#f5828f}.vpn-pending{color:#9c9aad}
 .vpn-remaining{font-variant-numeric:tabular-nums;white-space:nowrap}
 @media(max-width:600px){.vpn-row,.vpn-fields{grid-template-columns:minmax(0,1fr)}}
+ .scenario-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+ .scenario-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+ .scenario-actions{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}
+ .scenario-layout details{margin:12px 0}.scenario-layout summary{cursor:pointer}
+ .scenario-layout textarea,.scenario-layout pre{font-family:ui-monospace,monospace;line-height:1.55}
+ .scenario-layout pre{white-space:pre-wrap;overflow-wrap:anywhere}
+ .scenario-output{max-height:420px;overflow:auto}.scenario-check input{width:auto}
+ @media(max-width:850px){.scenario-layout,.scenario-row{grid-template-columns:1fr}}
 </style>
 <style id="veltrix-theme">
 /* VELTRIX UI — graphite dashboard treatment adapted from the supplied Ember
@@ -1012,6 +1020,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
 <button type="button" id="t-miniapp" class="v-nav-item" title="Mini App"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="v-nav-label">Mini App</span></button>
 <button type="button" id="t-cs3bet" class="v-nav-item" title="CS3BET"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4m-2-2v4"/><circle cx="15.5" cy="11.5" r=".6"/><circle cx="18.5" cy="13.5" r=".6"/><path d="M5.1 6h13.8A4 4 0 0 1 23 10l-1.1 7a2.4 2.4 0 0 1-4.2 1.1l-2.2-2.7h-7L6.3 18A2.4 2.4 0 0 1 2 17l-1-7a4 4 0 0 1 4.1-4Z"/></svg><span class="v-nav-label">CS3BET</span></button>
 <button type="button" id="t-automatic" class="v-nav-item" title="Autopilot"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(35 12 12)"/><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(-35 12 12)"/><circle cx="12" cy="12" r="2"/></svg><span class="v-nav-label">Autopilot</span></button>
+<button type="button" id="t-scenarios" class="v-nav-item" title="Сценарии"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-2-14-4 16"/></svg><span class="v-nav-label">Сценарии</span></button>
 <button type="button" id="t-vpn" class="v-nav-item" title="VPN"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3 5 6v6c0 4 3 7 7 9 4-2 7-5 7-9V6z"/><path d="m9 12 2 2 4-4"/></svg><span class="v-nav-label">VPN</span></button>
 <button type="button" id="t-settings" class="v-nav-item" title="Настройки"><span aria-hidden="true">⚙</span><span class="v-nav-label">Настройки</span></button>
 </div></div>
@@ -1097,6 +1106,58 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
      <div id="grid" class="acc-table"></div>
    </div><div id="acc-load-errors" class="acc-load-errors" hidden></div><p class="acc-table-note">Цвет числа: зелёный — своя сессия, жёлтый — внешняя, красный — нет подключения. Число — результат последней проверки; обновить можно в профиле.</p></div>
   <aside id="detail"></aside>
+ </section>
+ <section id="v-scenarios" class="view">
+  <div class="accwrap">
+   <div class="sectionhead"><h2>Сценарии</h2></div>
+   <div class="scenario-layout">
+    <section class="profile-card">
+     <label class="fld"><span>Код</span><textarea id="scenario-code" rows="11" spellcheck="false">for acc in all:
+    views(acc, param("post"), unique=True)
+    wait(10, 15)</textarea></label>
+     <details><summary>Параметры, запуск и время пропуска</summary>
+      <label class="fld"><span>Параметры JSON</span><textarea id="scenario-params" rows="3" spellcheck="false">{"post": "https://t.me/test/1"}</textarea></label>
+      <label class="fld"><span>Запустить в (МСК, необязательно)</span><input id="scenario-start" type="datetime-local"></label>
+      <div class="scenario-row">
+       <label class="fld"><span>Пропуск с (МСК)</span><input id="scenario-from" type="time"></label>
+       <label class="fld"><span>До (МСК)</span><input id="scenario-to" type="time"></label>
+      </div>
+      <label class="scenario-check"><input id="scenario-stop-error" type="checkbox" checked> Пауза при ошибке</label>
+     </details>
+     <details><summary>Группы и шаблоны</summary>
+      <label class="fld"><span>Группы аккаунтов</span><select id="scenario-groups"></select></label>
+      <div class="scenario-row"><input id="scenario-group-name" aria-label="Имя группы" placeholder="Имя группы"><input id="scenario-ids" aria-label="Telegram ID через пробел" placeholder="Telegram ID через пробел"></div>
+      <div class="scenario-actions"><button id="scenario-group-save" class="btn">Сохранить группу</button><button id="scenario-group-delete" class="btn">Удалить группу</button></div>
+      <label class="fld"><span>Шаблоны кода</span><select id="scenario-templates"></select></label>
+      <input id="scenario-template-name" aria-label="Имя шаблона" placeholder="Имя шаблона">
+      <div class="scenario-actions"><button id="scenario-template-save" class="btn">Сохранить шаблон</button><button id="scenario-template-delete" class="btn">Удалить шаблон</button></div>
+     </details>
+     <details><summary>Команды</summary><pre>accounts = all - [6632326105]
+group("Основные")
+param("post")
+views(acc, post, unique=True)
+sub(acc, channel, unique=True)
+unsub(acc, channel, unique=True)
+react(acc, post, "❤️")
+poll(acc, post, 1)
+repost(acc, post)
+start(acc, bot)
+button(acc, post)
+online(acc, 60)
+send(acc, "@username", "Текст")
+wait(10, 15)</pre></details>
+     <div class="scenario-actions"><button id="scenario-preview" class="btn">Предпросмотр</button><button id="scenario-run" class="btn" disabled>Подтвердить запуск</button></div>
+     <div id="scenario-error" class="status err" role="alert"></div>
+    </section>
+    <section class="profile-card">
+     <h3>Журнал</h3>
+     <div id="scenario-status" class="status"></div>
+     <div class="scenario-actions" id="scenario-controls" hidden><button data-command="pause" class="btn">Пауза</button><button data-command="resume" class="btn">Продолжить</button><button data-command="skip" class="btn">Пропустить шаг</button><button data-command="stop" class="btn">Остановить</button></div>
+     <pre id="scenario-log" class="scenario-output"></pre>
+     <section id="scenario-plan" hidden><h3>План</h3><pre id="scenario-plan-text" class="scenario-output"></pre></section>
+    </section>
+   </div>
+  </div>
  </section>
  <section id="v-vpn" class="view">
   <div id="vpn-root" class="vpn-root"></div>
@@ -1236,7 +1297,7 @@ function avatar(src,label,size=44){
 const avUrl=a=>`/api/accounts/${enc(a.name)}/avatar?v=${a.avatar_ver}`;
 const chatAv=(acc,id)=>`/api/accounts/${enc(acc)}/chats/${id}/avatar`;
 
-const VELTRIX_NAMES={accounts:'Profiles',examples:'Identity',upload:'Deploy',twofa:'2FA',messages:'Inbox',orders:'Toolkit',miniapp:'Mini App',cs3bet:'CS3BET',automatic:'Autopilot',vpn:'VPN',settings:'Настройки'};
+const VELTRIX_NAMES={accounts:'Profiles',examples:'Identity',upload:'Deploy',twofa:'2FA',messages:'Inbox',orders:'Toolkit',miniapp:'Mini App',cs3bet:'CS3BET',automatic:'Autopilot',vpn:'VPN',scenarios:'Сценарии',settings:'Настройки'};
 function veltrixCloseMobile(){document.body.classList.remove('v-menu-open');$('#veltrix-mobile-backdrop').hidden=true}
 function showTab(t){
   // A category always reopens at its home screen, never at a nested service.
@@ -1255,7 +1316,7 @@ function showTab(t){
   $('#veltrix-breadcrumb').textContent=VELTRIX_NAMES[t]||'VELTRIX';
   document.title=(VELTRIX_NAMES[t]||'Control')+' — VELTRIX';
   veltrixCloseMobile();
-  for(const n of["accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic","vpn","settings"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
+  for(const n of["accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic","vpn","scenarios","settings"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
 }
 let PANEL_SETTINGS={hidden_tabs:[],view_spread:10,reaction_spread:20,search_workers:5,profile_group:'https://t.me/minecraft_beseda764'};
 function applyPanelSettings(){
@@ -1550,6 +1611,122 @@ function vpnRender(){
   };
   actions.append(getLink,settingsButton);body.append(actions,status);
 }
+const SC={token:null, busy:false, state:null, refreshing:false};
+function scenarioInvalidate(){
+  SC.token=null;
+  $('#scenario-run').disabled=true;
+  $('#scenario-plan').hidden=true;
+}
+function scenarioPayload(){
+  const from=$('#scenario-from').value,to=$('#scenario-to').value,start=$('#scenario-start').value;
+  let params;
+  try{params=JSON.parse($('#scenario-params').value||'{}')}catch{throw Error('Проверь JSON параметров');}
+  return {code:$('#scenario-code').value,params,stop_on_error:$('#scenario-stop-error').checked,
+    quiet_hours:from||to?{from,to}:null,start_at:start?Date.parse(start+'+03:00')/1000:null};
+}
+const scenarioClock=new Intl.DateTimeFormat('ru-RU',{timeZone:'Europe/Moscow',timeStyle:'medium'});
+function scenarioRender(data){
+  SC.state=data;
+  for(const [kind,items] of [['groups',data.groups],['templates',data.templates]]){
+    const select=$('#scenario-'+kind),current=select.value;
+    select.replaceChildren(new Option('Выбрать…',''),...Object.keys(items).sort().map(name=>new Option(name,name)));
+    if(Object.hasOwn(items,current))select.value=current;
+  }
+  const run=data.run, controls=$('#scenario-controls');
+  const statuses={running:'Выполняется',paused:'Пауза',uncertain:'Нужно проверить текущий шаг',stopped:'Остановлен',finished:'Завершён'};
+  const results={ok:'Успех',skip:'Пропуск',err:'Ошибка',wait:'Ожидание'};
+  const log=$('#scenario-log');
+  const atEnd=log.scrollHeight-log.scrollTop-log.clientHeight<24;
+  const text=(run?.log||[]).map(item=>[scenarioClock.format(item.time*1000),item.label,item.target,
+    results[item.status],item.note].filter(Boolean).join(' · ')).join('\n');
+  if(log.textContent!==text){
+    log.textContent=text;
+    if(atEnd)log.scrollTop=log.scrollHeight;
+  }
+  const due=run?.status==='running'&&run.due>Date.now()/1000?' · ожидает до '+scenarioClock.format(run.due*1000)+' МСК':'';
+  $('#scenario-status').textContent=run?statuses[run.status]+' · '+run.index+' / '+run.total+due:'Запусков пока нет';
+  controls.hidden=!run||!['running','paused','uncertain'].includes(run.status);
+  for(const button of controls.querySelectorAll('button')){
+    const command=button.dataset.command;
+    button.hidden=command==='pause'?run?.status!=='running':
+      command==='resume'||command==='skip'?!['paused','uncertain'].includes(run?.status):false;
+    button.disabled=SC.busy||(run?.in_flight&&['resume','skip'].includes(command));
+  }
+}
+async function scenarioRefresh(){
+  if(SC.busy||SC.refreshing)return;
+  SC.refreshing=true;
+  try{
+    const data=await api('/api/scenarios');
+    if(!SC.busy)scenarioRender(data);
+  }catch(error){$('#scenario-error').textContent=error.message;}
+  finally{SC.refreshing=false;}
+}
+async function scenarioCommand(command, getPayload=()=>({})){
+  if(SC.busy)return;
+  SC.busy=true;
+  $('#scenario-error').textContent='';
+  const preview=$('#scenario-preview'),start=$('#scenario-run');
+  preview.disabled=start.disabled=true;
+  try{
+    const payload=getPayload();
+    const result=await api('/api/scenarios/'+command,{method:'POST',json:payload});
+    if(command==='preview'){
+      if(JSON.stringify(payload)!==JSON.stringify(scenarioPayload()))return;
+      SC.token=result.token;
+      const label=result.steps.length+' шагов'+(result.start?' · запуск '+scenarioClock.format(result.start*1000)+' МСК':'');
+      const delays=result.steps.map(step=>step.delay||[step.args?.seconds||0,step.args?.seconds||0]);
+      const minimum=delays.reduce((sum,delay)=>sum+delay[0],0),maximum=delays.reduce((sum,delay)=>sum+delay[1],0);
+      const timing=maximum?'Паузы и онлайн '+(minimum===maximum?maximum:minimum+'–'+maximum)+' сек без учёта запросов':'';
+      $('#scenario-plan-text').textContent=[[label,timing].filter(Boolean).join(' · '),...result.steps.map((step,index)=>
+        (index+1)+'. '+(step.action==='wait'?'Пауза '+step.delay.join('–')+' сек':
+        [step.label,step.action,step.target,step.args.text||step.args.option||step.args.emoji||step.args.seconds,
+          step.unique?'unique':''].filter(Boolean).join(' · ')))].join('\n');
+      $('#scenario-plan').hidden=false;
+    }else{
+      if(['start','group','template'].includes(command))scenarioInvalidate();
+      scenarioRender(result);
+    }
+  }catch(error){$('#scenario-error').textContent=error.message;}
+  finally{
+    SC.busy=false;preview.disabled=false;start.disabled=!SC.token;
+    if(command!=='preview')scenarioRefresh();
+  }
+}
+$('#t-scenarios').onclick=()=>{showTab('scenarios');scenarioRefresh()};
+for(const id of ['code','params','start','from','to','stop-error'])$('#scenario-'+id).oninput=scenarioInvalidate;
+$('#scenario-preview').onclick=()=>{scenarioInvalidate();scenarioCommand('preview',scenarioPayload)};
+$('#scenario-run').onclick=()=>scenarioCommand('start',()=>({...scenarioPayload(),token:SC.token}));
+$('#scenario-controls').onclick=event=>{
+  const command=event.target.dataset.command;
+  if(!command)return;
+  if(command==='resume'&&SC.state?.run?.status==='uncertain'&&!confirm('Повторить шаг, результат которого не подтверждён?'))return;
+  scenarioCommand(command);
+};
+$('#scenario-groups').onchange=event=>{
+  const name=event.target.value;
+  if(!name)return;
+  $('#scenario-group-name').value=name;
+  $('#scenario-ids').value=SC.state.groups[name].join(' ');
+};
+$('#scenario-templates').onchange=event=>{
+  const name=event.target.value;
+  if(!name)return;
+  $('#scenario-template-name').value=name;
+  $('#scenario-code').value=SC.state.templates[name];
+  scenarioInvalidate();
+};
+$('#scenario-group-save').onclick=()=>scenarioCommand('group',()=>({
+  name:$('#scenario-group-name').value.trim(),
+  ids:$('#scenario-ids').value.trim().split(/[\s,]+/).filter(Boolean).map(Number),
+}));
+$('#scenario-template-save').onclick=()=>scenarioCommand('template',()=>({
+  name:$('#scenario-template-name').value.trim(),code:$('#scenario-code').value,
+}));
+for(const kind of ['group','template'])$('#scenario-'+kind+'-delete').onclick=()=>scenarioCommand(kind,()=>({
+  name:$('#scenario-'+kind+'-name').value.trim(),delete:true,
+}));
+setInterval(()=>{if(S.tab==='scenarios'&&document.visibilityState==='visible')scenarioRefresh();},1500);
 $('#t-vpn').onclick=()=>{showTab('vpn');VPN.result=null;VPN.error='';vpnRender()};
 $('#t-settings').onclick=()=>{showTab('settings');renderPanelSettings();renderGmailSettings()};
 api('/api/panel-settings').then(data=>{
