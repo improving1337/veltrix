@@ -1101,7 +1101,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
  <section id="v-vpn" class="view">
   <div id="vpn-root" class="vpn-root"></div>
 </section>
- <section id="v-settings" class="view"><div class="accwrap"><div class="sectionhead"><h2>Настройки</h2></div><section id="panel-settings-form" class="profile-card"></section></div></section>
+ <section id="v-settings" class="view"><div class="accwrap"><div class="sectionhead"><h2>Настройки</h2></div><section id="panel-settings-form" class="profile-card"></section><section id="gmail-settings-form" class="profile-card" style="margin-top:16px"></section></div></section>
  <section id="v-examples" class="view">
   <div class="accwrap">
    <div class="sectionhead"><div><h2>Шаблоны</h2><p class="subline">Библиотека согласованных профилей: имя, username, био, дата рождения и история фотографий</p></div></div>
@@ -1294,6 +1294,75 @@ function renderPanelSettings(){
     }catch(e){status.className='status err';status.textContent=e.message;}
   };
 }
+async function renderGmailSettings(){
+  const root=$('#gmail-settings-form'),status=el('div','status','Загрузка…');
+  root.replaceChildren(el('h3','','Отправка VPN-ссылок через Gmail'),status);
+  const endpoint='/api/vpn/gmail-settings';
+  try{
+    const saved=await api(endpoint);
+    if(!root.contains(status))return;
+    const select=choices=>{
+      const input=el('select');
+      for(const [value,label] of choices){
+        const option=el('option','',label);option.value=value;input.append(option);
+      }
+      return input;
+    };
+    const form=el('form'),transport=select([['api','Gmail API (HTTPS)'],['smtp','Gmail SMTP']]);
+    const email=inp(saved.email,'example@gmail.com');email.type='email';email.required=true;
+    const port=select([['465','465 (TLS)'],['587','587 (STARTTLS)']]);
+    const privateFields={
+      app_password:'Пароль приложения Gmail',client_id:'Client ID',
+      client_secret:'Client Secret',refresh_token:'Refresh Token',
+    };
+    const credentials={};
+    for(const key of Object.keys(privateFields)){
+      const input=inp();input.type='password';input.autocomplete='off';credentials[key]=input;
+    }
+    const smtp=el('div'),oauth=el('div');
+    smtp.append(fld('Порт SMTP',port),fld(privateFields.app_password,credentials.app_password));
+    for(const key of ['client_id','client_secret','refresh_token'])oauth.append(fld(privateFields[key],credentials[key]));
+    const toggle=()=>{
+      smtp.hidden=transport.value==='api';
+      oauth.hidden=transport.value==='smtp';
+    };
+    const apply=data=>{
+      transport.value=data.transport==='api'?'api':'smtp';
+      port.value=data.smtp_port==='587'?'587':'465';
+      email.value=data.email;
+      for(const [key,input] of Object.entries(credentials)){
+        input.value='';
+        input.placeholder=data.configured[key]?'Сохранено. Заполните для замены':'';
+      }
+      toggle();
+    };
+    const button=el('button','btn','Сохранить Gmail');
+    button.type='submit';
+    transport.onchange=toggle;
+    apply(saved);
+    status.textContent='';
+    status.setAttribute('aria-live','polite');
+    form.append(fld('Способ отправки',transport),fld('Адрес Gmail отправителя',email),smtp,oauth,button,status);
+    root.append(form);
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      button.disabled=true;
+      status.className='status';status.textContent='';
+      const data={transport:transport.value,email:email.value};
+      if(transport.value==='api'){
+        for(const key of ['client_id','client_secret','refresh_token'])data[key]=credentials[key].value;
+      }else{
+        data.smtp_port=port.value;
+        data.app_password=credentials.app_password.value;
+      }
+      try{
+        apply(await api(endpoint,{method:'POST',json:data}));
+        status.className='status ok';status.textContent='Сохранено. Изменения применятся при следующей отправке.';
+      }catch(error){status.className='status err';status.textContent=error.message;}
+      finally{button.disabled=false;}
+    };
+  }catch(error){status.className='status err';status.textContent=error.message;}
+}
 const VPN={result:null,busy:false,error:'',sort:'username',direction:1};
 function vpnDays(seconds){
   const minutes=Math.ceil(Math.max(0,seconds)/60);
@@ -1482,7 +1551,7 @@ function vpnRender(){
   actions.append(getLink,settingsButton);body.append(actions,status);
 }
 $('#t-vpn').onclick=()=>{showTab('vpn');VPN.result=null;VPN.error='';vpnRender()};
-$('#t-settings').onclick=()=>{showTab('settings');renderPanelSettings()};
+$('#t-settings').onclick=()=>{showTab('settings');renderPanelSettings();renderGmailSettings()};
 api('/api/panel-settings').then(data=>{
   if(Array.isArray(data?.hidden_tabs)){PANEL_SETTINGS=data;applyPanelSettings()}
 }).catch(()=>{});

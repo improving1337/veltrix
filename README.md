@@ -392,4 +392,21 @@ cs3bet_bulk_job.json. Перед обновлением сделайте отд�
 
 Во вкладке VPN кнопка «Получить ссылку» использует подключённый аккаунт и выполняет шаги, заданные в настройках вкладки. После получения ссылку можно скопировать, скрыть или отправить на почту. В журнале хранится дата получения и срок в 31 день. Исключение скрывает запись из таблицы, а Telegram ID остаётся в истории использования.
 
-Для отправки через Gmail укажите `GMAIL_EMAIL` и `GMAIL_APP_PASSWORD` в файле `.env`. По умолчанию хосту панели нужен исходящий TCP-доступ к `smtp.gmail.com:465`. Если на хостинге доступен порт 587, укажите `GMAIL_SMTP_PORT=587` для подключения с STARTTLS. Журнал и настройки VPN хранятся в `security/vpn.json`.
+### Отправка через Gmail API
+
+1. Включите Gmail API в проекте Google Cloud. [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com)
+2. В Google Auth Platform настройте экран согласия. Для личного Gmail выберите аудиторию External. В режиме Testing добавьте свой Gmail в Test users. В Data Access добавьте область `https://www.googleapis.com/auth/gmail.send`. [Google Auth Platform](https://console.cloud.google.com/auth/overview)
+3. Создайте OAuth-клиент типа Desktop app и скачайте его JSON. [OAuth-клиенты](https://console.cloud.google.com/auth/clients)
+4. На компьютере с браузером запустите команду из папки проекта, указав путь к скачанному JSON. Войдите в Gmail, с которого будут уходить письма, и подтвердите доступ.
+
+   ```sh
+   python gmail_oauth_setup.py "/путь/к/client_secret_….json"
+   ```
+
+5. Откройте «Настройки» → «Отправка VPN-ссылок через Gmail» в Veltrix. Выберите Gmail API (HTTPS), введите адрес Gmail и перенесите `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` и `GMAIL_REFRESH_TOKEN` из локального файла `gmail-credentials.env` в соответствующие поля. Сохраните. Следующее письмо уйдёт с новыми настройками без перезапуска панели.
+
+Хостингу нужен исходящий HTTPS на порту 443 к `oauth2.googleapis.com` и `gmail.googleapis.com`. В режиме Testing для внешней аудитории Refresh Token с доступом `gmail.send` действует 7 дней, затем нужно повторить вход и заменить токен. Храните JSON OAuth-клиента и файл с токеном в закрытом месте. [Срок действия Refresh Token](https://developers.google.com/identity/protocols/oauth2#expiration)
+
+Если нужен SMTP, выберите его в том же разделе. Для SMTP действуют прежние переменные `GMAIL_EMAIL`, `GMAIL_APP_PASSWORD` и `GMAIL_SMTP_PORT` в `.env`, пока соответствующие поля не сохранены в панели. Порт 465 использует TLS, порт 587 использует STARTTLS.
+
+Панель хранит настройки почты в `security/gmail.json`. При обновлении проекта сохраните каталог `security/`, в котором также находится журнал VPN `vpn.json`.

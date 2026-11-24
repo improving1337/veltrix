@@ -2,9 +2,14 @@ import tempfile
 import unittest
 import smtplib
 import socket
-from base64 import b64encode
+import json
+import stat
+from base64 import b64encode, urlsafe_b64decode
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
 from types import SimpleNamespace as NS
+from urllib.parse import parse_qs
 from unittest.mock import AsyncMock, patch
 
 from aiohttp import web
@@ -13,6 +18,8 @@ from telethon import functions, types
 
 import main
 import vpn
+import gmail_delivery
+import gmail_oauth_setup
 
 URL = 'https://zestful.bond/sub/id?key=A%2Fb%3D&trial=1'
 
@@ -115,6 +122,70 @@ class VpnTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await restored.issue())['url'], URL)
         self.assertEqual(self.telegram.clicks.count('Получить доступ'), 1)
         self.assertEqual(self.telegram.checks, 4)
+
+    async def test_gmail_settings_take_effect_without_restart_and_redact_credentials(self):
+        service = vpn.VpnSubscriptions(self.root, lambda: self.accounts, lambda: self.now, self.sleep)
+        service.put('123', {'receipt': 'vpn-id', 'url': URL, 'issued_at': self.now})
+        app = web.Application(middlewares=[main.auth_mw])
+        service.register(app)
+        headers = {'Authorization': 'Basic ' + b64encode(f'{main.PANEL_USER}:test'.encode()).decode(), 'X-Panel': '1'}
+        endpoint = '/api/vpn/gmail-settings'
+        settings = {'transport': 'api', 'email': 'sender@gmail.com', 'client_id': 'test-client-id',
+                    'client_secret': 'test-client-secret', 'refresh_token': 'test-refresh-token'}
+        with (patch.object(main, 'PANEL_PASSWORD', 'test'), patch('vpn.send_gmail_api') as send,
+              patch('vpn.send_gmail') as smtp):
+            async with TestClient(TestServer(app)) as http:
+                self.assertEqual((await http.get(endpoint)).status, 401)
+                self.assertEqual((await http.post(endpoint, json=settings)).status, 401)
+                old = await http.post(endpoint, headers=headers, json={'transport': 'smtp'})
+                self.assertEqual(old.status, 200)
+                payload = {'recipient': 'target@example.com', 'receipt': 'vpn-id'}
+                self.assertEqual((await http.post('/api/vpn/email', headers=headers, json=payload)).status, 200)
+                smtp.assert_called_once()
+                response = await http.post(endpoint, headers=headers, json=settings)
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+                self.assertEqual((await http.post(endpoint, headers=headers, json={'refresh_token': ''})).status, 200)
+                snapshot = await (await http.get(endpoint, headers=headers)).json()
+                for key in ('client_id', 'client_secret', 'refresh_token'):
+                    self.assertTrue(snapshot['configured'][key])
+                    self.assertNotIn(settings[key], str(snapshot))
+                self.assertEqual((await http.post('/api/vpn/email', headers=headers, json=payload)).status, 200)
+        send.assert_called_once()
+        self.assertEqual(send.call_args.args[0]['refresh_token'], settings['refresh_token'])
+        self.assertEqual(send.call_args.args[1].get_content().strip(), URL)
+        restored = gmail_delivery.GmailSettings(self.root)
+        self.assertEqual(restored.snapshot(), snapshot)
+        self.assertEqual(stat.S_IMODE(restored.path.stat().st_mode), 0o600)
+
+    def test_gmail_api_refreshes_token_and_sends_complete_link(self):
+        settings = {'client_id': 'id', 'client_secret': 'secret', 'refresh_token': 'refresh'}
+        message = vpn.gmail_message('from@gmail.com', 'target@example.com', URL)
+        with patch('gmail_delivery.post_google', side_effect=[{'access_token': 'access'}, {'id': 'sent'}]) as post:
+            gmail_delivery.send_gmail_api(settings, message)
+        refresh, send = [call.args for call in post.call_args_list]
+        self.assertEqual(refresh[0], gmail_delivery.TOKEN_URL)
+        self.assertEqual(parse_qs(refresh[1].decode()), {
+            'client_id': ['id'], 'client_secret': ['secret'], 'refresh_token': ['refresh'],
+            'grant_type': ['refresh_token']})
+        self.assertEqual(send[0], gmail_delivery.SEND_URL)
+        self.assertEqual(send[2]['Authorization'], 'Bearer access')
+        delivered = BytesParser(policy=policy.default).parsebytes(urlsafe_b64decode(json.loads(send[1])['raw']))
+        self.assertEqual(delivered['To'], 'target@example.com')
+        self.assertEqual(delivered.get_content().strip(), URL)
+
+    def test_oauth_helper_stores_credentials_privately_without_overwriting(self):
+        path = self.root / 'gmail-credentials.env'
+        client = {'client_id': 'fake-id', 'client_secret': 'fake-secret'}
+        gmail_oauth_setup.write_settings(path, client, 'fake-refresh-token')
+        settings = gmail_delivery.GmailSettings(self.root)
+        (self.root / '.env').write_text(path.read_text(encoding='utf-8'), encoding='utf-8')
+        with patch.dict('os.environ', {}, clear=True):
+            self.assertEqual(settings.effective()['refresh_token'], 'fake-refresh-token')
+            self.assertEqual(settings.effective()['transport'], 'api')
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        with self.assertRaises(FileExistsError):
+            gmail_oauth_setup.write_settings(path, client, 'another-token')
 
     async def test_record_age_boundary_and_exclusion_are_persisted(self):
         self.telegram.ready_after = 1

@@ -18,7 +18,7 @@ from aiohttp import web
 from telethon import functions, types, utils
 from telethon.errors import BotResponseTimeoutError, FloodWaitError, RPCError, UserAlreadyParticipantError
 
-from automatic import env_value
+from gmail_delivery import GmailSettings, send_gmail_api
 from template_library import atomic_json_save
 
 DAYS = 86400
@@ -134,20 +134,26 @@ def recipient_address(value):
     return address.addr_spec
 
 
-def send_gmail(directory, recipient, link):
-    sender = env_value('GMAIL_EMAIL', directory)
-    password = env_value('GMAIL_APP_PASSWORD', directory).replace(' ', '')
-    if not sender or not password:
-        raise ValueError('В .env нужны GMAIL_EMAIL и GMAIL_APP_PASSWORD')
-    port = env_value('GMAIL_SMTP_PORT', directory) or '465'
-    if port not in ('465', '587'):
-        raise ValueError('GMAIL_SMTP_PORT должен быть 465 или 587')
-    sender = recipient_address(sender)
+def gmail_message(sender, recipient, link):
     message = EmailMessage()
-    message['From'] = sender
+    message['From'] = recipient_address(sender)
     message['To'] = recipient
     message['Subject'] = 'Ссылка на подписку VPN'
     message.set_content(link)
+    return message
+
+
+def send_gmail(directory, recipient, link, settings=None):
+    if settings is None:
+        settings = GmailSettings(directory).effective()
+    sender = settings['email']
+    password = settings['app_password'].replace(' ', '')
+    if not sender or not password:
+        raise ValueError('Укажите адрес Gmail и пароль приложения в настройках Gmail.')
+    port = settings['smtp_port']
+    if port not in ('465', '587'):
+        raise ValueError('Порт SMTP должен быть 465 или 587')
+    message = gmail_message(sender, recipient, link)
     host = 'smtp.gmail.com'
     context = ssl.create_default_context()
     sending = accepted = False
@@ -159,7 +165,7 @@ def send_gmail(directory, recipient, link):
         with connection as server:
             if port == '587':
                 server.starttls(context=context)
-            server.login(sender, password)
+            server.login(message['From'].addresses[0].addr_spec, password)
             sending = True
             server.send_message(message)
             accepted = True
@@ -190,13 +196,14 @@ def send_gmail(directory, recipient, link):
 
 
 class VpnSubscriptions:
-    def __init__(self, directory, accounts, clock=time.time, sleep=asyncio.sleep, mail=send_gmail):
+    def __init__(self, directory, accounts, clock=time.time, sleep=asyncio.sleep, mail=None):
         self.directory = Path(directory)
         self.path = self.directory / 'security' / 'vpn.json'
         self.accounts = accounts
         self.clock = clock
         self.sleep = sleep
-        self.mail = mail
+        self.gmail = GmailSettings(self.directory)
+        self.mail = self.send_link if mail is None else mail
         self.issue_lock = asyncio.Lock()
         try:
             data = json.loads(self.path.read_text(encoding='utf-8'))
@@ -204,6 +211,17 @@ class VpnSubscriptions:
             data = {}
         self.settings = validated_settings(data.get('settings', {}))
         self.records = data.get('records', {})
+
+    def send_link(self, directory, recipient, link):
+        settings = self.gmail.effective()
+        if settings['transport'] == 'api':
+            if not settings['email']:
+                raise ValueError('Укажите адрес Gmail, под которым получен Refresh Token.')
+            send_gmail_api(settings, gmail_message(settings['email'], recipient, link))
+        elif settings['transport'] == 'smtp':
+            send_gmail(directory, recipient, link, settings)
+        else:
+            raise ValueError('Выберите Gmail API или SMTP в настройках.')
 
     def save(self, records, settings=None):
         settings = self.settings if settings is None else settings
@@ -375,6 +393,18 @@ class VpnSubscriptions:
                 return {'ok': True}
             return await run(send)
 
+        async def read_gmail(request):
+            return response(self.gmail.snapshot())
+
+        async def configure_gmail(request):
+            async def update():
+                data = await request.json()
+                try:
+                    return self.gmail.update(data, recipient_address)
+                except OSError:
+                    raise ValueError('Не удалось сохранить настройки Gmail. Проверьте права на запись в папку security.') from None
+            return await run(update)
+
         async def edit(request):
             async def update():
                 exclude = request.method == 'DELETE'
@@ -388,5 +418,6 @@ class VpnSubscriptions:
         app.add_routes([
             web.get('/api/vpn', read), web.post('/api/vpn/settings', configure),
             web.post('/api/vpn/issue', issue), web.post('/api/vpn/email', email),
+            web.get('/api/vpn/gmail-settings', read_gmail), web.post('/api/vpn/gmail-settings', configure_gmail),
             web.patch(r'/api/vpn/records/{id:\d+}', edit), web.delete(r'/api/vpn/records/{id:\d+}', edit),
         ])

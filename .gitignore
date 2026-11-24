@@ -25,3 +25,6 @@ cs3bet_referrals.json
 panel_settings.json
 
 order_jobs/
+
+gmail-credentials.env
+client_secret_*.json
