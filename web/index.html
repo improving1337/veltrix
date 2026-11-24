@@ -597,6 +597,11 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
  .scenario-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
  .scenario-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
  .scenario-actions{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}
+ .subscriptions-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,310px),1fr));gap:14px}
+ .subscription-head{display:flex;align-items:center;gap:12px;min-width:0}
+ .subscription-head>div:last-child{min-width:0;overflow-wrap:anywhere}
+ .subscription-head h3{margin:0 0 4px}
+ .subscription-channel-status{margin:12px 0}.subscription-actions{display:flex;flex-wrap:wrap;gap:8px}
  .scenario-heading-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-left:auto}
  .scenario-plan{margin-bottom:16px;scroll-margin-top:12px}
  .scenario-timeline{overflow:auto;max-height:52vh}
@@ -1030,6 +1035,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
 <button type="button" id="t-miniapp" class="v-nav-item" title="Mini App"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="v-nav-label">Mini App</span></button>
 <button type="button" id="t-cs3bet" class="v-nav-item" title="CS3BET"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4m-2-2v4"/><circle cx="15.5" cy="11.5" r=".6"/><circle cx="18.5" cy="13.5" r=".6"/><path d="M5.1 6h13.8A4 4 0 0 1 23 10l-1.1 7a2.4 2.4 0 0 1-4.2 1.1l-2.2-2.7h-7L6.3 18A2.4 2.4 0 0 1 2 17l-1-7a4 4 0 0 1 4.1-4Z"/></svg><span class="v-nav-label">CS3BET</span></button>
 <button type="button" id="t-automatic" class="v-nav-item" title="Autopilot"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(35 12 12)"/><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(-35 12 12)"/><circle cx="12" cy="12" r="2"/></svg><span class="v-nav-label">Autopilot</span></button>
+<button type="button" id="t-subscriptions" class="v-nav-item" title="Подписки"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 6h14M5 12h14M5 18h8"/><path d="m16 18 2 2 4-4"/></svg><span class="v-nav-label">Подписки</span></button>
 <button type="button" id="t-scenarios" class="v-nav-item" title="Сценарии"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-2-14-4 16"/></svg><span class="v-nav-label">Сценарии</span></button>
 <button type="button" id="t-vpn" class="v-nav-item" title="VPN"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3 5 6v6c0 4 3 7 7 9 4-2 7-5 7-9V6z"/><path d="m9 12 2 2 4-4"/></svg><span class="v-nav-label">VPN</span></button>
 <button type="button" id="t-settings" class="v-nav-item" title="Настройки"><span aria-hidden="true">⚙</span><span class="v-nav-label">Настройки</span></button>
@@ -1116,6 +1122,14 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
      <div id="grid" class="acc-table"></div>
    </div><div id="acc-load-errors" class="acc-load-errors" hidden></div><p class="acc-table-note">Цвет числа: зелёный — своя сессия, жёлтый — внешняя, красный — нет подключения. Число — результат последней проверки; обновить можно в профиле.</p></div>
   <aside id="detail"></aside>
+ </section>
+ <section id="v-subscriptions" class="view">
+  <div class="accwrap">
+   <div class="sectionhead"><h2>Подписки</h2><button type="button" id="subscriptions-refresh" class="ui-btn">Обновить список</button></div>
+   <p id="subscriptions-info" class="status" aria-live="polite"></p>
+   <p id="subscriptions-message" class="status" role="status"></p>
+   <div id="subscriptions-list" class="subscriptions-list"></div>
+  </div>
  </section>
  <section id="v-scenarios" class="view">
   <div class="accwrap">
@@ -1326,7 +1340,7 @@ function avatar(src,label,size=44){
 const avUrl=a=>`/api/accounts/${enc(a.name)}/avatar?v=${a.avatar_ver}`;
 const chatAv=(acc,id)=>`/api/accounts/${enc(acc)}/chats/${id}/avatar`;
 
-const VELTRIX_NAMES={accounts:'Profiles',examples:'Identity',upload:'Deploy',twofa:'2FA',messages:'Inbox',orders:'Toolkit',miniapp:'Mini App',cs3bet:'CS3BET',automatic:'Autopilot',vpn:'VPN',scenarios:'Сценарии',settings:'Настройки'};
+const VELTRIX_NAMES={accounts:'Profiles',examples:'Identity',upload:'Deploy',twofa:'2FA',messages:'Inbox',orders:'Toolkit',miniapp:'Mini App',cs3bet:'CS3BET',automatic:'Autopilot',vpn:'VPN',subscriptions:'Подписки',scenarios:'Сценарии',settings:'Настройки'};
 function veltrixCloseMobile(){document.body.classList.remove('v-menu-open');$('#veltrix-mobile-backdrop').hidden=true}
 function showTab(t){
   // A category always reopens at its home screen, never at a nested service.
@@ -1345,9 +1359,9 @@ function showTab(t){
   $('#veltrix-breadcrumb').textContent=VELTRIX_NAMES[t]||'VELTRIX';
   document.title=(VELTRIX_NAMES[t]||'Control')+' — VELTRIX';
   veltrixCloseMobile();
-  for(const n of["accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic","vpn","scenarios","settings"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
+  for(const n of["accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic","vpn","subscriptions","scenarios","settings"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
 }
-let PANEL_SETTINGS={hidden_tabs:[],view_spread:10,reaction_spread:20,search_workers:5,profile_group:'https://t.me/minecraft_beseda764'};
+let PANEL_SETTINGS={hidden_tabs:[],view_spread:10,reaction_spread:20,search_workers:5,subscription_hours:72,subscription_spread:0,profile_group:'https://t.me/minecraft_beseda764'};
 function applyPanelSettings(){
   for(const tab of Object.keys(VELTRIX_NAMES)){
     const button=$('#t-'+tab);
@@ -1370,17 +1384,21 @@ function renderPanelSettings(){
     field.value=PANEL_SETTINGS[key];return field;
   };
   const views=number('view_spread',0,100),reacts=number('reaction_spread',0,100),workers=number('search_workers',1);
+  const subHours=number('subscription_hours',1,8760),subSpread=number('subscription_spread',0,100);
   const group=el('input');group.value=PANEL_SETTINGS.profile_group;
   const button=el('button','btn','Сохранить'),status=el('div','status');
   root.append(tabs,fld('Разброс просмотров Автопилота (±%)',views),fld('Разброс реакций ниже лимита (%)',reacts),
-    fld('Аккаунтов для поиска профилей',workers),fld('Группа по умолчанию',group),button,status);
+    fld('Аккаунтов для поиска профилей',workers),fld('Группа по умолчанию',group),
+    el('h3','','Автовыход из подписок'),fld('Интервал автовыхода (часы)',subHours),
+    fld('Случайный разброс интервала (±%)',subSpread),button,status);
   button.onclick=async()=>{
     try{
       PANEL_SETTINGS=await api('/api/panel-settings',{method:'POST',json:{
         hidden_tabs:[...tabs.querySelectorAll('input:not(:checked)')].map(input=>input.value),
-        view_spread:views.valueAsNumber,reaction_spread:reacts.valueAsNumber,search_workers:workers.valueAsNumber,profile_group:group.value}});
+        view_spread:views.valueAsNumber,reaction_spread:reacts.valueAsNumber,search_workers:workers.valueAsNumber,profile_group:group.value,
+        subscription_hours:subHours.valueAsNumber,subscription_spread:subSpread.valueAsNumber}});
       applyPanelSettings();AUTO_MULTI.formSignature='';
-      status.className='status ok';status.textContent='Сохранено. Разброс применяется к новым постам.';
+      status.className='status ok';status.textContent='Сохранено. Разброс Автопилота применяется к новым постам.';
     }catch(e){status.className='status err';status.textContent=e.message;}
   };
 }
@@ -1640,6 +1658,63 @@ function vpnRender(){
   };
   actions.append(getLink,settingsButton);body.append(actions,status);
 }
+const SUBS={busy:false,timer:null,signature:null};
+const subscriptionsDate=new Intl.DateTimeFormat('ru-RU',{timeZone:'Europe/Moscow',dateStyle:'short',timeStyle:'short'});
+function renderSubscriptions(data){
+  const info=[$('#subscriptions-info'),$('#subscriptions-refresh')];
+  info[0].textContent='Проверено аккаунтов: '+data.cached+' / '+data.total+
+    (data.scanning?' · Обновляем список…':'')+(data.errors?' · Не удалось обновить: '+data.errors:'')+
+    (data.updated?' · Самая ранняя проверка '+subscriptionsDate.format(data.updated*1000)+' МСК':'');
+  info[1].disabled=data.scanning;
+  const root=$('#subscriptions-list'),signature=JSON.stringify(data.channels);
+  if(SUBS.signature!==signature){
+    SUBS.signature=signature;
+    root.replaceChildren();
+    if(!data.channels.length)root.append(el('p','status',data.scanning?'Ищем подписки…':'Подписок пока нет.'));
+    for(const channel of data.channels){
+      const card=el('article','profile-card'),head=el('div','subscription-head'),name=el('div');
+      const image=channel.photo&&channel.count?'/api/subscriptions/'+channel.id+'/avatar?v='+encodeURIComponent(channel.photo):'';
+      const picture=avatar('',channel.title);
+      if(image){
+        const img=el('img');img.alt='';img.loading='lazy';
+        img.style.opacity='0';img.onload=()=>{img.style.opacity='';picture.replaceChildren(img);};
+        img.onerror=()=>img.remove();
+        picture.append(img);img.src=image;
+      }
+      name.append(el('h3','',channel.title));
+      if(channel.username)name.append(el('span','status','@'+channel.username));
+      head.append(picture,name);
+      const state=el('p','status subscription-channel-status',channel.enabled?
+        'Автовыход включён · следующий '+subscriptionsDate.format(channel.due*1000)+' МСК':'Автовыход выключен');
+      const actions=el('div','subscription-actions');
+      const toggle=el('button','ui-btn',channel.enabled?'Выключить автовыход':'Включить автовыход');
+      toggle.disabled=!channel.count&&!channel.enabled;
+      toggle.onclick=()=>subscriptionsRequest('/'+channel.id+'/auto',{enabled:!channel.enabled});
+      const quick=el('button','ui-btn','Быстрый выход');
+      quick.disabled=!channel.count;
+      quick.onclick=()=>subscriptionsRequest('/'+channel.id+'/leave',{});
+      actions.append(toggle,quick);
+      card.append(head,el('p','','Подписано аккаунтов: '+channel.count),state,actions);
+      root.append(card);
+    }
+  }
+  clearTimeout(SUBS.timer);
+  if(S.tab==='subscriptions')SUBS.timer=setTimeout(()=>subscriptionsRequest(),data.scanning?1000:15000);
+}
+async function subscriptionsRequest(path='',data){
+  if(SUBS.busy)return;
+  SUBS.busy=true;
+  const status=$('#subscriptions-message');
+  if(path)status.textContent='';
+  try{
+    const updated=await api('/api/subscriptions'+path,data===undefined?{}:{method:'POST',json:data});
+    renderSubscriptions(updated);
+    if(updated.left){status.className='status ok';status.textContent=updated.left+' вышел из канала.';}
+  }catch(error){status.className='status err';status.textContent=error.message;}
+  finally{SUBS.busy=false;}
+}
+$('#t-subscriptions').onclick=()=>{showTab('subscriptions');subscriptionsRequest('/refresh',{});};
+$('#subscriptions-refresh').onclick=()=>subscriptionsRequest('/refresh',{});
 const SC={token:null, busy:false, state:null, refreshing:false};
 function scenarioInvalidate(){
   SC.token=null;

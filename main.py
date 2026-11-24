@@ -44,6 +44,7 @@ import profile_copy
 import panel_settings
 import vpn
 import scenarios
+import subscriptions
 
 # ============== НАСТРОЙКИ ==============
 BASE_DIR = Path(__file__).resolve().parent
@@ -503,73 +504,6 @@ async def api_account_music_add(request):
         meta['music_count'] = count
         ACCOUNT_PROFILE_CACHE[acc.name] = meta
         return web.json_response({'ok': True, 'count': count, 'warning': warning, **added})
-
-
-# ---------- число каналов, на которые подписан аккаунт ----------
-CHANNELS_FILE = BASE_DIR / "channels_count.json"     # {аккаунт: {"n": число, "ts": время подсчёта}}
-CHANNELS_REFRESH = 15 * 60       # как часто пересчитываем один и тот же аккаунт, сек
-CHANNELS_GAP = 4                 # пауза между аккаунтами, чтобы не нагружать Telegram, сек
-
-
-def _channels_load():
-    try:
-        return {k: v for k, v in json.loads(CHANNELS_FILE.read_text(encoding="utf-8")).items() if isinstance(v, dict)}
-    except Exception:
-        return {}
-
-
-def _channels_save(data):
-    try:
-        tmp = CHANNELS_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, CHANNELS_FILE)
-    except Exception as exc:
-        print(f"[CHANNELS] не удалось сохранить: {exc}", flush=True)
-
-
-async def count_channels(acc):
-    """Только каналы (broadcast): без групп, супергрупп, ботов и личных чатов."""
-    n = 0
-    async for d in acc.client.iter_dialogs(ignore_migrated=True):
-        if d.is_channel and not d.is_group:
-            n += 1
-    return n
-
-
-async def channels_counter_loop():
-    saved = _channels_load()
-    for name, rec in saved.items():           # сразу показываем то, что считали до перезапуска
-        if name in ACCOUNTS and isinstance(rec.get("n"), int):
-            ACCOUNTS[name].channels = rec["n"]
-    while True:
-        try:
-            did = False
-            for name, acc in list(ACCOUNTS.items()):
-                if acc.me is None:
-                    continue
-                rec = saved.get(name) or {}
-                if acc.channels is not None and time.time() - float(rec.get("ts", 0)) < CHANNELS_REFRESH:
-                    continue
-                try:
-                    acc.channels = await count_channels(acc)
-                    saved[name] = {"n": acc.channels, "ts": time.time()}
-                    _channels_save(saved)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    wait = getattr(exc, "seconds", 0)
-                    print(f"[CHANNELS] {name}: {type(exc).__name__}: {exc}", flush=True)
-                    saved[name] = {"n": acc.channels, "ts": time.time()}   # не долбим сразу же снова
-                    if wait:
-                        await asyncio.sleep(min(int(wait), 120))
-                did = True
-                await asyncio.sleep(CHANNELS_GAP)
-            await asyncio.sleep(5 if did else 30)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            print(f"[CHANNELS] цикл: {type(exc).__name__}: {exc}", flush=True)
-            await asyncio.sleep(30)
 
 
 # ---------- сортировка и загрузка ----------
@@ -2820,8 +2754,19 @@ async def main():
                                         copy_profile_fields, clear_photos=clear_old_avatars)
     copies.register(app, get_acc)
     preferences = panel_settings.PanelSettings(BASE_DIR)
+    subscription_panel = subscriptions.Subscriptions(BASE_DIR, lambda: ACCOUNTS, preferences.get)
+
+    async def update_preferences(request):
+        old = preferences.get()
+        response = await preferences.update(request)
+        new = preferences.get()
+        if any(old[key] != new[key] for key in ('subscription_hours', 'subscription_spread')):
+            subscription_panel.reschedule()
+        return response
+
     app.router.add_get('/api/panel-settings', preferences.read)
-    app.router.add_post('/api/panel-settings', preferences.update)
+    app.router.add_post('/api/panel-settings', update_preferences)
+    subscription_panel.register(app)
     vpn.VpnSubscriptions(BASE_DIR, lambda: ACCOUNTS).register(app)
     scenarios.Scenarios(BASE_DIR, lambda: ACCOUNTS).register(app)
 
@@ -2908,7 +2853,6 @@ async def main():
     presence.keeper.configure(live_clients, BASE_DIR / "presence.json")
     presence.register(app)
     presence.keeper.start()
-    channels_task = asyncio.create_task(channels_counter_loop())
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, HOST, PORT).start()
@@ -2930,8 +2874,6 @@ async def main():
         if connect_task:
             connect_task.cancel()
             await asyncio.gather(connect_task, return_exceptions=True)
-        channels_task.cancel()
-        await asyncio.gather(channels_task, return_exceptions=True)
         await runner.cleanup()
         await presence.keeper.stop()   # все, кто сейчас в сети по расписанию, выходят из сети
         await asyncio.gather(*(a.client.disconnect() for a in ACCOUNTS.values()), return_exceptions=True)
