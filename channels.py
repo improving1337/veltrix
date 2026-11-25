@@ -22,9 +22,36 @@ import time
 import uuid
 
 from aiohttp import web
+from telethon import functions, types
 
 import plan_options
 from template_library import atomic_json_save
+
+
+async def view_after_join(client, updates, peer=None, extra=None):
+    """Best-effort follow-up after joining a broadcast channel."""
+    if not isinstance(peer, types.Channel):
+        peer = next((chat for chat in getattr(updates, 'chats', ())
+                     if isinstance(chat, types.Channel) and chat.broadcast), None)
+    if peer is None or not peer.broadcast:
+        return 0
+
+    async def view():
+        if await plan_options.wait_before_action(extra):
+            return 0
+        messages = await client.get_messages(peer, limit=6)
+        posts = [message.id for message in messages if isinstance(message, types.Message)]
+        count = 2 if len(posts) >= 2 and random.random() < .5 else 1
+        ids = posts[:count]
+        if not ids or await plan_options.wait_before_action(extra):
+            return 0
+        await client(functions.messages.GetMessagesViewsRequest(peer=peer, id=ids, increment=True))
+        return len(ids)
+
+    try:
+        return await asyncio.wait_for(view(), timeout=20)
+    except Exception:
+        return 0  # Failure to record a view does not undo the successful join.
 
 
 def parse_link(link):
@@ -423,11 +450,14 @@ class ChannelJoiner:
         from telethon.tl.functions.channels import JoinChannelRequest
         from telethon.tl.functions.messages import ImportChatInviteRequest
         try:
-            request = (ImportChatInviteRequest(key) if kind == "invite"
-                       else JoinChannelRequest(await client.get_entity(key)))
+            peer = await client.get_entity(key) if kind != "invite" else None
+            request = ImportChatInviteRequest(key) if kind == "invite" else JoinChannelRequest(peer)
             if await plan_options.wait_before_action(extra):
                 return "skip", "остановлено"
-            await client(request)
+            result = await client(request)
+            count = await view_after_join(client, result, peer, extra)
+            if count:
+                return "ok", f"вошёл · просмотрено постов: {count}"
             return "ok", "вошёл"
         except Exception as e:
             n = type(e).__name__

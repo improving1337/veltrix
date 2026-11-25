@@ -601,6 +601,14 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
  .subscription-head{display:flex;align-items:center;gap:12px;min-width:0}
  .subscription-head>div:last-child{min-width:0;overflow-wrap:anywhere}
  .subscription-head h3{margin:0 0 4px}
+ .subscription-mass{width:min(880px,calc(100% - 28px));max-height:88dvh;color:#f4f4f7;overflow:auto}
+ .subscription-mass::backdrop{background:#000a}
+ .subscription-mass-choices{max-height:43vh;overflow:auto;padding:3px}
+ .subscription-mass-choice{border:1px solid #865058;border-radius:10px;background:#251a1f;padding:12px;text-align:left;display:flex;flex-direction:column;gap:6px;overflow-wrap:anywhere}
+ .subscription-mass-choice[aria-pressed=true]{border-color:#4a9b76;background:#162821}
+ .subscription-mass-choice:focus-visible{outline:2px solid #c4b8ff;outline-offset:2px}
+ .subscription-mass-choice small{color:#e5a0a9}.subscription-mass-choice[aria-pressed=true] small{color:#8ed1ad}
+ #subscriptions-mass-run{margin:0 0 16px}
  .subscription-channel-status{margin:12px 0}.subscription-actions{display:flex;flex-wrap:wrap;gap:8px}
  .account-flag{display:inline-flex;align-items:center;gap:6px;font-size:12px}
  .account-flag select{width:auto;padding:5px 8px}
@@ -1159,7 +1167,32 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
  </section>
  <section id="v-subscriptions" class="view">
   <div class="accwrap">
-   <div class="sectionhead"><h2>Подписки</h2><button type="button" id="subscriptions-refresh" class="ui-btn">Обновить список</button></div>
+   <div class="sectionhead"><h2>Подписки</h2><div class="scenario-heading-actions">
+    <button type="button" id="subscriptions-mass-open" class="ui-btn">Массовый выход</button>
+    <button type="button" id="subscriptions-refresh" class="ui-btn">Обновить список</button>
+   </div></div>
+   <section id="subscriptions-mass-run" class="profile-card" aria-label="Массовый выход" hidden>
+    <div class="profile-card-title"><h3>Массовый выход</h3><button id="subscriptions-mass-stop" type="button" class="ui-btn">Остановить</button></div>
+    <p class="status" id="subscriptions-mass-progress" role="status"></p>
+   </section>
+   <dialog id="subscriptions-mass" class="profile-card subscription-mass" aria-labelledby="subscriptions-mass-title">
+    <div class="profile-card-title"><h3 id="subscriptions-mass-title">Массовый выход</h3><form method="dialog"><button class="ui-btn">Закрыть</button></form></div>
+    <p>Нажми на канал, чтобы сохранить подписку. Зелёный — остаёмся, красный — выходим.</p>
+    <p class="status">Выход применяется ко всем аккаунтам в плане, включая метку «Автопилот».</p>
+    <p id="subscriptions-mass-coverage" class="status"></p>
+    <div id="subscriptions-mass-choices" class="subscriptions-list subscription-mass-choices"></div>
+    <form id="subscriptions-mass-form">
+     <div class="scenario-row">
+      <label class="fld"><span>Начало (МСК, пусто — сразу)</span><input id="subscriptions-mass-start" type="datetime-local"></label>
+      <label class="fld"><span>Окончание (МСК)</span><input id="subscriptions-mass-end" type="datetime-local" required></label>
+     </div>
+     <div class="scenario-actions">
+      <button type="submit" id="subscriptions-mass-preview" class="ui-btn">Предпросмотр</button>
+      <button type="button" id="subscriptions-mass-confirm" class="ui-btn" disabled>Подтвердить выход</button>
+     </div>
+     <p id="subscriptions-mass-preview-info" class="status" role="status"></p>
+    </form>
+   </dialog>
    <p id="subscriptions-info" class="status" aria-live="polite"></p>
    <p id="subscriptions-message" class="status" role="status"></p>
    <div id="subscriptions-list" class="subscriptions-list"></div>
@@ -1695,10 +1728,13 @@ function vpnRender(){
   };
   actions.append(getLink,settingsButton);body.append(actions,status);
 }
-const SUBS={busy:false,timer:null,signature:null};
+const SUBS={busy:false,timer:null,signature:null,data:null};
 const subscriptionsDate=new Intl.DateTimeFormat('ru-RU',{timeZone:'Europe/Moscow',dateStyle:'short',timeStyle:'short'});
+const MASS={keep:new Set(),token:null,busy:false,catalog:null};
 function renderSubscriptions(data){
-  const info=[$('#subscriptions-info'),$('#subscriptions-refresh')];
+  SUBS.data=data;
+  renderMassProgress(data.bulk);
+  if($('#subscriptions-mass').open)renderMassChoices(data);  const info=[$('#subscriptions-info'),$('#subscriptions-refresh')];
   info[0].textContent='Проверено аккаунтов: '+data.cached+' / '+data.total+
     (data.scanning?' · Обновляем список…':'')+(data.errors?' · Не удалось обновить: '+data.errors:'')+
     (data.updated?' · Самая ранняя проверка '+subscriptionsDate.format(data.updated*1000)+' МСК':'');
@@ -1736,7 +1772,7 @@ function renderSubscriptions(data){
     }
   }
   clearTimeout(SUBS.timer);
-  if(S.tab==='subscriptions')SUBS.timer=setTimeout(()=>subscriptionsRequest(),data.scanning?1000:15000);
+  if(S.tab==='subscriptions')SUBS.timer=setTimeout(()=>subscriptionsRequest(),data.scanning||data.bulk?.status==='running'?1000:15000);
 }
 async function subscriptionsRequest(path='',data){
   if(SUBS.busy)return;
@@ -1752,6 +1788,103 @@ async function subscriptionsRequest(path='',data){
 }
 $('#t-subscriptions').onclick=()=>{showTab('subscriptions');subscriptionsRequest('/refresh',{});};
 $('#subscriptions-refresh').onclick=()=>subscriptionsRequest('/refresh',{});
+function invalidateMassPreview(){
+  MASS.token=null;
+  $('#subscriptions-mass-confirm').disabled=true;
+  $('#subscriptions-mass-preview-info').textContent='';
+}
+function renderMassProgress(job){
+  const block=$('#subscriptions-mass-run'),stop=$('#subscriptions-mass-stop');
+  block.hidden=!job;
+  if(!job)return;
+  stop.hidden=job.status!=='running';
+  const label={running:job.start>Date.now()/1000?'Запланирован':'Выполняется',finished:'Завершён',stopped:'Остановлен'}[job.status];
+  $('#subscriptions-mass-progress').textContent=label+' · '+subscriptionsDate.format(job.start*1000)+' — '+
+    subscriptionsDate.format(job.end*1000)+' МСК · выходов '+job.done+' из '+job.total+
+    (job.skipped?' · пропущено '+job.skipped:'')+(job.error?' · ошибок '+job.error:'')+
+    (job.last_error?' · '+job.last_error:'');
+}
+function renderMassChoices(data){
+  const coverage=$('#subscriptions-mass-coverage'),root=$('#subscriptions-mass-choices');
+  coverage.textContent='Проверено аккаунтов: '+data.cached+' / '+data.total+
+    (data.cached<data.total?' · План строится по известным подпискам.':'');
+  const known=data.channels.filter(channel=>channel.count>0);
+  const signature=JSON.stringify(known.map(({id,title,count})=>[id,title,count]));
+  if(MASS.catalog===signature)return;
+  MASS.catalog=signature;
+  invalidateMassPreview();
+  root.replaceChildren();
+  for(const channel of known){
+    const button=el('button','subscription-mass-choice'),label=el('small');
+    button.type='button';
+    button.append(el('strong','',channel.title),label);
+    const update=()=>{
+      const keep=MASS.keep.has(channel.id);
+      button.setAttribute('aria-pressed',String(keep));
+      label.textContent=(keep?'Остаёмся':'Выходим')+' · аккаунтов '+channel.count;
+    };
+    button.onclick=()=>{
+      if(MASS.keep.has(channel.id))MASS.keep.delete(channel.id);else MASS.keep.add(channel.id);
+      update();invalidateMassPreview();
+    };
+    update();
+    root.append(button);
+  }
+  if(!known.length)root.append(el('p','status','Ждём список каналов.'));
+}
+$('#subscriptions-mass-open').onclick=()=>{
+  if(SUBS.data?.bulk?.status==='running'){
+    $('#subscriptions-mass-run').scrollIntoView({block:'nearest'});return;
+  }
+  MASS.keep.clear();MASS.catalog=null;
+  invalidateMassPreview();
+  $('#subscriptions-mass-start').value='';
+  const local=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+  $('#subscriptions-mass-end').value=local.format(Date.now()+3600000).replace(' ','T');
+  $('#subscriptions-mass').showModal();
+  if(SUBS.data)renderMassChoices(SUBS.data);
+};
+function massPayload(){
+  const timestamp=id=>{
+    const value=$('#subscriptions-mass-'+id).value;
+    return value?Date.parse(value+'+03:00')/1000:null;
+  };
+  return {keep:[...MASS.keep].sort(),start:timestamp('start'),end:timestamp('end')};
+}
+async function subscriptionsMassAction(command){
+  if(MASS.busy)return;
+  const note=$('#subscriptions-mass-preview-info'),preview=$('#subscriptions-mass-preview'),
+    confirmButton=$('#subscriptions-mass-confirm');
+  const payload=massPayload(),catalog=MASS.catalog;
+  MASS.busy=true;preview.disabled=confirmButton.disabled=true;
+  try{
+    const updated=await api('/api/subscriptions/mass/'+command,{method:'POST',json:{...payload,token:MASS.token}});
+    if(command==='preview'){
+      if(catalog!==MASS.catalog||JSON.stringify(payload)!==JSON.stringify(massPayload()))return;
+      MASS.token=updated.token;
+      note.className='status';
+      note.textContent=updated.leaves+' выходов · '+updated.channels+' каналов · '+updated.accounts+' аккаунтов · '+
+        subscriptionsDate.format(updated.start*1000)+' — '+subscriptionsDate.format(updated.end*1000)+' МСК';
+    }else{
+      if($('#subscriptions-mass').open)$('#subscriptions-mass').close();
+      invalidateMassPreview();
+      renderSubscriptions(updated);
+    }
+  }catch(error){
+    MASS.token=null;
+    if(command==='stop'){
+      $('#subscriptions-message').className='status err';$('#subscriptions-message').textContent=error.message;
+    }else{
+      note.className='status err';note.textContent=error.message;
+    }
+  }finally{
+    MASS.busy=false;preview.disabled=false;confirmButton.disabled=!MASS.token;
+  }
+}
+for(const id of ['start','end'])$('#subscriptions-mass-'+id).oninput=invalidateMassPreview;
+$('#subscriptions-mass-form').onsubmit=event=>{event.preventDefault();subscriptionsMassAction('preview');};
+$('#subscriptions-mass-confirm').onclick=()=>subscriptionsMassAction('start');
+$('#subscriptions-mass-stop').onclick=()=>subscriptionsMassAction('stop');
 const SC={token:null, busy:false, state:null, refreshing:false};
 function scenarioInvalidate(){
   SC.token=null;

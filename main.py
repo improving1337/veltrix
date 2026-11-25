@@ -2441,8 +2441,9 @@ async def api_buttons_check(request):
 async def press_one(acc, channel, message_id):
     entity = await acc.client.get_entity(channel)
     if message_id is None:
-        await acc.client(JoinChannelRequest(entity))
-        return "подписался на канал"
+        result = await acc.client(JoinChannelRequest(entity))
+        count = await channels.view_after_join(acc.client, result, entity)
+        return "подписался на канал" + (f" · просмотрено постов: {count}" if count else "")
     msg = await acc.client.get_messages(entity, ids=message_id)
     if not msg:
         raise ValueError("пост не найден или недоступен")

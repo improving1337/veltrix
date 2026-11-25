@@ -18,6 +18,7 @@ from aiohttp import web
 from telethon import functions, types, utils
 from telethon.errors import BotResponseTimeoutError, FloodWaitError, RPCError, UserAlreadyParticipantError
 
+from channels import view_after_join
 from gmail_delivery import GmailSettings, send_gmail_api
 from template_library import atomic_json_save
 
@@ -254,9 +255,10 @@ class VpnSubscriptions:
     async def join_channel(self, client, channel):
         if channel:
             try:
-                await client(functions.channels.JoinChannelRequest(TG_NAME.fullmatch(channel)[1]))
+                result = await client(functions.channels.JoinChannelRequest(TG_NAME.fullmatch(channel)[1]))
             except UserAlreadyParticipantError:
-                pass
+                return
+            await view_after_join(client, result)
 
     async def bot_messages(self, client, bot):
         messages = await client.get_messages(bot, limit=8)

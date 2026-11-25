@@ -1,5 +1,7 @@
-"""Cached channel memberships and scheduled, one-account departures."""
+"""Cached channel memberships, per-channel rules, and timed bulk departures."""
 import asyncio
+import hashlib
+import json
 import logging
 import random
 import time
@@ -7,7 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from aiohttp import web
-from telethon.errors import FloodWaitError, RPCError, UserNotParticipantError
+from telethon.errors import FloodPremiumWaitError, FloodWaitError, RPCError, UserNotParticipantError
 from telethon.tl import functions, types
 
 from template_library import atomic_json_save, json_load
@@ -16,6 +18,7 @@ LOG = logging.getLogger(__name__)
 CACHE_SECONDS = 900
 SCAN_GAP = 4
 RETRY_SECONDS = 900
+BULK_PACE = .5
 
 
 class Subscriptions:
@@ -27,6 +30,11 @@ class Subscriptions:
         self.memberships = state.get("memberships", {})
         self.rules = state.get("rules", {})
         self.cooldown = state.get("cooldown", {})
+        self.bulk = state.get("bulk")
+        if self.bulk:
+            for item in self.bulk["items"]:
+                if item["status"] == "sending":
+                    item.update(status="error", note="Неизвестный результат после перезапуска")
         self.avatars = {}
         self.lock = asyncio.Lock()
         self.image_limit = asyncio.Semaphore(3)
@@ -42,7 +50,7 @@ class Subscriptions:
 
     def save(self):
         atomic_json_save(self.path, {"memberships": self.memberships,
-                                     "rules": self.rules, "cooldown": self.cooldown})
+                                     "rules": self.rules, "cooldown": self.cooldown, "bulk": self.bulk})
 
     def connected(self):
         return {str(acc.me.id): acc for acc in self.accounts().values()
@@ -75,7 +83,8 @@ class Subscriptions:
         known = self.known()
         return {"channels": channels, "cached": len(known), "total": len(self.accounts()),
                 "updated": min((entry["seen"] for entry in known.values()), default=None),
-                "scanning": self.scan is not None and not self.scan.done(), "errors": self.scan_errors}
+                "scanning": self.scan is not None and not self.scan.done(), "errors": self.scan_errors,
+                "bulk": self.bulk_status()}
 
     def request_scan(self):
         if self.scan is None or self.scan.done():
@@ -151,17 +160,18 @@ class Subscriptions:
             self.rules.pop(channel, None)
         self.save()
 
-    def remove_membership(self, account, channel, acc):
+    def remove_membership(self, account, channel, acc, *, persist=True):
         channels = self.memberships[account]["channels"]
         channels.pop(channel, None)
         acc.channels = len(channels)
-        self.save()
+        if persist:
+            self.save()
 
     async def leave_one(self, channel, automatic=False):
         async with self.lock:
             now = self.clock()
             rule = self.rules.get(channel)
-            if automatic and (rule is None or rule["due"] > now):
+            if automatic and (rule is None or rule["due"] > now or self.bulk_applies(now)):
                 return
             connected = self.connected()
             entries = self.channel_members().get(channel, {})
@@ -181,8 +191,7 @@ class Subscriptions:
                 rule["due"] = self.next_due()
                 self.save()
             try:
-                await asyncio.wait_for(acc.client(functions.channels.LeaveChannelRequest(
-                    types.InputChannel(int(channel), info["access_hash"]))), timeout=30)
+                await self.send_leave(acc, channel, info)
             except UserNotParticipantError:
                 self.remove_membership(account, channel, acc)
                 if not automatic:
@@ -199,6 +208,156 @@ class Subscriptions:
                 raise ValueError("Выход не подтверждён Telegram. Обнови список перед повтором.") from None
             self.remove_membership(account, channel, acc)
             return " ".join(filter(None, (acc.me.first_name, acc.me.last_name))) or acc.me.username or acc.name
+
+    @staticmethod
+    async def send_leave(acc, channel, info):
+        request = functions.channels.LeaveChannelRequest(types.InputChannel(int(channel), info["access_hash"]))
+        await asyncio.wait_for(acc.client(request), timeout=30)
+
+    def bulk_applies(self, now):
+        return (self.bulk is not None and self.bulk["status"] == "running"
+                and self.bulk["start"] <= now < self.bulk["end"])
+
+    def bulk_status(self):
+        job = self.bulk
+        if job is None:
+            return None
+        counts = dict.fromkeys(("pending", "sending", "done", "skipped", "error"), 0)
+        next_due = None
+        for item in job["items"]:
+            status = item["status"]
+            counts[status] += 1
+            if status == "pending":
+                next_due = item["due"] if next_due is None else min(next_due, item["due"])
+        return {key: job[key] for key in ("status", "start", "end", "keep")} | {
+            "total": len(job["items"]), "next_due": next_due, **counts,
+            "last_error": next((item["note"] for item in reversed(job["items"]) if item["status"] == "error"), ""),
+        }
+
+    def bulk_plan(self, data):
+        if not isinstance(data, dict):
+            raise ValueError("Укажи время и исключения для массового выхода")
+        keep, start, end = data.get("keep"), data.get("start"), data.get("end")
+        if not isinstance(keep, list) or any(not isinstance(channel, str) for channel in keep):
+            raise ValueError("Некорректный список исключений")
+        if any(type(value) not in (int, float) or not 0 <= value < 253402300799
+               for value in (start, end) if value is not None):
+            raise ValueError("Некорректное время выхода")
+        now = self.clock()
+        effective_start = max(now, start or now)
+        if end is None or end <= effective_start:
+            raise ValueError("Время окончания должно быть позже начала и текущего времени")
+        members = self.channel_members()
+        keep = sorted(set(keep))
+        pairs = sorted((channel, account) for channel, entries in members.items()
+                       if channel not in keep for account in entries)
+        if not pairs:
+            raise ValueError("Нет подписок для выхода. Обнови список или измени исключения.")
+        if end - effective_start <= (len(pairs) - 1) * BULK_PACE:
+            raise ValueError(f"Выбери более длинный период. В плане {len(pairs)} выходов.")
+        token = hashlib.sha256(json.dumps([start, end, keep, pairs]).encode()).hexdigest()
+        return token, keep, effective_start, end, pairs
+
+    async def bulk_tick(self):
+        job = self.bulk
+        if job is None or job["status"] != "running" or self.clock() < job["start"]:
+            return
+        async with self.lock:
+            if job["status"] != "running":
+                return
+            now = self.clock()
+            pending = [item for item in job["items"] if item["status"] == "pending"]
+            if now >= job["end"] or not pending:
+                for item in pending:
+                    item.update(status="skipped", note="Истекло время выхода")
+                job["status"] = "finished"
+                self.save()
+                return
+            item = min(pending, key=lambda pair: pair["due"])
+            if item["due"] > now:
+                return
+            account, channel = item["account"], item["channel"]
+            info = self.known().get(account, {}).get("channels", {}).get(channel)
+            if info is None:
+                item.update(status="skipped", note="Подписка уже отсутствует")
+                self.save()
+                return
+            acc = self.connected().get(account)
+            blocked = self.cooldown.get(account, 0)
+            if acc is None or blocked > now:
+                item["due"] = min(job["end"], max(now + 15, blocked))
+                self.save()
+                return
+            if info["access_hash"] is None:
+                item.update(status="error", note="Сессии недоступен канал")
+                self.save()
+                return
+            item["status"] = "sending"
+            self.save()
+            try:
+                await self.send_leave(acc, channel, info)
+            except UserNotParticipantError:
+                self.remove_membership(account, channel, acc, persist=False)
+                item.update(status="skipped", note="Аккаунт уже вышел")
+            except (FloodWaitError, FloodPremiumWaitError) as exc:
+                blocked = self.clock() + max(1, exc.seconds)
+                self.cooldown[account] = blocked
+                if job["status"] != "running":
+                    item.update(status="skipped", note="Массовый выход остановлен")
+                elif blocked >= job["end"]:
+                    item.update(status="skipped", note="Ожидание Telegram выходит за пределы периода")
+                else:
+                    item.update(status="pending", due=blocked)
+            except (RPCError, OSError, ValueError) as exc:
+                item.update(status="error", note=f"Telegram не подтвердил выход ({type(exc).__name__})")
+            else:
+                self.remove_membership(account, channel, acc, persist=False)
+                item["status"] = "done"
+            self.save()
+
+    async def bulk_loop(self):
+        while True:
+            try:
+                await self.bulk_tick()
+            except Exception:
+                LOG.exception("Bulk subscription exit failed")
+            await asyncio.sleep(BULK_PACE if self.bulk and self.bulk["status"] == "running" else 2)
+
+    async def handle_bulk(self, request):
+        command = request.match_info["command"]
+        headers = {"Cache-Control": "no-store"}
+        try:
+            if command == "stop":
+                if not self.bulk or self.bulk["status"] != "running":
+                    raise ValueError("Нет активного массового выхода")
+                self.bulk["status"] = "stopped"
+                for item in self.bulk["items"]:
+                    if item["status"] == "pending":
+                        item.update(status="skipped", note="Массовый выход остановлен")
+                self.save()
+            else:
+                data = await request.json()
+                token, keep, start, end, pairs = self.bulk_plan(data)
+                if command == "preview":
+                    return web.json_response({"token": token, "start": start, "end": end,
+                                              "leaves": len(pairs), "channels": len({c for c, _ in pairs}),
+                                              "accounts": len({a for _, a in pairs})}, headers=headers)
+                if self.bulk and (self.bulk["status"] == "running"
+                                  or any(item["status"] == "sending" for item in self.bulk["items"])):
+                    raise ValueError("Дождись завершения текущего массового выхода или останови его")
+                if token != data.get("token"):
+                    raise ValueError("Список подписок или параметры изменились. Построй план заново.")
+                random.Random(token).shuffle(pairs)
+                self.bulk = {
+                    "status": "running", "start": start, "end": end, "keep": keep,
+                    "items": [{"channel": channel, "account": account, "status": "pending",
+                               "due": start + i * (end - start) / len(pairs)}
+                              for i, (channel, account) in enumerate(pairs)],
+                }
+                self.save()
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400, headers=headers)
+        return web.json_response(self.snapshot(), headers=headers)
 
     async def avatar(self, request):
         async with self.image_limit:
@@ -236,6 +395,8 @@ class Subscriptions:
             await asyncio.sleep(15)
             try:
                 now = self.clock()
+                if self.bulk_applies(now):
+                    continue
                 if any(self.scan_due(account, now) for account in self.connected()):
                     self.request_scan()
                 due = [channel for channel, rule in self.rules.items() if rule["due"] <= now]
@@ -248,9 +409,10 @@ class Subscriptions:
                 LOG.exception("Subscription scheduler failed")
 
     async def lifecycle(self, app):
-        task = asyncio.create_task(self.run())
+        tasks = [asyncio.create_task(self.run()), asyncio.create_task(self.bulk_loop())]
         yield
-        tasks = [task] + ([self.scan] if self.scan else [])
+        if self.scan:
+            tasks.append(self.scan)
         for active in tasks:
             active.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -276,6 +438,7 @@ class Subscriptions:
     def register(self, app):
         app.cleanup_ctx.append(self.lifecycle)
         app.router.add_get("/api/subscriptions", self.handle)
+        app.router.add_post("/api/subscriptions/mass/{command:preview|start|stop}", self.handle_bulk)
         app.router.add_post("/api/subscriptions/{command:refresh}", self.handle)
         app.router.add_post(r"/api/subscriptions/{channel:\d+}/{command:auto|leave}", self.handle)
         app.router.add_get(r"/api/subscriptions/{channel:\d+}/avatar", self.avatar)

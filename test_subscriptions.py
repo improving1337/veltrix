@@ -4,9 +4,12 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
 from telethon.errors import FloodWaitError
-from telethon.tl import types
+from telethon.tl import functions, types
 
+import channels
 from subscriptions import CACHE_SECONDS, Subscriptions
 
 
@@ -106,3 +109,78 @@ class SubscriptionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1", self.registry.channel_members()["11"])
         self.assertEqual(self.registry.rules["11"]["due"], self.now + 1800)
         self.assertEqual(self.registry.cooldown["1"], self.now + 1800)
+
+    async def test_bulk_plan_excludes_green_channels_and_continues_after_restart(self):
+        await self.scan()
+        self.registry.eligible = lambda account: False
+        app = web.Application()
+        app.router.add_post('/mass/{command}', self.registry.handle_bulk)
+        data = {'keep': ['11'], 'start': self.now + 60, 'end': self.now + 180}
+        async with TestClient(TestServer(app)) as http:
+            preview = await (await http.post('/mass/preview', json=data)).json()
+            self.assertEqual((preview['leaves'], preview['channels'], preview['accounts']), (2, 1, 2))
+            self.assertIsNone(self.registry.bulk)
+            self.assertEqual((await http.post('/mass/start', json=data | {'token': 'bad'})).status, 400)
+            response = await http.post('/mass/start', json=data | {'token': preview['token']})
+            self.assertEqual(response.status, 200)
+        await self.registry.bulk_tick()
+        self.assertEqual(sum(c.leave.await_count for c in self.clients), 0)
+        self.now += 60
+        await self.registry.bulk_tick()
+        self.assertEqual(sum(c.leave.await_count for c in self.clients), 1)
+        restored = Subscriptions(self.directory, lambda: self.accounts, lambda: self.prefs, lambda: self.now)
+        self.assertEqual(restored.bulk_status()['done'], 1)
+        restored.eligible = lambda account: False
+        await restored.bulk_tick()
+        self.assertEqual(sum(c.leave.await_count for c in self.clients), 1)
+        self.now += 60
+        await restored.bulk_tick()
+        await restored.bulk_tick()
+        self.assertEqual(restored.bulk_status()['status'], 'finished')
+        self.assertEqual(restored.bulk_status()['done'], 2)
+        self.assertEqual(restored.channel_members()['11'].keys(), {'1'})
+        self.assertTrue(all(c.leave.await_args.args[0].channel.channel_id == 10 for c in self.clients))
+
+    async def test_bulk_cooldown_and_expiry_cannot_send_outside_period(self):
+        await self.scan()
+        job = {'status': 'running', 'start': self.now, 'end': self.now + 20, 'keep': ['10'], 'items': [
+            {'channel': '11', 'account': '1', 'status': 'pending', 'due': self.now}
+        ]}
+        self.registry.bulk = job
+        self.clients[0].leave.side_effect = FloodWaitError(request=None, capture=30)
+        await self.registry.bulk_tick()
+        self.assertEqual(self.registry.bulk_status()['skipped'], 1)
+        self.assertIn("1", self.registry.channel_members()["11"])
+        self.now += 20
+        await self.registry.bulk_tick()
+        self.assertIsNone(self.registry.bulk_status()['next_due'])
+        self.clients[0].leave.assert_awaited_once()
+
+
+class JoinViewsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_join_records_latest_post_and_optionally_previous(self):
+        peer = channel(10, 'Новости', broadcast=True, access_hash=100)
+        replies = [
+            types.Message(30, types.PeerChannel(10)),
+            types.MessageService(29, types.PeerChannel(10), datetime.now(timezone.utc), types.MessageActionEmpty()),
+            types.Message(28, types.PeerChannel(10)),
+        ]
+        for value, expected in ((.25, [30, 28]), (.75, [30])):
+            client = AsyncMock(return_value=SimpleNamespace(chats=[peer]))
+            client.get_entity.return_value = peer
+            client.get_messages.return_value = replies
+            with patch('channels.random.random', return_value=value):
+                status, note = await channels.ChannelJoiner._join(client, 'public', '@example')
+            self.assertEqual(status, 'ok')
+            self.assertIn(f'постов: {len(expected)}', note)
+            request = client.await_args_list[-1].args[0]
+            self.assertIsInstance(request, functions.messages.GetMessagesViewsRequest)
+            self.assertTrue(request.increment)
+            self.assertEqual(request.id, expected)
+
+    async def test_optional_view_failure_keeps_successful_join(self):
+        peer = channel(10, 'Новости', broadcast=True, access_hash=100)
+        client = AsyncMock(return_value=SimpleNamespace(chats=[peer]))
+        client.get_messages.side_effect = OSError('offline')
+        self.assertEqual(await channels.ChannelJoiner._join(client, 'invite', 'invitation'), ('ok', 'вошёл'))
+        client.assert_awaited_once()
