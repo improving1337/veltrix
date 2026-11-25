@@ -2061,8 +2061,17 @@ const accAdd=$("#acc-add");if(accAdd)accAdd.onclick=()=>showTab("upload");
 
 /* ---------- CS3BET ---------- */
 let CBHZ=false;try{CBHZ=localStorage.getItem("cbHideZero")==="1"}catch{}
-const CB={hideZero:CBHZ,rowEls:{},rw:{},rwEls:{},betStats:{},betEls:{},rwq:[],rwRun:false,rwFetching:false,info:null,bal:{},acc:null,num:0,mode:"bet",tpl:[],matches:[],sel:new Map(),done:{},busy:false,gen:0,stake:"",msg:null,paint:null,rows:{}};
+const CB_BALANCE_SORT={default:"Порядок списка",desc:"Баланс по убыванию",asc:"Баланс по возрастанию"};
+let cbSavedSort;
+try{cbSavedSort=localStorage.getItem("cbBalanceSort")}catch{}
+const CB={hideZero:CBHZ,balanceSort:Object.hasOwn(CB_BALANCE_SORT,cbSavedSort)?cbSavedSort:"default",rowEls:{},rw:{},rwEls:{},betStats:{},betEls:{},rwq:[],rwRun:false,rwFetching:false,info:null,bal:{},acc:null,num:0,mode:"bet",tpl:[],matches:[],sel:new Map(),done:{},busy:false,gen:0,stake:"",msg:null,paint:null,rows:{}};
 const fmtBal=v=>Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:false});
+function cbNumericBalance(name){
+  const value=CB.bal[name]?.balance;
+  if(typeof value!=="number"&&(typeof value!=="string"||!value.trim()))return null;
+  const number=Number(value);
+  return Number.isFinite(number)?number:null;
+}
 const fmtOdd=v=>v==null?"—":Number(v).toFixed(2);
 $("#t-cs3bet").onclick=async()=>{showTab("cs3bet");if(!S.accounts.length)await loadAccounts();if(CB.acc)cbBetView();else cbList()};
 function cbAccounts(){return S.accounts.filter(a=>a.connected&&a.flag!=='autopilot')}
@@ -2076,7 +2085,11 @@ function cbList(){
   CB.acc=null;CB.mode="bet";const root=$("#cb-root");root.replaceChildren();
   const head=el("div","sectionhead"),hd=el("div");
   const sub=el("p","subline","Аккаунты и баланс в игре. Монеты виртуальные.");hd.append(el("h2","","CS3BET"),sub);
-  const act=el("div");act.style.cssText="display:flex;gap:8px";
+  const act=el("div");act.style.cssText="display:flex;flex-wrap:wrap;gap:8px";
+  const sort=el("select");
+  sort.style.width="auto";sort.setAttribute("aria-label","Сортировка аккаунтов CS3BET");
+  sort.append(...Object.entries(CB_BALANCE_SORT).map(([value,label])=>new Option(label,value)));
+  sort.value=CB.balanceSort;
   const tp=el("button","btn ghost","Шаблоны"),pr=el("button","btn ghost","Промокод"),rf=el("button","btn ghost","Обновить");
   for(const b of[tp,pr,rf])b.style.cssText="width:auto;margin:0";
   rf.onclick=()=>{cbSync()};tp.onclick=cbOpenTpl;pr.onclick=cbPromo;
@@ -2087,13 +2100,36 @@ function cbList(){
   eye.onclick=()=>{CB.hideZero=!CB.hideZero;try{localStorage.setItem("cbHideZero",CB.hideZero?"1":"0")}catch{}
     for(const n of Object.keys(CB.rowEls))cbApplyHide(n);eyeSync()};
   CB.eyeSync=eyeSync;
-  act.append(tp,pr,eye,rf);head.append(hd,act);root.append(head);
+  act.append(sort,tp,pr,eye,rf);head.append(hd,act);root.append(head);
   const tline=el("div","status");tline.id="cb-tline";root.append(tline);
   const setTline=()=>{tline.textContent=CB.tpl.length?`Шаблон: ${cbTplText()}`:"Шаблон не выбран — нажми «Шаблоны»"};
   setTline();cbLoadTpl().then(()=>{if(S.tab==="cs3bet"&&!CB.acc){setTline();for(const b of root.querySelectorAll(".cbtpl"))b.disabled=!CB.tpl.length}});
   const accs=cbAccounts();
-  if(!accs.length){root.append(el("div","empty","Нет подключённых аккаунтов"));return}
+  if(!accs.length){sort.disabled=true;root.append(el("div","empty","Нет подключённых аккаунтов"));return}
   const rows=CB.rows={};CB.rowEls={};CB.betEls={};
+  const rowEls=CB.rowEls,list=el("div");
+  root.append(list);
+  function sortRows(){
+    const order=accs.slice();
+    const direction=CB.balanceSort;
+    if(direction!=="default"){
+      order.sort((a,b)=>{
+        const left=cbNumericBalance(a.name),right=cbNumericBalance(b.name);
+        if(left===null)return right===null?0:1;
+        if(right===null)return -1;
+        return direction==="desc"?right-left:left-right;
+      });
+    }
+    order.forEach((account,index)=>{
+      const row=rowEls[account.name];
+      if(list.children[index]!==row)list.insertBefore(row,list.children[index]||null);
+    });
+  }
+  sort.onchange=()=>{
+    CB.balanceSort=sort.value;
+    try{localStorage.setItem("cbBalanceSort",sort.value)}catch{}
+    sortRows();
+  };
   accs.forEach((a,i)=>{
     const row=el("div","cbrow"),info=el("div","cbinfo"),n=el("div","cbn",`Аккаунт ${i+1}`);
     n.append(" ",el("span","chip",a.name));
@@ -2109,12 +2145,17 @@ function cbList(){
     const rw=el("div","cbrw"),rd=el("div"),rl=el("div"),rm=el("div","rwm"),dsp=el("b","","…"),wsp=el("b","","…");
     rd.append("Ежедневная награда: ",dsp);rl.append("Колесо: ",wsp);rw.append(rd,rl,rm);
     CB.rwEls[a.name]={d:dsp,w:wsp,m:rm};
-    row.append(info,bets,rw,tb,open,go);root.append(row);rows[a.name]=b;CB.rowEls[a.name]=row;
+    row.append(info,bets,rw,tb,open,go);list.append(row);rows[a.name]=b;rowEls[a.name]=row;
   });
+  let sortPending=false;
   const paint=CB.paint=(name)=>{const b=CB.rows[name],d=CB.bal[name];if(!b||!d)return;
     if(d.balance==null){b.className="cbb err";b.textContent="Баланс: не удалось получить"+(d.error?` (${d.error})`:"")}
     else{b.className="cbb";b.replaceChildren("Баланс: ",el("b","",fmtBal(d.balance)))}
-    cbApplyHide(name)};
+    cbApplyHide(name);
+    if(CB.balanceSort!=="default"&&!sortPending){
+      sortPending=true;
+      queueMicrotask(()=>{sortPending=false;if(list.isConnected)sortRows()});
+    }};
   for(const a of accs)paint(a.name);
   CB.eyeSync();
   const info=CB.info=t=>{if(t)tline.textContent=t;else setTline()};
