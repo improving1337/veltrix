@@ -1146,7 +1146,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
   </div>
   <div class="auto-panel"><div class="auto-head"><h3>DeepSeek · рекомендации для выбранного поста</h3><small>Ключ DEEPSEEK_API_KEY в .env</small></div>
    <div class="auto-recommend" id="auto-ai" style="margin-top:12px">ИИ проанализирует новую публикацию, если настроен DeepSeek API.</div>
-   <div class="auto-head" style="margin-top:20px"><h3>24 часа · модель рекомендаций по реакциям</h3><small>Использует почасовой профиль реакций</small></div>
+   <div class="auto-head" style="margin-top:20px"><h3>24 часа · график реакций</h3><small id="auto-reaction-model-note"></small></div>
    <div class="auto-observed-plot" id="auto-reaction-model-plot"></div><div class="auto-hours" id="auto-reaction-model-hours"></div>
    <p class="auto-note">При включённом автовыполнении рекомендации DeepSeek определяют эмодзи и количество для функции «Реакции». Для репостов оценивается важность публикации. План ограничен 10% от целевых просмотров. Репосты сохраняются в «Избранное» аккаунтов.</p>
   </div>
@@ -4338,7 +4338,12 @@ function autoForecast(){
   const obs=d.observed_view_hours||[];
   $('#auto-hour-observed').textContent=active&&(d.observed_coverage||[])[now]?obs[now]: 'Недостаточно замеров';
   $('#auto-time-fill').style.width=active?((d.post_age_seconds%3600)/36).toFixed(2)+'%':now===null?'0%':'100%';
-  autoHoursPlot('auto-reaction-model-plot','auto-reaction-model-hours',reactions,'reactions');
+  const realistic=d.reaction_timing==='realistic'&&d.post_date;
+  const clock=new Intl.DateTimeFormat('ru-RU',{timeZone:'Europe/Moscow',hour:'2-digit',minute:'2-digit'});
+  const times=realistic?reactions.map((_,i)=>clock.format(Date.parse(d.post_date)+i*3600000)):null;
+  $('#auto-reaction-model-note').textContent=!d.post_date?'':
+    realistic?'Прайм-тайм по МСК':'Профиль Легаси · часы с публикации';
+  autoHoursPlot('auto-reaction-model-plot','auto-reaction-model-hours',reactions,'reactions',null,times);
 }
 function autoObserved(){
   const d=AUTO.data;if(!d)return;
@@ -4617,7 +4622,7 @@ function autoRender(d,full=false){
     autoPolicyFields(d);AUTO.values=(d.hours||AUTO.values).slice();AUTO.activity=(d.view_activity||DEFAULT_VIEW_ACTIVITY).slice();
     const realistic=d.view_mode==='realistic';
     $('#auto-realistic-profile').hidden=!realistic;$('#auto-legacy-profile').open=!realistic;
-    $('#auto-legacy-title').textContent=realistic?'Почасовой профиль реакций':'Почасовой профиль Легаси и реакций';
+    $('#auto-legacy-title').textContent='Почасовой профиль Легаси';
     $('#auto-view-preview-title').textContent=realistic?'Предпросмотр «ёлочки» на 48 часов':'Предпросмотр Легаси на 24 часа';
     $('#auto-day2').value=d.view_day2_pct??10;$('#auto-preview-total').value=d.max_views||200;
     AUTO.dirty=false;autoGraph();autoClearViewPreview();$('#auto-sum').textContent='';

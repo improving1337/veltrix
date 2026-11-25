@@ -768,6 +768,11 @@ class Monitor:
     def post_settings(self, post):
         return post.get('settings', self.state)
 
+    def reaction_weights(self, post):
+        if post.get('reaction_timing') == 'realistic':
+            return post['view_curve'][:MONITOR_HOURS]
+        return self.post_settings(post)['hours']
+
     async def is_subscriber(self, name, client, channel, *, before_action=False):
         key = (channel, name)
         entry = self.membership_cache.get(key)
@@ -866,7 +871,9 @@ class Monitor:
             result['model_view_hours'] = apportion(result['view_target'], settings['hours'])
             result['model_view_shares'] = [x * 10 for x in settings['hours']]
         suggestion = post.get('suggestion') or {}
-        result['model_reaction_hours'] = apportion(suggestion.get('total', 0), settings['hours'])
+        reaction_plan = execution.get('reactions') or {}
+        result['model_reaction_hours'] = apportion(
+            reaction_plan.get('target', suggestion.get('total', 0)), self.reaction_weights(post))
         result['execution_views'] = execution_summary(execution.get('views'))
         result['execution_reactions'] = execution_summary(execution.get('reactions'))
         result['execution_reposts'] = execution_summary(execution.get('reposts'))
@@ -1010,6 +1017,7 @@ class Monitor:
             post['suggestion'] = None
         if settings['view_mode'] == 'realistic':
             post['view_curve'] = view_curve(published, settings['view_activity'])
+            post['reaction_timing'] = 'realistic'
         self.sample_message(post, message, now)
         self.state['posts'].append(post)
         return post
@@ -1271,7 +1279,11 @@ class Monitor:
         prior = execution.get(service) or {}
         settings = self.post_settings(post)
         new_view_timing = service in ('views', 'reposts') and view_window(post) == VIEW_HOURS
-        weights = post['view_curve'] if new_view_timing else settings['hours']
+        if service == 'reactions':
+            hours = self.reaction_weights(post)
+        else:
+            hours = settings['hours']
+        weights = post['view_curve'] if new_view_timing else hours
         day2_pct = settings['view_day2_pct'] if new_view_timing else None
         if service in ('views', 'reposts', 'votes'):
             # Accounts reconnect gradually after startup. A temporary drop in
@@ -1279,7 +1291,7 @@ class Monitor:
             target = max(target, prior.get('target', 0))
         label = 'option' if service == 'votes' else 'emoji'
         deadline = parse_timestamp(post['poll']['deadline']) if service == 'votes' else None
-        signature = {'target': target, 'hours': list(settings['hours']),
+        signature = {'target': target, 'hours': list(hours),
                      'options' if service == 'votes' else 'emojis': [[emoji, count] for emoji, count in (emojis or [])]}
         if new_view_timing:
             signature['view_day2_pct'] = day2_pct

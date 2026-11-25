@@ -198,6 +198,38 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(web.HTTPBadRequest):
             await self.monitor.preview_views(_JsonRequest(data | {'view_activity': [0] * 24}))
 
+    async def test_realistic_reactions_follow_local_peak_and_keep_old_plans(self):
+        mon = self.monitor
+        mon.state['view_mode'] = 'realistic'
+        published = datetime(2026, 11, 25, 3, tzinfo=automatic.MOSCOW)
+        message = self.message(1, 'Test')
+        message.date = published
+        new = mon.add_post(message, published.isoformat())
+        old = new | {'post_id': 2, 'execution': {}}
+        old.pop('reaction_timing')
+        mon.state['posts'].append(old)
+        for post in (new, old):
+            mon.update_execution_plan(post, 'reactions', 100, [('❤️', 100)], published)
+        expected = automatic.apportion(100, new['view_curve'][:24])
+        actual = [0] * 24
+        for action in new['execution']['reactions']['actions']:
+            bucket = (automatic.parse_timestamp(action['due']) - published).total_seconds() // 3600
+            self.assertLess(bucket, 24)
+            actual[int(bucket)] += 1
+        self.assertEqual(actual, expected)
+        self.assertIn(actual.index(max(actual)) + 3, (7, 8, 9))
+        self.assertGreater(max(actual), actual[0])
+        self.assertEqual(mon.snapshot_post(new, published)['model_reaction_hours'], actual)
+        self.assertEqual(mon.snapshot_post(old, published)['model_reaction_hours'], automatic.DEFAULT_HOURS)
+        prior = old['execution']['reactions']['actions']
+        mon.state['view_mode'] = 'legacy'
+        mon.save()
+        restored = automatic.Monitor(mon.storage, lambda: self.clients)
+        self.assertEqual(restored.snapshot_post(restored.find_post(1), published)['model_reaction_hours'], actual)
+        self.assertFalse(restored.update_execution_plan(
+            restored.find_post(2), 'reactions', 100, [('❤️', 100)], published))
+        self.assertEqual(restored.find_post(2)['execution']['reactions']['actions'], prior)
+
     async def test_reposts_are_saved_with_unique_accounts_and_use_existing_service(self):
         mon = self.monitor
         mon.preferences = lambda: {'view_spread': 0}
