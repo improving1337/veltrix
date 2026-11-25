@@ -319,6 +319,50 @@ def repost_target(views, percent):
     return min(views // 10, (views * percent + 50) // 100)
 
 
+def native_poll(message, published):
+    media = getattr(message, 'media', None)
+    if not isinstance(media, types.MessageMediaPoll):
+        return None
+    poll = media.poll
+    options = [{'id': answer.option.hex(), 'text': answer.text.text[:300]} for answer in poll.answers if answer.option]
+    if not options:
+        return None
+    deadline = parse_timestamp(poll.close_date)
+    if deadline is None and poll.close_period:
+        deadline = published + timedelta(seconds=poll.close_period)
+    return {'id': str(poll.id), 'question': poll.question.text[:500], 'options': options,
+            'quiz': bool(poll.quiz), 'closed': bool(poll.closed),
+            'deadline': deadline.isoformat() if deadline else None,
+            'percent': random.randint(40, 60), 'weights': {}, 'analysis': 'pending'}
+
+
+def poll_open(post, now):
+    poll = post.get('poll')
+    if not poll or poll['closed'] or not within_window(post, now, MONITOR_HOURS):
+        return False
+    deadline = parse_timestamp(poll['deadline'])
+    return deadline is None or now < deadline
+
+
+def poll_weights(poll, data):
+    raw = data.get('poll_weights')
+    if not isinstance(raw, dict):
+        return {}
+    weights = {}
+    for i, option in enumerate(poll['options'], 1):
+        weight = raw.get(str(i))
+        if type(weight) is int and 0 < weight <= 100:
+            weights[option['id']] = weight
+    return weights
+
+
+def vote_target(views, percent):
+    minimum, maximum = (views * 40 + 99) // 100, views * 60 // 100
+    if minimum > maximum:
+        return 0
+    return min(maximum, max(minimum, (views * percent + 50) // 100))
+
+
 def reaction_snapshot(msg):
     reactions = getattr(msg, 'reactions', None)
     if reactions is None:
@@ -455,14 +499,19 @@ MAX_ACTIONS_PER_TICK = 4
 MAX_PARALLEL_ACTIONS = 3
 
 
-def timed_slots(total, weights, published, now, *, day2_pct=None, retained=()):
+def timed_slots(total, weights, published, now, *, day2_pct=None, retained=(), deadline=None):
     """Spread new actions through the future part of the publication window."""
     published = parse_timestamp(published)
     window = len(weights)
-    if published is None or total <= 0 or now >= published + timedelta(hours=window):
+    if published is None or total <= 0:
+        return []
+    end = published + timedelta(hours=window)
+    if deadline is not None:
+        end = min(end, deadline)
+    if now >= end:
         return []
     fractions = [
-        max(0., (published + timedelta(hours=h + 1) - max(now, published + timedelta(hours=h))).total_seconds() / 3600)
+        max(0., (min(end, published + timedelta(hours=h + 1)) - max(now, published + timedelta(hours=h))).total_seconds() / 3600)
         for h in range(window)
     ]
     remaining = [max(0., float(weight)) * frac for weight, frac in zip(weights, fractions)]
@@ -488,10 +537,10 @@ def timed_slots(total, weights, published, now, *, day2_pct=None, retained=()):
         if count <= 0:
             continue
         start = max(now, published + timedelta(hours=h))
-        stop = published + timedelta(hours=h + 1)
+        stop = min(end, published + timedelta(hours=h + 1))
         seconds = max(0., (stop - start).total_seconds())
-        burst_end = published + timedelta(seconds=30)
-        if h == 0 and now < burst_end:
+        burst_end = min(stop, published + timedelta(seconds=30))
+        if h == 0 and now < burst_end < stop:
             early = (count + 1) // 2
             slots.extend((start + (burst_end - start) * ((j + random.uniform(.1, .9)) / early)).isoformat()
                          for j in range(early))
@@ -744,11 +793,12 @@ class Monitor:
         return {name: live[name] for name, confirmed in zip(live, included) if confirmed}
 
     @staticmethod
-    def needs_subscribers(post, settings, reactions_open=True):
+    def needs_subscribers(post, settings, reactions_open=True, votes_open=False):
         execution = post.get('execution', {})
         suggestion = post.get('suggestion') or {}
         targets = {
             'views': settings['max_views'] if settings['views_enabled'] else 0,
+            'votes': bool(post['poll']['weights']) if votes_open and settings['views_enabled'] and settings['max_views'] else 0,
             'reposts': int(post.get('repost_pct') or 0) if settings['views_enabled'] and settings['max_views'] else 0,
             'reactions': suggestion.get('total', 0) if reactions_open and suggestion.get('status') == 'ok' else 0,
         }
@@ -787,7 +837,7 @@ class Monitor:
 
     def snapshot_post(self, post, now=None):
         now = now or utc_now()
-        result = {k: v for k, v in post.items() if k not in ('samples', 'settings', 'view_curve')}
+        result = {k: v for k, v in post.items() if k not in ('samples', 'settings', 'view_curve', 'poll')}
         age = post_age_seconds(post, now)
         result['post_age_seconds'] = age
         window = view_window(post)
@@ -821,6 +871,26 @@ class Monitor:
         result['execution_reactions'] = execution_summary(execution.get('reactions'))
         result['execution_reposts'] = execution_summary(execution.get('reposts'))
         result['repost_target'] = repost_target(result['view_target'], post.get('repost_pct') or 0)
+        poll = post.get('poll')
+        if poll:
+            result['execution_votes'] = execution_summary(execution.get('votes'))
+            target = vote_target(result['view_target'], poll['percent']) if poll['weights'] else 0
+            votes = execution.get('votes') or {}
+            choices = (votes.get('signature') or {}).get('options')
+            if choices is None:
+                choices = list(zip(poll['weights'], apportion(target, poll['weights'].values())))
+            planned = dict(choices)
+            done = {}
+            for action in votes.get('actions', []):
+                if action.get('status') == 'done':
+                    option = action.get('option')
+                    done[option] = done.get(option, 0) + 1
+            result['poll'] = {
+                'question': poll['question'], 'open': poll_open(post, now), 'analysis': poll['analysis'],
+                'target': votes.get('target', target),
+                'options': [{'text': option['text'], 'planned': planned.get(option['id'], 0),
+                             'done': done.get(option['id'], 0)} for option in poll['options']],
+            }
         result['view_mode'] = 'realistic' if window == VIEW_HOURS else 'legacy'
         result.pop('execution', None)  # Don't send account identities or action logs to browser.
         return result
@@ -905,6 +975,11 @@ class Monitor:
             'actual_reactions': reactions, 'reaction_breakdown': breakdown,
             'last_checked': now, 'missing': False,
         })
+        poll = post.get('poll')
+        if poll:
+            media = getattr(msg, 'media', None)
+            if not isinstance(media, types.MessageMediaPoll) or media.poll.closed or str(media.poll.id) != poll['id']:
+                poll['closed'] = True
         samples = post.setdefault('samples', [])
         sample = {'at': now, 'views': post['views'], 'reactions': reactions}
         if not samples or samples[-1]['at'] != now:
@@ -928,8 +1003,13 @@ class Monitor:
                            {'status': 'unavailable', 'message': 'Для анализа DeepSeek нужен текст новости'}),
             'samples': [], 'missing': False,
         }
+        published = parse_timestamp(post['post_date'])
+        poll = native_poll(message, published)
+        if poll:
+            post['poll'] = poll
+            post['suggestion'] = None
         if settings['view_mode'] == 'realistic':
-            post['view_curve'] = view_curve(parse_timestamp(post['post_date']), settings['view_activity'])
+            post['view_curve'] = view_curve(published, settings['view_activity'])
         self.sample_message(post, message, now)
         self.state['posts'].append(post)
         return post
@@ -940,9 +1020,14 @@ class Monitor:
         Other unavailability reasons (e.g. no post text) are not retried.
         Retrying never changes the stored post window or its original ID.
         """
-        age = post_age_seconds(post, now or utc_now())
-        if not post.get('post_text') or age is None or not 0 <= age < MONITOR_HOURS * 3600:
+        now = now or utc_now()
+        poll = post.get('poll')
+        if (not post.get('post_text') and not poll) or not within_window(post, now, MONITOR_HOURS):
             return False
+        if poll_open(post, now) and not poll['weights'] and post['post_id'] not in self.analysis_tasks:
+            retry = parse_timestamp(poll.get('retry_at'))
+            if (retry is None or now >= retry) and env_value('DEEPSEEK_API_KEY', self.env_directory):
+                return True
         suggestion = post.get('suggestion')
         if suggestion is None:
             return True
@@ -989,7 +1074,7 @@ class Monitor:
                     post = self.add_post(message, now)
                     known.add(message.id)
                     # A newly discovered historical message is archived, not tracked.
-                    if post_age_seconds(post, now_dt) < MONITOR_HOURS * 3600 and post['post_text']:
+                    if post_age_seconds(post, now_dt) < MONITOR_HOURS * 3600 and (post['post_text'] or post.get('poll')):
                         ids_of_new_posts.append(post['post_id'])
                 # An independent window for every post. Newly seen posts
                 # have already had their initial sample; do not duplicate it.
@@ -1063,8 +1148,10 @@ class Monitor:
         if context is None:
             context = post_reaction_context(post_text)
         key = env_value('DEEPSEEK_API_KEY', self.env_directory)
+        poll = post.get('poll')
+        needs_vote_analysis = poll_open(post, utc_now()) and not poll['weights']
         local_policy = context.get('post_kind') in ('poll', 'ad')
-        if not key and not local_policy:
+        if not key and not local_policy and not poll:
             self.set_repost_budget(post, context)
             post['suggestion'] = {'status': 'unavailable', 'reason_code': 'missing_key',
                                   'message': 'Добавь DEEPSEEK_API_KEY в .env для рекомендаций ИИ'}
@@ -1085,7 +1172,10 @@ class Monitor:
         wire_emojis = {emoji: by_name[emoji] for emoji in settings['allowed_reactions'] if emoji in by_name}
         allowed = list(wire_emojis)
         needs_repost_analysis = 'repost_pct' in post and post['repost_pct'] is None
-        if local_policy or (not allowed and not needs_repost_analysis):
+        if poll and not key and needs_vote_analysis:
+            poll['analysis'] = 'missing_key'
+        use_model = bool(key) and (needs_vote_analysis or (not local_policy and (allowed or needs_repost_analysis)))
+        if not use_model:
             self.set_repost_budget(post, context)
             suggestion = validated_reaction_plan(context, max_reactions, allowed)
             post['suggestion'] = reaction_error or {**suggestion, 'wire_emojis': wire_emojis}
@@ -1112,6 +1202,19 @@ class Monitor:
             'Если ❤️ разрешено, отведи ему не менее 40% реакций. '
             'Подбирай остальные реакции по смыслу новости. Огоньки — редкое дополнение.'
         )
+        user_input = post_text
+        if needs_vote_analysis:
+            prompt += (
+                ' Для встроенного опроса добавь poll_weights — объект с номерами вариантов (строковые ключи '
+                '«1», «2» и так далее) и целыми весами от 0 до 100. Дай ноль неподходящим ответам. '
+                'Оцени каждый вариант по вопросу и описанию. Для викторины учти наиболее вероятный правильный ответ. '
+                'Один аккаунт сможет выбрать только один вариант, точное число голосов рассчитает программа. '
+                'Подбирай реакции также с учётом вопроса и описания.'
+            )
+            user_input = json.dumps({
+                'question': poll['question'], 'description': post_text, 'quiz': poll['quiz'],
+                'options': {str(i): option['text'] for i, option in enumerate(poll['options'], 1)},
+            }, ensure_ascii=False)
         try:
             async with self.analysis_semaphore:
                 timeout = aiohttp.ClientTimeout(total=30)
@@ -1121,7 +1224,7 @@ class Monitor:
                         headers={'Authorization': 'Bearer ' + key},
                         json={'model': 'deepseek-chat', 'temperature': 0.35,
                               'response_format': {'type': 'json_object'},
-                              'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': post_text}]},
+                              'messages': [{'role': 'system', 'content': prompt}, {'role': 'user', 'content': user_input}]},
                     ) as response:
                         body = await response.json(content_type=None)
                         if response.status >= 400:
@@ -1130,6 +1233,13 @@ class Monitor:
                 if not isinstance(data, dict):
                     raise ValueError('DeepSeek returned invalid JSON object')
                 data['post_kind'] = 'ad' if data.get('post_kind') == 'ad' else 'news'
+                if needs_vote_analysis:
+                    weights = poll_weights(poll, data)
+                    if weights:
+                        poll.update(weights=weights, analysis='ready')
+                        poll.pop('retry_at', None)
+                    else:
+                        poll.update(analysis='retry', retry_at=(utc_now() + timedelta(minutes=5)).isoformat())
                 self.set_repost_budget(post, data)
                 suggestion = validated_reaction_plan({**data, **context}, max_reactions, allowed)
                 suggestion['wire_emojis'] = wire_emojis
@@ -1137,7 +1247,12 @@ class Monitor:
             raise
         except Exception as exc:
             self.set_repost_budget(post, context)
-            suggestion = {'status': 'error', 'message': str(exc)[:250]}
+            if needs_vote_analysis:
+                poll.update(analysis='retry', retry_at=(utc_now() + timedelta(minutes=5)).isoformat())
+            if poll:
+                suggestion = validated_reaction_plan(context, max_reactions, allowed) | {'wire_emojis': wire_emojis}
+            else:
+                suggestion = {'status': 'error', 'message': str(exc)[:250]}
         # Post-local result: a newer publication must never steal an older result.
         post = self.find_post(post_id)
         if post:
@@ -1158,12 +1273,14 @@ class Monitor:
         new_view_timing = service in ('views', 'reposts') and view_window(post) == VIEW_HOURS
         weights = post['view_curve'] if new_view_timing else settings['hours']
         day2_pct = settings['view_day2_pct'] if new_view_timing else None
-        if service in ('views', 'reposts'):
+        if service in ('views', 'reposts', 'votes'):
             # Accounts reconnect gradually after startup. A temporary drop in
             # availability should not delete the saved view plan or its tail.
             target = max(target, prior.get('target', 0))
+        label = 'option' if service == 'votes' else 'emoji'
+        deadline = parse_timestamp(post['poll']['deadline']) if service == 'votes' else None
         signature = {'target': target, 'hours': list(settings['hours']),
-                     'emojis': [[emoji, count] for emoji, count in (emojis or [])]}
+                     'options' if service == 'votes' else 'emojis': [[emoji, count] for emoji, count in (emojis or [])]}
         if new_view_timing:
             signature['view_day2_pct'] = day2_pct
         reconciled = self.deduplicate_actions(prior)
@@ -1175,7 +1292,7 @@ class Monitor:
             if action.get('status') == 'pending' and action.get('account') not in live:
                 replacement = aliases.get(self.action_identity(action))
                 if replacement is None:
-                    if service in ('views', 'reposts') and len(live) < target:
+                    if service in ('views', 'reposts', 'votes') and len(live) < target:
                         retained.append(action)
                         continue
                     reconciled = True  # Unattempted work may be reassigned to an available user.
@@ -1204,26 +1321,25 @@ class Monitor:
         random.shuffle(candidates)  # Do not always choose the first account names.
         needed = min(max(0, target - len(fixed) - len(pending)), len(candidates))
         slots = timed_slots(needed, weights, post['post_date'], now, day2_pct=day2_pct,
-                            retained=fixed + pending)
+                            retained=fixed + pending, deadline=deadline)
         new_actions = [
             {'account': name, 'account_id': self.account_identity(name, client),
              'due': due, 'status': 'pending'}
             for (name, client), due in zip(candidates, slots)
         ]
         pending.extend(new_actions)
-        if service == 'reactions':
-            # Subtract *all attempted* reactions, including errors/unknown, so
-            # an ambiguous request does not trigger a second reaction.
-            wanted = {emoji: count for emoji, count in (emojis or [])}
+        if service in ('reactions', 'votes'):
+            # Reserve every attempted choice, including errors and unknown outcomes.
+            wanted = dict(emojis or [])
             for action in fixed:
-                emoji = action.get('emoji')
-                if emoji in wanted:
-                    wanted[emoji] = max(0, wanted[emoji] - 1)
+                key = action.get(label)
+                if key in wanted:
+                    wanted[key] = max(0, wanted[key] - 1)
             labels = mixed_reactions(list(wanted.items()), len(pending))
             if len(labels) < len(pending):
                 pending = pending[:len(labels)]
             for action, emoji in zip(sorted(pending, key=lambda a: a['due']), labels):
-                action['emoji'] = emoji
+                action[label] = emoji
         execution[service] = {'target': target, 'signature': signature, 'timing_version': 2,
                               'actions': fixed + pending + [a for a in prior.get('actions', [])
                                                               if a.get('status') == 'duplicate'],
@@ -1246,9 +1362,10 @@ class Monitor:
                 if not within_window(post, now) or post.get('missing') or not settings['execute_plan']:
                     continue
                 reactions_open = within_window(post, now, MONITOR_HOURS)
+                votes_open = poll_open(post, now)
                 pool = live
                 if settings['subscribers_only']:
-                    if not self.needs_subscribers(post, settings, reactions_open):
+                    if not self.needs_subscribers(post, settings, reactions_open, votes_open):
                         continue
                     if subscribers is None:
                         subscribers = await self.subscriber_accounts(live, channel)
@@ -1257,9 +1374,18 @@ class Monitor:
                     pool = subscribers
                 view_target = self.view_target(post, len(pool))
                 planned |= self.update_execution_plan(post, 'views', view_target, [], now, pool)
+                view_plan = post['execution']['views']
+                planned_views = view_plan['target']
+                if votes_open and (weights := post['poll']['weights']):
+                    target = vote_target(planned_views, post['poll']['percent'])
+                    if target:
+                        viewers = {action['account'] for action in view_plan['actions'] if action['status'] != 'duplicate'}
+                        voters = {name: client for name, client in pool.items() if name in viewers}
+                        options = list(zip(weights, apportion(target, weights.values())))
+                        planned |= self.update_execution_plan(post, 'votes', target, options, now, voters)
                 percent = post.get('repost_pct')
                 if percent is not None:
-                    target = repost_target(post['execution']['views']['target'], percent)
+                    target = repost_target(planned_views, percent)
                     if target:
                         planned |= self.update_execution_plan(post, 'reposts', target, [], now, pool)
                 recommendation = post.get('suggestion') or {}
@@ -1279,6 +1405,8 @@ class Monitor:
                     emojis = [(emoji, count) for emoji, count in allocation.items() if count]
                     planned |= self.update_execution_plan(post, 'reactions', target, emojis, now, pool)
                 for service, plan in post.get('execution', {}).items():
+                    if service == 'votes' and not votes_open:
+                        continue
                     if service == 'reactions' and (not reactions_open or recommendation.get('status') != 'ok'):
                         continue
                     for action in plan['actions']:
@@ -1302,7 +1430,7 @@ class Monitor:
                                            if self.action_tasks.get(k) is t else None)
 
     async def perform_action(self, post_id, service, action, channel):
-        """Use the existing Views, Reactions, and Reposts services."""
+        """Use the existing post services."""
         try:
             post = self.find_post(post_id)
             if post is None:
@@ -1311,13 +1439,19 @@ class Monitor:
             if client is None:
                 result = ('error', 'Аккаунт отключён')
             else:
-                from posts import ViewsJoiner, ReactionJoiner, RepostJoiner
-                joiner = {'views': ViewsJoiner, 'reactions': ReactionJoiner, 'reposts': RepostJoiner}[service]
+                from posts import ViewsJoiner, ReactionJoiner, RepostJoiner, PollJoiner
+                joiner = {'views': ViewsJoiner, 'reactions': ReactionJoiner,
+                          'reposts': RepostJoiner, 'votes': PollJoiner}[service]
                 extra = None
                 if service == 'reactions':
                     emoji = action['emoji']
                     spellings = (post.get('suggestion') or {}).get('wire_emojis', {})
                     extra = {'emoji': spellings.get(emoji, emoji)}
+                elif service == 'votes':
+                    async def vote_closed():
+                        return not poll_open(post, utc_now())
+                    extra = {'option': action['option'], 'poll_id': post['poll']['id'],
+                             'wait_before_action': vote_closed}
                 async with self.action_semaphore:
                     if self.post_settings(post)['subscribers_only']:
                         confirmed = await self.is_subscriber(action['account'], client, channel, before_action=True)
@@ -1325,6 +1459,9 @@ class Monitor:
                             action['status'] = 'pending'
                             action.pop('started_at', None)
                             return
+                    if service == 'votes' and not poll_open(post, utc_now()):
+                        action.update(status='error', note='Опрос закрыт или время голосования истекло')
+                        return
                     result = await asyncio.wait_for(
                         joiner._join(client, 'post', (channel, post_id), extra),
                         timeout=90)

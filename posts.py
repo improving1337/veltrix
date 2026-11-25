@@ -183,9 +183,17 @@ class PollJoiner(PostBase):
     @staticmethod
     async def _join(client, kind, key, extra=None):
         from telethon.tl.functions.messages import SendVoteRequest
+        from telethon.tl.types import MessageMediaPoll
         channel, mid = key
         try:
             source = await client.get_input_entity(channel)
+            if 'poll_id' in (extra or {}):
+                message = await client.get_messages(source, ids=mid)
+                media = getattr(message, 'media', None)
+                if not isinstance(media, MessageMediaPoll) or str(media.poll.id) != extra['poll_id'] or media.poll.closed:
+                    return "err", "опрос закрыт или недоступен"
+                if any(answer.chosen for answer in (media.results.results or [])):
+                    return "err", "аккаунт уже проголосовал"
             if await plan_options.wait_before_action(extra):
                 return "skip", "остановлено"
             await client(SendVoteRequest(source, mid, [bytes.fromhex(extra["option"])]))

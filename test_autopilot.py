@@ -245,6 +245,93 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(post['repost_pct'], 8)
         self.assertEqual(post['suggestion']['total'], 0)
 
+    def poll_message(self, text='', close_period=25):
+        poll = types.Poll(id=100, question=types.TextWithEntities('Кто победит?', []),
+                          answers=[types.PollAnswer(types.TextWithEntities(option, []), key)
+                                   for option, key in [('Синие', b'a'), ('Красные', b'b')]],
+                          hash=0, close_period=close_period)
+        msg = self.message(4, text)
+        msg.media = types.MessageMediaPoll(poll, types.PollResults())
+        return msg
+
+    async def test_native_poll_ai_weights_schedule_and_restart(self):
+        mon = self.monitor
+        mon.preferences = lambda: {'view_spread': 0, 'reaction_spread': 0}
+        mon.state.update(max_views=80, max_reactions=10, execute_plan=True)
+        msg = self.poll_message('Описание матча')
+        post = mon.add_post(msg, self.now.isoformat())
+        response = SimpleNamespace(status=200, json=AsyncMock(return_value={'choices': [
+            {'message': {'content': '{"poll_weights":{"1":75,"2":25,"999":100},"reactions":[],"post_kind":"news"}'}}
+        ]}))
+        session = MagicMock()
+        session.post.return_value.__aenter__.return_value = response
+        with (patch('automatic.env_value', return_value='test-key'),
+              patch('automatic.utc_now', return_value=self.now),
+              patch('automatic.aiohttp.ClientSession') as http,
+              patch.object(mon, 'channel_reactions', AsyncMock(return_value={'❤️', '👍'}))):
+            http.return_value.__aenter__.return_value = session
+            await mon.analyze(4)
+            mon.state['active'] = True
+            await mon.dispatch_actions()
+        messages = session.post.call_args.kwargs['json']['messages']
+        self.assertEqual(json.loads(messages[1]['content']), {
+            'question': 'Кто победит?', 'description': 'Описание матча', 'quiz': False,
+            'options': {'1': 'Синие', '2': 'Красные'},
+        })
+        view_actions = post['execution']['views']['actions']
+        self.assertEqual(len(view_actions), 80)
+        self.assertEqual(len(post['execution']['reactions']['actions']), 10)
+        plan = post['execution']['votes']
+        self.assertTrue(32 <= plan['target'] <= 48)
+        self.assertEqual(len(plan['actions']), plan['target'])
+        self.assertEqual(sum(action['option'] == '61' for action in plan['actions']),
+                         automatic.apportion(plan['target'], [75, 25])[0])
+        self.assertEqual(len({action['account_id'] for action in plan['actions']}), plan['target'])
+        self.assertLessEqual({a['account'] for a in plan['actions']}, {a['account'] for a in view_actions})
+        end = self.now + timedelta(seconds=25)
+        self.assertTrue(all(self.now <= automatic.parse_timestamp(action['due']) < end for action in plan['actions']))
+        restored = automatic.Monitor(mon.storage, lambda: self.clients)
+        saved = restored.find_post(4)
+        self.assertEqual(saved['execution']['votes'], plan)
+        self.assertFalse(automatic.poll_open(saved, end))
+        action = saved['execution']['votes']['actions'][0]
+        with (patch('posts.PollJoiner._join', AsyncMock(return_value=('ok', 'Голос'))) as send,
+              patch('automatic.utc_now', return_value=self.now)):
+            await restored.perform_action(4, 'votes', action, 'example')
+        self.assertEqual(send.await_args.args[-1]['option'], action['option'])
+        self.assertEqual(restored.snapshot_post(saved, self.now)['execution_votes']['done'], 1)
+
+    async def test_poll_without_caption_keeps_reactions_when_key_is_missing(self):
+        mon = self.monitor
+        mon.state.update(max_views=20, max_reactions=10)
+        post = mon.add_post(self.poll_message(''), self.now.isoformat())
+        self.assertTrue(mon.needs_analysis(post, self.now))
+        with (patch('automatic.env_value', return_value=''),
+              patch('automatic.utc_now', return_value=self.now),
+              patch.object(mon, 'channel_reactions', AsyncMock(return_value={'❤️'}))):
+            await mon.analyze(4)
+            self.assertFalse(mon.needs_analysis(post, self.now))
+        self.assertEqual(post['suggestion']['status'], 'ok')
+        self.assertGreater(post['suggestion']['total'], 0)
+        self.assertEqual(post['poll']['analysis'], 'missing_key')
+        self.assertEqual(post['poll']['weights'], {})
+
+    async def test_existing_vote_is_kept(self):
+        from posts import PollJoiner
+
+        msg = self.poll_message()
+        client = AsyncMock()
+        client.get_messages.return_value = msg
+        extra = {'option': '62', 'poll_id': '100'}
+        msg.media.results.results = [SimpleNamespace(chosen=True)]
+        status, _ = await PollJoiner._join(client, 'post', ('example', 4), extra)
+        self.assertEqual(status, 'err')
+        client.assert_not_awaited()
+        msg.media.results.results = []
+        status, _ = await PollJoiner._join(client, 'post', ('example', 4), extra)
+        self.assertEqual(status, 'ok')
+        self.assertEqual(client.await_args.args[0].options, [b'b'])
+
     async def test_subscribers_only_for_views_and_reactions(self):
         class Client:
             def __init__(self, participant):

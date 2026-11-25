@@ -4143,8 +4143,8 @@ function autoTickCountdowns(){
 }
 function autoActionCountdown(p,summary,service,d){
   const isReaction=service==='reactions';
-  const name={views:'просмотрам',reactions:'реакциям',reposts:'репостам'}[service];
-  const label={views:'Следующий просмотр: ',reactions:'Следующая реакция: ',reposts:'Следующий репост: '}[service];
+  const name={views:'просмотрам',reactions:'реакциям',reposts:'репостам',votes:'голосам'}[service];
+  const label={views:'Следующий просмотр: ',reactions:'Следующая реакция: ',reposts:'Следующий репост: ',votes:'Следующий голос: '}[service];
   const row=el('div','auto-next-action');
   let description='';
   if(summary.completed){
@@ -4158,11 +4158,14 @@ function autoActionCountdown(p,summary,service,d){
   }else if(!d.active||!(p.execution_enabled??d.execute_plan)){
     description=`План по ${name} приостановлен`;
     row.classList.add('warning');
+  }else if(service==='votes'&&!p.poll?.open){
+    description='Голосование завершено';
+    row.classList.add('warning');
   }else if(p.status!=='active'||(isReaction&&p.post_age_seconds>=86400)){
     description=`План по ${name} не выполнен (${isReaction?24:(p.window_hours||24)} ч прошли)`;
     row.classList.add('warning');
   }else if(summary.running>0){
-    description=`${{views:'Просмотр',reactions:'Реакция',reposts:'Репост'}[service]} выполняется сейчас…`;
+    description=`${{views:'Просмотр',reactions:'Реакция',reposts:'Репост',votes:'Голосование'}[service]} выполняется сейчас…`;
   }else if(summary.next_due_at){
     row.append(document.createTextNode(label));
     const time=el('strong','');time.dataset.autoNextDue=summary.next_due_at;
@@ -4176,6 +4179,27 @@ function autoActionCountdown(p,summary,service,d){
   }
   row.append(el('strong','',description));
   return row;
+}
+function autoPollCard(p){
+  const poll=p.poll,summary=p.execution_votes||{};
+  const block=el('div','auto-post-ai');
+  block.append(el('b','',poll.question));
+  const state=!poll.open?'Окно голосования завершено':
+    poll.analysis==='ready'?'План голосов по вариантам':
+    poll.analysis==='missing_key'?'Для распределения голосов нужен ключ DeepSeek':
+    poll.analysis==='retry'?'Повторим анализ опроса в DeepSeek':'Ожидаем анализ опроса в DeepSeek';
+  block.append(el('div','auto-post-graphs-note',state));
+  const list=el('ul');
+  for(const option of poll.options){
+    const detail=poll.analysis==='ready'?(' · '+option.done+'/'+option.planned):'';
+    list.append(el('li','',option.text+detail));
+  }
+  block.append(list);
+  if(summary.errors)block.append(el('div','auto-post-graphs-note','Ошибок или неизвестных исходов: '+summary.errors));
+  return block;
+}
+function autoPollSummary(p){
+  return p.poll?' · голоса '+(p.execution_votes?.done||0)+'/'+p.poll.target:'';
 }
 function autoCards(d){
   const root=$('#auto-posts');root.replaceChildren();
@@ -4200,12 +4224,14 @@ function autoCards(d){
     }
     card.append(stats);
     const ex=el('div','auto-execution-summary'),v=p.execution_views||{},r=p.execution_reactions||{},f=p.execution_reposts||{};
-    ex.textContent=`Услуги: просмотры ${v.done||0}/${v.target||0} · реакции ${r.done||0}/${r.target||0} · репосты ${f.done||0}/${f.target||p.repost_target||0}`+((v.errors||0)+(r.errors||0)+(f.errors||0)?` · ошибки/неизвестно ${(v.errors||0)+(r.errors||0)+(f.errors||0)}`:'');
+    ex.textContent=`Услуги: просмотры ${v.done||0}/${v.target||0} · реакции ${r.done||0}/${r.target||0} · репосты ${f.done||0}/${f.target||p.repost_target||0}${autoPollSummary(p)}`+((v.errors||0)+(r.errors||0)+(f.errors||0)?` · ошибки/неизвестно ${(v.errors||0)+(r.errors||0)+(f.errors||0)}`:'');
     card.append(ex);
     const next=el('div','auto-next-actions');
     next.append(autoActionCountdown(p,v,'views',d),autoActionCountdown(p,r,'reactions',d));
     if(f.target||p.repost_target)next.append(autoActionCountdown(p,{...f,target:f.target||p.repost_target},'reposts',d));
+    if(p.poll&&p.execution_votes?.target)next.append(autoActionCountdown(p,p.execution_votes,'votes',d));
     card.append(next);
+    if(p.poll)card.append(autoPollCard(p));
     const passed=p.post_age_seconds||0,h=Math.floor(passed/3600),m=Math.floor((passed%3600)/60),remain=p.time_remaining_seconds||0;
     const tl=el('div','auto-post-time');tl.append(el('span','',`Прошло ${h} ч ${m} мин`),el('span','',p.status==='active'?`Осталось ${Math.floor(remain/3600)} ч ${Math.ceil(remain%3600/60)} мин`:'Мониторинг завершён'));
     card.append(tl);
@@ -4255,7 +4281,7 @@ function autoRender(d,full=false){
   if(full)$('#auto-execute').checked=!!d.execute_plan;
   $('#auto-realreactions').textContent=selected.actual_reactions==null?'Недоступно':Number(selected.actual_reactions).toLocaleString('ru-RU');
   $('#auto-reaction-detail').textContent=(selected.reaction_breakdown||[]).slice(0,5).map(x=>`${x.emoji} ${x.count}`).join(' · ');
-  $('#auto-preview').textContent=chosen?(chosen.post_text||'Публикация без текста'):(d.baseline_post_id?`Запомнили исходный пост #${d.baseline_post_id}; мониторинг ждёт публикации с ID больше ${d.baseline_post_id}.`:'Ожидаем первую публикацию.');
+  $('#auto-preview').textContent=chosen?(chosen.post_text||chosen.poll?.question||'Публикация без текста'):(d.baseline_post_id?`Запомнили исходный пост #${d.baseline_post_id}; мониторинг ждёт публикации с ID больше ${d.baseline_post_id}.`:'Ожидаем первую публикацию.');
   $('#auto-selected-title').textContent=chosen?`Прогресс выбранного поста #${chosen.post_id}`:'Прогресс выбранного поста';
   $('#auto-stop').disabled=!d.active;$('#auto-start').textContent=d.active?'Обновить':'Начать';
   if(d.error)autoStatus(d.error,'err');
@@ -4421,7 +4447,7 @@ function autoMultiCards(d){
     }
     card.append(stats);
     const v=p.execution_views||{},r=p.execution_reactions||{},f=p.execution_reposts||{};
-    card.append(el('div','auto-execution-summary',`Услуги: просмотры ${v.done||0}/${v.target||0} · реакции ${r.done||0}/${r.target||0} · репосты ${f.done||0}/${f.target||p.repost_target||0}`));
+    card.append(el('div','auto-execution-summary',`Услуги: просмотры ${v.done||0}/${v.target||0} · реакции ${r.done||0}/${r.target||0} · репосты ${f.done||0}/${f.target||p.repost_target||0}${autoPollSummary(p)}`));
     root.append(card);
   }
 }
