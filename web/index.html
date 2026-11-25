@@ -1138,7 +1138,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
   </div>
   </div></div></div></section>
  <section id="v-accounts" class="view on">
-  <div class="accwrap"><div class="sectionhead"><div><h2>Список аккаунтов</h2><p class="subline">Выбери аккаунт, чтобы открыть настройки</p></div><div class="account-counters"><span id="acc-active" class="counter"></span><span id="acc-count" class="counter"></span></div></div><div class="searchbar"><input id="acc-search" placeholder="Поиск по имени, username или файлу…" autocomplete="off"><button id="acc-add" class="btn" type="button">Добавить</button></div><div class="acc-table-wrap" aria-label="Таблица подключённых аккаунтов">
+  <div class="accwrap"><div class="sectionhead"><div><h2>Список аккаунтов</h2><p class="subline">Выбери аккаунт, чтобы открыть настройки</p></div><div class="account-counters"><span id="acc-active" class="counter"></span><span id="acc-frozen" class="counter status err" hidden></span><span id="acc-count" class="counter"></span></div></div><div class="searchbar"><input id="acc-search" placeholder="Поиск по имени, username или файлу…" autocomplete="off"><button id="acc-add" class="btn" type="button">Добавить</button></div><div class="acc-table-wrap" aria-label="Таблица подключённых аккаунтов">
      <div class="acc-table-head" role="row">
        <button class="ex-sort" data-acc-sort="name">Визуальное имя <span class="arrow">↑</span></button>
        <button class="ex-sort" data-acc-sort="username">Какой юз <span class="arrow"></span></button>
@@ -1924,7 +1924,7 @@ function cbNumericBalance(name){
 }
 const fmtOdd=v=>v==null?"—":Number(v).toFixed(2);
 $("#t-cs3bet").onclick=async()=>{showTab("cs3bet");if(!S.accounts.length)await loadAccounts();if(CB.acc)cbBetView();else cbList()};
-function cbAccounts(){return S.accounts.filter(a=>a.connected&&a.flag!=='autopilot')}
+function cbAccounts(){return S.accounts.filter(a=>a.connected&&!a.frozen&&a.flag!=='autopilot')}
 function cbTplText(){
   if(!CB.tpl.length)return"";
   const t=CB.tpl.map(l=>l.side==="1"?l.team_a:l.team_b).join(" + ");
@@ -2331,6 +2331,8 @@ function accountRetryLabel(a){
   return seconds>0?`Повтор через ${seconds} сек.`:'Ожидает повторного подключения…';
 }
 function accountConnectionStatus(a){
+  if(a.frozen)return 'Заморожен';
+  if(a.connected&&a.freeze===null)return 'Заморозка не проверена';
   if(a.connected)return 'онлайн';
   if(a.connecting)return `Подключается · попытка ${a.connect_attempts||1}`;
   const explanation=a.last_error||a.status||'не подключён';
@@ -2406,8 +2408,11 @@ function renderAccounts(){
     b.classList.toggle('active',active);
     const arrow=b.querySelector('.arrow');if(arrow)arrow.textContent=active?(ACC_SORT.direction===1?'↑':'↓'):'';
   });
-  const active=new Set(S.accounts.filter(a=>a.connected).map(a=>a.id||a.name));
+  const frozen=new Set(S.accounts.filter(a=>a.frozen).map(a=>a.id||a.name));
+  const active=new Set(S.accounts.filter(a=>a.connected&&!frozen.has(a.id||a.name)).map(a=>a.id||a.name));
   $('#acc-active').textContent='Активных: '+active.size;
+  $('#acc-frozen').hidden=!frozen.size;
+  $('#acc-frozen').textContent='Заморожено: '+frozen.size;
   const count=$('#acc-count');if(count)count.textContent=`${shown.length} из ${S.accounts.length}`;
   if(!shown.length)g.append(el('div','empty',S.accounts.length?'Ничего не найдено':'Нет аккаунтов'));
   for(const a of shown){
@@ -2416,8 +2421,8 @@ function renderAccounts(){
     c.type='button';c.title=a.connected?`Файл: ${a.name} · Telegram ID: ${a.id}`:`${a.name} · ${a.status}`;
     const name=el('span','acc-name');
     const label=el('span','acc-account-name');label.append(el('span','acc-cell',fullName(a)||a.name));
-    if(!a.connected){
-      const message=el('small','acc-error'+(a.error_kind==='temporary'||a.connecting?' waiting':''),accountConnectionStatus(a));
+    if(!a.connected||a.frozen||a.freeze===null){
+      const message=el('small','acc-error'+(a.error_kind==='temporary'||a.connecting||a.connected&&!a.frozen?' waiting':''),accountConnectionStatus(a));
       message.title=accountConnectionStatus(a);label.append(message);
     }
     name.append(avatar(a.connected?avUrl(a):null,fullName(a)||a.name,32),label);
@@ -2662,6 +2667,13 @@ function renderDetail(){
   box.replaceChildren();box.classList.toggle("open",!!a);$("#v-accounts").classList.toggle("profile-open",!!a);if(!a)return;
   const x=el("button","ui-btn","← Назад");x.id="profile-back";x.onclick=()=>{S.sel=null;renderAccounts();renderDetail()};
   const head=el("div","profile-header");head.append(x,el("h2","",fullName(a)||a.name),el("span","profile-file",a.name),profileFlagControl(a));
+  if(a.frozen){
+    const format=new Intl.DateTimeFormat('ru-RU',{timeZone:'Europe/Moscow',dateStyle:'medium',timeStyle:'short'});
+    const since=a.freeze?.since,until=a.freeze?.until;
+    const detail=[since?'Заморожен с '+format.format(since*1000):'Заморожен',
+      until?'Срок по данным Telegram '+format.format(until*1000):''].filter(Boolean).join(' · ');
+    head.append(el('div','status err',detail+(since||until?' МСК':'')));
+  }else if(a.connected&&a.freeze===null)head.append(el('div','status','Заморозка не проверена'));
   const sessionCard=profileSessionCard(a);
   const del=el("button","btn danger","Удалить аккаунт"),dst=el("div","status");
   del.onclick=async()=>{

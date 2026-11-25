@@ -23,7 +23,8 @@ from pathlib import Path
 
 from aiohttp import web
 from telethon import TelegramClient, events, functions, types, utils
-from telethon.errors import (BotResponseTimeoutError, ChannelPrivateError, FloodWaitError, RPCError,
+from telethon.errors import (BotResponseTimeoutError, ChannelPrivateError, FloodWaitError,
+                             FrozenMethodInvalidError, FrozenParticipantMissingError, RPCError,
                              UserNotParticipantError)
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.users import GetFullUserRequest
@@ -81,6 +82,7 @@ class Account:
         self.error_kind = None  # temporary / session / other
         self.last_error = ""
         self.next_retry_at = None
+        self.freeze = None
 
     @property
     def label(self):
@@ -306,15 +308,20 @@ def general_account(name):
     return flag_for(name) == account_flags.GENERAL
 
 
+def is_frozen(acc):
+    return bool((getattr(acc, 'freeze', None) or {}).get('frozen'))
+
+
 def service_clients(general_only=False):
     return {name: acc.client for name, acc in ACCOUNTS.items()
-            if acc.me is not None and (not general_only or general_account(name))}
+            if acc.me is not None and not is_frozen(acc) and (not general_only or general_account(name))}
 
 
 def ser_account(a):
     me = a.me
     return {"name": a.name, "flag": flag_for(a.name), "connected": bool(me is not None and a.client.is_connected()), "spam_status": SPAM_STATUS.get(str(me.id)) if me else None, "status": a.status,
             "id": me.id if me else None, "phone": (me.phone or "") if me else "",
+            "frozen": is_frozen(a), "freeze": getattr(a, 'freeze', None),
             "first_name": (me.first_name or "") if me else "", "last_name": (me.last_name or "") if me else "",
             "username": (me.username or "") if me else "", "avatar_ver": int(a.avatar_ver), "presence": presence.keeper.info(a.name),
             "profile_meta": _cached_profile_meta(a) if me else None,
@@ -789,6 +796,35 @@ def _failed_connect(acc, text, kind, retry_after=None):
         logging.error("[TELEGRAM] %s: %s (автоповтор отключён)", acc.name, text)
 
 
+FROZEN_ERRORS = (FrozenMethodInvalidError, FrozenParticipantMissingError)
+
+
+async def check_account_freeze(client):
+    """Read Telegram's per-account app config, using the full response."""
+    try:
+        result = await asyncio.wait_for(client(functions.help.GetAppConfigRequest(hash=0)), timeout=12)
+    except FROZEN_ERRORS:
+        return {'frozen': True}
+    except (RPCError, OSError):
+        return None
+    config = getattr(result, 'config', None)
+    if not isinstance(config, types.JsonObject):
+        return None
+    values = {row.key: row.value for row in config.value}
+    since = values.get('freeze_since_date')
+    if since is None:
+        return {'frozen': False}
+    if not isinstance(since, types.JsonNumber) or not 0 <= since.value < 253402300799:
+        return None
+    if since.value == 0:
+        return {'frozen': False}
+    freeze = {'frozen': True, 'since': int(since.value)}
+    until = values.get('freeze_until_date')
+    if isinstance(until, types.JsonNumber) and 0 < until.value < 253402300799:
+        freeze['until'] = int(until.value)
+    return freeze
+
+
 async def connect_account(acc):
     """One connection attempt with explicit failure cause and bounded wall-clock time."""
     if acc.me is not None:
@@ -804,6 +840,8 @@ async def connect_account(acc):
             await asyncio.wait_for(acc.client.connect(), timeout=45)
             # get_me() raises real session errors, unlike is_user_authorized().
             me = await asyncio.wait_for(acc.client.get_me(), timeout=30)
+            if me is not None:
+                acc.freeze = await check_account_freeze(acc.client)
         if me is None:
             _failed_connect(acc, "сессия не авторизована — требуется повторный вход", "session")
             try:
@@ -814,7 +852,7 @@ async def connect_account(acc):
         if ACCOUNT_FLAGS:
             ACCOUNT_FLAGS.bind(acc.name, me.id)
         acc.me = me
-        acc.status = "онлайн"
+        acc.status = "Заморожен" if is_frozen(acc) else "онлайн"
         acc.error_kind = None
         acc.last_error = ""
         acc.next_retry_at = None
@@ -824,10 +862,14 @@ async def connect_account(acc):
         for key in (acc.name, me.id, me.phone):
             if key:
                 INDEX[norm(key)] = acc
-        print(f"[{acc.label}] Подключено (попытка {acc.connect_attempts}): ID {me.id}", flush=True)
+        print(f"[{acc.label}] {acc.status} (попытка {acc.connect_attempts}): ID {me.id}", flush=True)
         return True
     except asyncio.CancelledError:
         raise
+    except FROZEN_ERRORS:
+        acc.freeze = {'frozen': True}
+        _failed_connect(acc, "Заморожен", "frozen")
+        return False
     except Exception as exc:
         kind = classify_connect_error(exc)
         retry_after = None
@@ -858,7 +900,7 @@ async def connect_initial_accounts(max_parallel=4):
             return await connect_account(acc)
 
     results = await asyncio.gather(*(one(acc) for acc in accounts), return_exceptions=True)
-    online = sum(result is True for result in results)
+    online = sum(result is True and not is_frozen(acc) for acc, result in zip(accounts, results))
     for acc, result in zip(accounts, results):
         if isinstance(result, BaseException):
             _failed_connect(acc, explain_connect_error(result), classify_connect_error(result))
@@ -2404,7 +2446,7 @@ async def api_buttons_check(request):
             fail(str(exc))
         if ch.lower() not in [x.lower() for x in extra]:
             extra.append(ch)
-    accs = [a for a in ACCOUNTS.values() if a.me is not None and general_account(a.name)]
+    accs = [a for a in ACCOUNTS.values() if a.me is not None and not is_frozen(a) and general_account(a.name)]
     if not accs:
         fail("Нет подключённых аккаунтов с меткой «Общий»")
 
@@ -2481,6 +2523,9 @@ async def run_buttons_job(job, chk, dmin, dmax):
             try:
                 if acc is None or acc.me is None:
                     raise ValueError("аккаунт не подключён")
+                if is_frozen(acc):
+                    it.update(state="skip", note="аккаунт заморожен")
+                    continue
                 if not general_account(acc.name):
                     it.update(state="skip", note="аккаунт зарезервирован для Автопилота")
                     continue
@@ -2806,8 +2851,10 @@ async def main():
     copies.register(app, get_acc)
     app.router.add_get('/api/panel-settings', preferences.read)
     app.router.add_post('/api/panel-settings', preferences.update)
-    vpn.VpnSubscriptions(BASE_DIR, lambda: ACCOUNTS, eligible=lambda acc: general_account(acc.name)).register(app)
-    scenarios.Scenarios(BASE_DIR, lambda: ACCOUNTS, account_flag=flag_for).register(app)
+    vpn.VpnSubscriptions(BASE_DIR, lambda: ACCOUNTS,
+                         eligible=lambda acc: general_account(acc.name) and not is_frozen(acc)).register(app)
+    scenarios.Scenarios(BASE_DIR, lambda: {name: acc for name, acc in ACCOUNTS.items() if not is_frozen(acc)},
+                        account_flag=flag_for).register(app)
 
     async def background(app):
         async def expire_logins():
@@ -2884,7 +2931,8 @@ async def main():
                                             if a.me is not None}, preferences=preferences.get)
     app[channels.ORDER_JOBS_DIRECTORY] = BASE_DIR / "order_jobs"
     app[channels.ORDER_ACCOUNT_CONNECTING] = (
-        lambda name: name in ACCOUNTS and ACCOUNTS[name].error_kind not in ("session", "other"))
+        lambda name: name in ACCOUNTS and not is_frozen(ACCOUNTS[name])
+        and ACCOUNTS[name].error_kind not in ("session", "other"))
     app[channels.ORDER_ACCOUNT_IDS] = lambda: {n: a.me.id for n, a in ACCOUNTS.items() if a.me is not None}
     app[channels.ORDER_ACCOUNT_ALLOWED] = general_account
     channels.register(app, general_clients)
