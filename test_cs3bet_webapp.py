@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace as NS
 from urllib.parse import urlencode
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
+from telethon import types
 import cs3bet
 
 
@@ -19,7 +20,7 @@ class WebappTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp=tempfile.TemporaryDirectory()
         self.file=Path(self.temp.name)/'referrals.json'
-        self.client=type('Client',(),{'_self_id':123,'get_entity':AsyncMock(return_value=NS(id=99)),
+        self.client=type('Client',(),{'_self_id':123,'get_entity':AsyncMock(return_value=NS(id=99, bot=True, deleted=False)),
                                      '__call__':AsyncMock(return_value=NS(url=url(123)))})()
         async def launch(request):return NS(url=url(123,getattr(request,'start_param',None)))
         self.client.__call__.side_effect=launch
@@ -50,6 +51,15 @@ class WebappTests(unittest.IsolatedAsyncioTestCase):
         cs3bet.STATE['existing']={'balance':0}
         await cs3bet.login('existing',self.client)
         self.assertIsNone(self.client.__call__.await_args.args[0].start_param)
+
+    async def test_login_can_recover_bot_through_its_own_session(self):
+        bot = types.User(99, bot=True, username=cs3bet.BOT_USERNAME)
+        peer = types.InputPeerUser(99, 1234)
+        self.client.session = NS(get_input_entity=Mock(return_value=peer))
+        self.client.get_entity.side_effect = [ValueError(f'No user has "{cs3bet.BOT_USERNAME}" as username'), bot]
+        self.assertEqual(await cs3bet.login('existing', self.client), 'test-token')
+        self.assertEqual(self.client.get_entity.await_args_list[-1].args, (peer,))
+        self.assertIs(self.client.__call__.await_args.args[0].bot, bot)
 
     async def test_failed_auth_does_not_mark_registration(self):
         self.api.return_value=(500,{'success':False})

@@ -112,6 +112,7 @@ for acc in random_accounts(all, 10):
     async def test_missing_bot_skips_that_account_and_continues_with_pause_enabled(self):
         with tempfile.TemporaryDirectory() as directory:
             missing = AsyncMock()
+            missing.session = None
             missing.get_entity.side_effect = ValueError('No user has "samplebot" as username')
             working = AsyncMock()
             working.get_entity.return_value = SimpleNamespace(bot=True)

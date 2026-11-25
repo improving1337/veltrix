@@ -38,6 +38,7 @@ import aiohttp
 from aiohttp import web
 from cs3bet_bulk import BulkGame, MAX_STAKE, MAX_ODDS
 from account_security import private_json, read_json
+from bot_lookup import resolve_bot
 
 BOT_USERNAME = os.getenv("CS3_BOT_USERNAME", "cs3bet_bot").strip().lstrip("@")
 API_BASE = os.getenv("CS3_API_BASE", "https://app.cs3newsbet.com").rstrip("/")
@@ -264,7 +265,7 @@ async def miniapp_url(name, client):
     try:
         async with _tg_sem:
             identity = await own_user_id(client)
-            bot = await client.get_entity(BOT_USERNAME)
+            bot = await resolve_bot(client, BOT_USERNAME)
             result = await client(RequestMainWebViewRequest(peer=bot, bot=bot, platform='web'))
     except FloodWaitError as exc:
         raise RateLimited(exc.seconds, flood=True)
@@ -291,7 +292,7 @@ async def login(name, client, force=False):
                     referrals = read_json(REFERRALS_FILE)
                     known = str(identity) in referrals or STATE.get(name, {}).get('balance') is not None
                     start_param = None if known else REFERRAL_PARAM
-                    bot = await client.get_entity(BOT_USERNAME)
+                    bot = await resolve_bot(client, BOT_USERNAME)
                     webview = await client(RequestMainWebViewRequest(peer=bot, bot=bot, platform="web", start_param=start_param))
                 break
             except FloodWaitError as e:

@@ -20,6 +20,7 @@ import time
 import uuid
 from urllib.parse import parse_qs, urlparse
 
+import bot_lookup
 import channels
 import plan_options
 import presence
@@ -296,10 +297,8 @@ class StartsJoiner(ChannelJoiner):
     async def _title(self, client, kind, key):
         username, param = key
         try:
-            ent = await client.get_entity(username)
-        except Exception as e:
-            if type(e).__name__ in ("UsernameNotOccupiedError", "UsernameInvalidError"):
-                raise ValueError("Бот с таким username не найден")
+            ent = await bot_lookup.resolve_bot(client, username)
+        except (bot_lookup.BotUnavailable, ConnectionError, OSError):
             return None
         if not getattr(ent, "bot", False):
             raise ValueError("Это не бот")
@@ -314,7 +313,7 @@ class StartsJoiner(ChannelJoiner):
         async def one(client):
             async with sem:
                 try:
-                    ent = await client.get_input_entity(username)
+                    ent = await bot_lookup.resolve_bot(client, username)
                     return bool(await client.get_messages(ent, limit=1))
                 except Exception as e:
                     print(f"[STARTS] не удалось проверить переписку: {type(e).__name__}: {e}"[:200], flush=True)
@@ -332,14 +331,11 @@ class StartsJoiner(ChannelJoiner):
         username, param = key
         try:
             try:
-                ent = await client.get_entity(username)
-            except Exception as exc:
-                missing = (type(exc).__name__ in ("UsernameNotOccupiedError", "UsernameInvalidError")
-                           or isinstance(exc, ValueError) and str(exc).startswith("No user has ")
-                           and str(exc).endswith(" as username"))
-                if missing and (extra or {}).get("skip_unavailable_bot"):
-                    return "bot_unavailable", "Telegram не нашёл бота у этого аккаунта"
-                raise
+                ent = await bot_lookup.resolve_bot(client, username)
+            except bot_lookup.BotUnavailable as exc:
+                if (extra or {}).get("skip_unavailable_bot"):
+                    return "bot_unavailable", str(exc)
+                return "err", str(exc)
             if await plan_options.wait_before_action(extra):
                 return "skip", "остановлено"
             if param:

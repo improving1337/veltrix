@@ -16,6 +16,7 @@ from aiohttp import web
 from telethon.errors import BotResponseTimeoutError
 from telethon.tl import types
 
+import bot_lookup
 import channels
 import account_flags
 import message_photos
@@ -364,7 +365,7 @@ class Scenarios:
                            **{key: step[key] for key in ("action", "label", "target", "line") if key in step}})
 
     async def bot_button(self, step, client, args, extra):
-        bot = await client.get_entity(args["peer"])
+        bot = await bot_lookup.resolve_bot(client, args["peer"])
         if not getattr(bot, "bot", False):
             return "err", "Получатель не является ботом"
         anchors = (self.state["run"] or {}).get("anchors", {})
@@ -421,7 +422,11 @@ class Scenarios:
             kind, key = multi.parse_start_link(args["bot"])
             extra = extra | {"skip_unavailable_bot": True}
         elif action in ("send", "send_photo"):
-            peer = await client.get_input_entity(args["peer"])
+            started = (self.state["run"] or {}).get("started_bots", {})
+            if step["target"] in started.get(str(step["account"]), {}):
+                peer = await bot_lookup.resolve_bot(client, args["peer"])
+            else:
+                peer = await client.get_input_entity(args["peer"])
             if await extra["wait_before_action"]():
                 return "skip", "Остановлено"
             if action == "send_photo":
@@ -507,6 +512,7 @@ class Scenarios:
                         status = "skip"
                     elif action == "start" and status == "ok":
                         unavailable.pop(peer, None)
+                        run.setdefault("started_bots", {}).setdefault(str(step["account"]), {})[peer.split(":", 1)[1]] = True
                     flood = re.search(r"FloodWait: подождать (\d+) сек", note)
                     if status == "err" and flood and run["status"] == "running":
                         run["due"] = time.time() + max(1, int(flood[1]))
@@ -574,7 +580,7 @@ class Scenarios:
     def snapshot(self):
         run = self.state["run"]
         public = None if not run else {key: value for key, value in run.items()
-                                       if key not in ("steps", "anchors", "unavailable_bots")}
+                                       if key not in ("steps", "anchors", "unavailable_bots", "started_bots")}
         if public is not None:
             public["total"] = len(run["steps"])
         return {"run": public, "groups": self.state["groups"], "templates": self.state["templates"]}
