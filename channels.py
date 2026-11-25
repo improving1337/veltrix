@@ -48,6 +48,7 @@ _NEXT_SEQ = 1001
 ORDER_JOBS_DIRECTORY = web.AppKey("order_jobs_directory", Path)
 ORDER_ACCOUNT_CONNECTING = web.AppKey("order_account_connecting")
 ORDER_ACCOUNT_IDS = web.AppKey("order_account_ids")
+ORDER_ACCOUNT_ALLOWED = web.AppKey("order_account_allowed")
 RUNTIME_JOB_FIELDS = {"task", "stop", "skip", "resumed"}
 
 _USERNAMES = lambda: {}
@@ -77,6 +78,7 @@ class ChannelJoiner:
         self.jobs = {}  # job_id -> job; несколько задач работают параллельно
         self.storage = None
         self.account_connecting = lambda name: False
+        self.account_allowed = None
         self.account_ids = lambda: {}
 
     def save_jobs(self):
@@ -249,6 +251,8 @@ class ChannelJoiner:
         plan = self.plans.get(plan_id)
         if not plan:
             raise ValueError("План устарел — построй его заново")
+        if self.account_allowed and any(not self.account_allowed(item["account"]) for item in plan["items"]):
+            raise ValueError("Метки аккаунтов изменились. Построй план заново.")
         finish = plan_options.deadline(plan["finish_at"])
         started = time.time()
         plan["total"] = plan_options.schedule_order(plan["items"], started, finish, plan["quiet"])
@@ -314,6 +318,9 @@ class ChannelJoiner:
     async def _ready_client(self, job, item):
         name = item["account"]
         while not job["stop"].is_set():
+            if self.account_allowed and not self.account_allowed(name):
+                item["note"] = "аккаунт зарезервирован для Автопилота"
+                return None
             client = self.get_clients().get(name)
             if client and client.is_connected():
                 expected_id = item.get("telegram_id")
@@ -337,9 +344,15 @@ class ChannelJoiner:
 
     def _action_extra(self, job, item):
         extra = job.get("extra")
-        if not job.get("quiet"):
+        if not job.get("quiet") and not self.account_allowed:
             return extra
-        return {**(extra or {}), "wait_before_action": lambda: self._wait_out_quiet(job, item)}
+
+        async def wait_before_action():
+            if await self._wait_out_quiet(job, item):
+                return True
+            return self.account_allowed is not None and not self.account_allowed(item["account"])
+
+        return {**(extra or {}), "wait_before_action": wait_before_action}
 
     async def _wait_for_account(self, job, item, previous=None):
         now = time.time()
@@ -479,6 +492,7 @@ def register(app, get_clients, prefix="channels", joiner_cls=None):
     """Добавляет роуты /api/channels/* в aiohttp-приложение (авторизация — ваша auth_mw)."""
     joiner = (joiner_cls or ChannelJoiner)(get_clients)
     joiner.service = prefix
+    joiner.account_allowed = app.get(ORDER_ACCOUNT_ALLOWED)
     directory = app.get(ORDER_JOBS_DIRECTORY)
     if directory is not None:
         joiner.load_jobs(directory / (prefix + ".json"))

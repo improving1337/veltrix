@@ -196,10 +196,11 @@ def send_gmail(directory, recipient, link, settings=None):
 
 
 class VpnSubscriptions:
-    def __init__(self, directory, accounts, clock=time.time, sleep=asyncio.sleep, mail=None):
+    def __init__(self, directory, accounts, clock=time.time, sleep=asyncio.sleep, mail=None, *, eligible=None):
         self.directory = Path(directory)
         self.path = self.directory / 'security' / 'vpn.json'
         self.accounts = accounts
+        self.eligible = eligible or (lambda account: True)
         self.clock = clock
         self.sleep = sleep
         self.gmail = GmailSettings(self.directory)
@@ -290,7 +291,7 @@ class VpnSubscriptions:
             raise ValueError('Получение ссылки уже выполняется')
         async with self.issue_lock:
             live = {str(account.me.id): account for account in self.accounts().values()
-                    if account.me is not None and account.client.is_connected()}
+                    if account.me is not None and account.client.is_connected() and self.eligible(account)}
             for account_id, record in self.records.items():
                 if account_id in live and not record.get('excluded') and record.get('issued_at') is None:
                     return await self.complete(account_id, live[account_id].client, record)

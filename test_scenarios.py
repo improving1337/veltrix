@@ -31,6 +31,19 @@ poll(account=20, post=param("post"), option=1)
         self.assertTrue(steps[0]["unique"])
         self.assertEqual(steps[2]["delay"], [10, 15])
 
+    def test_labels_select_accounts_explicitly(self):
+        code = """
+views(all, "https://t.me/test/1")
+for acc in accounts(flag=autopilot):
+    sub(acc, "https://t.me/cs2lab", unique=True)
+views(accounts(flag="autopilot") - [30], "https://t.me/test/1")
+"""
+        compiler = scenarios.Compiler({10: "Анна", 20: "Борис", 30: "Вера"}, {}, {},
+                                      {20: "autopilot", 30: "autopilot"})
+        steps = compiler.compile(code)
+        self.assertEqual([(step['action'], step['account']) for step in steps],
+                         [('views', 10), ('sub', 20), ('sub', 30), ('views', 20)])
+
     def test_rejects_python_execution_and_unknown_accounts(self):
         for code in ('import os', 'open("secrets")', 'item = (1).__class__',
                      'views(11, "t.me/channel/1")', 'wait(15, 10)', 'views(all, "t.me/channel/1", unique=1)'):

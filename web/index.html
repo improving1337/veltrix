@@ -569,7 +569,7 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 #v-cs3bet .cbrow{grid-template-columns:minmax(190px,1fr) minmax(130px,.7fr) minmax(170px,.9fr) auto auto auto!important}#v-cs3bet .cbopen{width:auto!important;min-width:75px}@media(max-width:1050px){#v-cs3bet .cbrow{grid-template-columns:repeat(3,minmax(0,1fr))!important}}@media(max-width:650px){#v-cs3bet .cbrow{grid-template-columns:repeat(2,minmax(0,1fr))!important}#v-cs3bet .cbinfo{grid-column:1/-1}}
 
 .account-counters{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-#v-accounts .acc-table-head,#v-accounts .acc-row{grid-template-columns:minmax(155px,1.3fr) minmax(110px,.9fr) 115px 110px 115px 95px 155px 126px!important;min-width:1170px!important}
+#v-accounts .acc-table-head,#v-accounts .acc-row{grid-template-columns:minmax(155px,1.3fr) minmax(110px,.9fr) 115px 110px 115px 95px 155px 126px 112px!important;min-width:1290px!important}
 #acc-mobile-column{display:none}
 @media(max-width:750px){
  #v-accounts .acc-table-head,#v-accounts .acc-row{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)!important;min-width:0!important}
@@ -602,6 +602,11 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
  .subscription-head>div:last-child{min-width:0;overflow-wrap:anywhere}
  .subscription-head h3{margin:0 0 4px}
  .subscription-channel-status{margin:12px 0}.subscription-actions{display:flex;flex-wrap:wrap;gap:8px}
+ .account-flag{display:inline-flex;align-items:center;gap:6px;font-size:12px}
+ .account-flag select{width:auto;padding:5px 8px}
+ .account-flag-mark{color:#a4a2ad}.account-flag-mark.autopilot{color:#bcb1fc;font-weight:600}
+ .deploy-flag{display:flex;align-items:center;gap:8px;font-size:13px}
+ .deploy-flag input{width:auto;flex:none}
  .scenario-heading-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-left:auto}
  .scenario-plan{margin-bottom:16px;scroll-margin-top:12px}
  .scenario-timeline{overflow:auto;max-height:52vh}
@@ -1145,7 +1150,8 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
        <button class="ex-sort" data-acc-sort="music_count">Кол-во песен <span class="arrow"></span></button>
        <button class="ex-sort" data-acc-sort="last_avatar_change">Последняя смена аватарки <span class="arrow"></span></button>
        <button class="ex-sort" data-acc-sort="spam_status">Спамбан <span class="arrow"></span></button>
-       <select id="acc-mobile-column" aria-label="Второй столбец"><option value="username">Какой юз</option><option value="session_count">Число сессий</option><option value="birthday">Дата рождения</option><option value="avatar_count">Кол-во аватарок</option><option value="music_count">Кол-во песен</option><option value="last_avatar_change">Смена аватарки</option><option value="spam_status">Спамбан</option></select>
+       <button class="ex-sort" data-acc-sort="flag">Метка <span class="arrow"></span></button>
+       <select id="acc-mobile-column" aria-label="Второй столбец"><option value="username">Какой юз</option><option value="session_count">Число сессий</option><option value="birthday">Дата рождения</option><option value="avatar_count">Кол-во аватарок</option><option value="music_count">Кол-во песен</option><option value="last_avatar_change">Смена аватарки</option><option value="spam_status">Спамбан</option><option value="flag">Метка</option></select>
      </div>
      <div id="grid" class="acc-table"></div>
    </div><div id="acc-load-errors" class="acc-load-errors" hidden></div><p class="acc-table-note">Цвет числа: зелёный — своя сессия, жёлтый — внешняя, красный — нет подключения. Число — результат последней проверки; обновить можно в профиле.</p></div>
@@ -1187,7 +1193,8 @@ for acc in accounts:
     wait(10, 15)</pre>
     <p>Внутри цикла шаги выполняются по порядку для каждого аккаунта. Ссылки и текст указывай в кавычках.</p>
     <dl>
-     <dt><code>all</code>, <code>[123, 456]</code>, <code>group("Основные")</code></dt><dd>Выбор подключённых аккаунтов, списка Telegram ID или сохранённой группы. Можно указать один ID через <code>account=123</code>.</dd>
+     <dt><code>all</code>, <code>[123, 456]</code>, <code>group("Основные")</code></dt><dd>Выбор подключённых аккаунтов с меткой «Общий», списка Telegram ID или сохранённой группы. Можно указать один ID через <code>account=123</code>.</dd>
+     <dt><code>accounts(flag=autopilot)</code>, <code>accounts(flag=general)</code></dt><dd>Подключённые аккаунты с выбранной меткой. Например, <code>for acc in accounts(flag=autopilot):</code> и на следующей строке с отступом <code>sub(acc, "https://t.me/cs2lab", unique=True)</code>.</dd>
      <dt><code>param("post")</code></dt><dd>Значение из JSON-параметров, например <code>{"post": "https://t.me/test/1"}</code>.</dd>
      <dt><code>unique=True</code></dt><dd>Для подписок проверяет текущий статус в Telegram. Для других действий использует историю успешных шагов сценариев.</dd>
      <dt><code>views(acc, post)</code>, <code>repost(acc, post)</code>, <code>button(acc, post)</code></dt><dd>Просмотр, пересылка в «Избранное» и нажатие первой кнопки под постом.</dd>
@@ -1280,6 +1287,8 @@ for acc in accounts:
  <section id="v-upload" class="view">
   <div class="accwrap"><div class="chcol btcol">
    <h2>Загрузка</h2>
+   <label class="deploy-flag"><input id="deploy-default-flag" type="checkbox" disabled> Ставить метку «Автопилот» новым аккаунтам</label>
+   <div id="deploy-flag-status" class="status" role="status"></div>
    <h3>Вход по номеру</h3>
    <form id="deploy-login">
     <label class="fld"><span>Номер телефона</span><input id="deploy-phone" type="tel" autocomplete="tel" placeholder="+79991234567" required></label>
@@ -1389,7 +1398,7 @@ function showTab(t){
   veltrixCloseMobile();
   for(const n of["accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic","vpn","subscriptions","scenarios","settings"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
 }
-let PANEL_SETTINGS={hidden_tabs:[],view_spread:10,reaction_spread:20,search_workers:5,subscription_hours:72,subscription_spread:0,profile_group:'https://t.me/minecraft_beseda764'};
+let PANEL_SETTINGS={hidden_tabs:[],view_spread:10,reaction_spread:20,search_workers:5,subscription_hours:72,subscription_spread:0,autopilot_for_new_accounts:false,profile_group:'https://t.me/minecraft_beseda764'};
 function applyPanelSettings(){
   for(const tab of Object.keys(VELTRIX_NAMES)){
     const button=$('#t-'+tab);
@@ -1887,7 +1896,7 @@ setInterval(()=>{if(S.tab==='scenarios'&&document.visibilityState==='visible')sc
 $('#t-vpn').onclick=()=>{showTab('vpn');VPN.result=null;VPN.error='';vpnRender()};
 $('#t-settings').onclick=()=>{showTab('settings');renderPanelSettings();renderGmailSettings()};
 api('/api/panel-settings').then(data=>{
-  if(Array.isArray(data?.hidden_tabs)){PANEL_SETTINGS=data;applyPanelSettings()}
+  if(Array.isArray(data?.hidden_tabs)){PANEL_SETTINGS=data;applyPanelSettings();showDeployFlag()}
 }).catch(()=>{});
 $("#t-accounts").onclick=()=>showTab("accounts");
 $("#t-messages").onclick=()=>{showTab("messages");refreshInbox()};
@@ -1909,7 +1918,7 @@ $("#ma-go").onclick=async()=>{
   }catch(e){if(w)w.close();st.className="status err";st.textContent=e.message}
   b.disabled=false;
 };
-$("#t-upload").onclick=()=>{showTab("upload");upPoll()};
+$("#t-upload").onclick=()=>{showTab("upload");upPoll();loadDeployFlag()};
 $("#t-examples").onclick=()=>showTab("examples");
 
 const accSearch=$("#acc-search");
@@ -1923,7 +1932,7 @@ const CB={hideZero:CBHZ,rowEls:{},rw:{},rwEls:{},betStats:{},betEls:{},rwq:[],rw
 const fmtBal=v=>Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2,useGrouping:false});
 const fmtOdd=v=>v==null?"—":Number(v).toFixed(2);
 $("#t-cs3bet").onclick=async()=>{showTab("cs3bet");if(!S.accounts.length)await loadAccounts();if(CB.acc)cbBetView();else cbList()};
-function cbAccounts(){return S.accounts.filter(a=>a.connected)}
+function cbAccounts(){return S.accounts.filter(a=>a.connected&&a.flag!=='autopilot')}
 function cbTplText(){
   if(!CB.tpl.length)return"";
   const t=CB.tpl.map(l=>l.side==="1"?l.team_a:l.team_b).join(" + ");
@@ -2309,9 +2318,15 @@ setInterval(()=>{document.querySelectorAll('[data-retry-at]').forEach(e=>{
 })},1000);
 // Дата в списке берётся из Telegram (date объекта Photo). Пустые значения всегда в конце.
 const ACC_SORT={key:'name',direction:1};
+const ACCOUNT_FLAG_LABELS={general:'Общий',autopilot:'Автопилот'};
+const accountFlagLabel=a=>ACCOUNT_FLAG_LABELS[a.flag]||ACCOUNT_FLAG_LABELS.general;
 const mobileAccountColumn=$('#acc-mobile-column');
 try{mobileAccountColumn.value=localStorage.getItem('veltrix-accounts-column')||'username'}catch{}
-mobileAccountColumn.onchange=()=>{try{localStorage.setItem('veltrix-accounts-column',mobileAccountColumn.value)}catch{}renderAccounts()};
+mobileAccountColumn.onchange=()=>{
+  try{localStorage.setItem('veltrix-accounts-column',mobileAccountColumn.value)}catch{}
+  if(mobileAccountColumn.value==='flag'){ACC_SORT.key='flag';ACC_SORT.direction=1;}
+  renderAccounts();
+};
 function accDateValue(value, birthday=false){
   if(!value)return null;
   const str=String(value);
@@ -2328,6 +2343,7 @@ function accSortValue(a,key){
   if(key==='username')return(a.username||'').trim().toLocaleLowerCase('ru');
   if(key==='session_count')return a.security?.session_count??null;
   if(key==='spam_status')return a.spam_status?.label??null;
+  if(key==='flag')return accountFlagLabel(a);
   if(key==='birthday')return accDateValue(p.birthday,true);
   if(key==='avatar_count')return Number.isFinite(p.avatar_count)?p.avatar_count:null;
   if(key==='music_count')return Number.isFinite(p.music_count)?p.music_count:null;
@@ -2354,7 +2370,7 @@ function renderAccounts(){
       issues.forEach(entry=>bad.append(el('div','',`${entry.name}: ${entry.error}`)));}
   }
   const q=(S.accountSearch||'').trim().toLowerCase();
-  const shown=S.accounts.filter(a=>[a.name,a.first_name,a.last_name,a.username,a.phone,a.status,a.id,a.profile_meta?.bio,a.profile_meta?.birthday].filter(Boolean).join(' ').toLowerCase().includes(q));
+  const shown=S.accounts.filter(a=>[a.name,a.first_name,a.last_name,a.username,a.phone,a.status,a.id,a.profile_meta?.bio,a.profile_meta?.birthday,accountFlagLabel(a)].filter(Boolean).join(' ').toLowerCase().includes(q));
   shown.sort((a,b)=>{
     const x=accSortValue(a,ACC_SORT.key),y=accSortValue(b,ACC_SORT.key);
     if(x===null||x===undefined||x==='')return y===null||y===undefined||y===''?0:1;
@@ -2388,8 +2404,9 @@ function renderAccounts(){
       el('span','acc-cell',Number.isFinite(p.avatar_count)?String(p.avatar_count):'—'),
       el('span','acc-cell',Number.isFinite(p.music_count)?String(p.music_count):'—'),
       el('span','acc-cell',accDateDisplay(p.last_avatar_change)),
-      el('span','acc-cell',a.spam_status?.label||'Не проверен')];
-    const keys=['name','username','session_count','birthday','avatar_count','music_count','last_avatar_change','spam_status'];
+      el('span','acc-cell',a.spam_status?.label||'Не проверен'),
+      el('span','acc-cell account-flag-mark'+(a.flag==='autopilot'?' autopilot':''),accountFlagLabel(a))];
+    const keys=['name','username','session_count','birthday','avatar_count','music_count','last_avatar_change','spam_status','flag'];
     vals[keys.indexOf(mobileAccountColumn.value||'username')]?.classList.add('acc-mobile-value');
     for(let i=0;i<vals.length;i++){
       if(i!==0)vals[i].title=vals[i].textContent;
@@ -2593,11 +2610,34 @@ function profileCopyCard(account,onApplied){
   },0);
   return card;
 }
+function profileFlagControl(account){
+  const select=el('select'),status=el('span','status');
+  select.id='profile-account-flag';
+  select.append(...Object.entries(ACCOUNT_FLAG_LABELS).map(([value,label])=>new Option(label,value)));
+  select.value=account.flag||'general';
+  status.setAttribute('role','status');
+  select.onchange=async()=>{
+    select.disabled=true;
+    status.textContent='';
+    try{
+      const updated=await api('/api/accounts/'+enc(account.name)+'/flag',{method:'POST',json:{flag:select.value}});
+      for(const entry of S.accounts)if(Object.hasOwn(updated.flags,entry.name))entry.flag=updated.flags[entry.name];
+      if(S.sel===account.name&&$('#profile-account-flag'))$('#profile-account-flag').value=updated.flags[account.name];
+      renderAccounts();
+      status.textContent='Сохранено';
+    }catch(error){
+      select.value=account.flag||'general';status.className='status err';status.textContent=error.message;
+    }finally{select.disabled=false;}
+  };
+  const label=el('label','account-flag','Метка');
+  label.append(select,status);
+  return label;
+}
 function renderDetail(){
   const box=$("#detail"),a=S.accounts.find(x=>x.name===S.sel);
   box.replaceChildren();box.classList.toggle("open",!!a);$("#v-accounts").classList.toggle("profile-open",!!a);if(!a)return;
   const x=el("button","ui-btn","← Назад");x.id="profile-back";x.onclick=()=>{S.sel=null;renderAccounts();renderDetail()};
-  const head=el("div","profile-header");head.append(x,el("h2","",fullName(a)||a.name),el("span","profile-file",a.name));
+  const head=el("div","profile-header");head.append(x,el("h2","",fullName(a)||a.name),el("span","profile-file",a.name),profileFlagControl(a));
   const sessionCard=profileSessionCard(a);
   const del=el("button","btn danger","Удалить аккаунт"),dst=el("div","status");
   del.onclick=async()=>{
@@ -3867,6 +3907,28 @@ function securitySummary(s){
   if(s.error)parts.push(s.error);
   return parts.join(' · ');
 }
+function showDeployFlag(){
+  const toggle=$('#deploy-default-flag');
+  if(toggle.dataset.saving)return;
+  toggle.checked=PANEL_SETTINGS.autopilot_for_new_accounts===true;
+  toggle.disabled=false;
+}
+async function loadDeployFlag(){
+  try{
+    PANEL_SETTINGS=await api('/api/panel-settings');
+    showDeployFlag();
+  }catch(error){$('#deploy-flag-status').textContent=error.message;}
+}
+$('#deploy-default-flag').onchange=async event=>{
+  const toggle=event.target,status=$('#deploy-flag-status');
+  toggle.disabled=true;toggle.dataset.saving='1';
+  status.className='status';status.textContent='';
+  try{
+    PANEL_SETTINGS=await api('/api/panel-settings',{method:'POST',json:{autopilot_for_new_accounts:toggle.checked}});
+    status.className='status ok';status.textContent='Настройка сохранена для новых аккаунтов.';
+  }catch(error){status.className='status err';status.textContent=error.message;}
+  finally{delete toggle.dataset.saving;showDeployFlag();}
+};
 const DEPLOY_LOGIN={token:null,stage:'phone'};
 function deployLoginStage(stage){
   DEPLOY_LOGIN.stage=stage;

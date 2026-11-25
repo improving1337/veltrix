@@ -14,6 +14,7 @@ from aiohttp import web
 from telethon.tl import types
 
 import channels
+import account_flags
 import multi
 import plan_options
 import posts
@@ -51,8 +52,9 @@ def account_ids(value):
 
 
 class Compiler:
-    def __init__(self, accounts, groups, params):
+    def __init__(self, accounts, groups, params, flags=None):
         self.accounts = accounts
+        self.flags = flags or {}
         self.groups = groups
         self.params = params
         self.steps = []
@@ -68,6 +70,15 @@ class Compiler:
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub):
             excluded = set(account_ids(self.value(node.right, scope)))
             return [item for item in account_ids(self.value(node.left, scope)) if item not in excluded]
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "accounts":
+            if node.args or len(node.keywords) != 1 or node.keywords[0].arg != "flag":
+                raise ValueError('Используй accounts(flag=general) или accounts(flag=autopilot)')
+            value = node.keywords[0].value
+            flag = (value.id if isinstance(value, ast.Name) and value.id in account_flags.FLAGS
+                    else self.value(value, scope))
+            if flag not in account_flags.FLAGS:
+                raise ValueError('Метка должна быть general или autopilot')
+            return self.with_flag(flag)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords and len(node.args) == 1:
             name = self.value(node.args[0], scope)
             if isinstance(name, str) and node.func.id == "group" and name in self.groups:
@@ -75,7 +86,11 @@ class Compiler:
             if isinstance(name, str) and node.func.id == "param" and name in self.params:
                 return self.params[name]
             raise ValueError("Не найдена группа или параметр")
-        raise ValueError("Используй переменные, значения, списки, group(…) или param(…)")
+        raise ValueError("Используй переменные, значения, списки, accounts(…), group(…) или param(…)")
+
+    def with_flag(self, flag):
+        return [identity for identity in self.accounts
+                if self.flags.get(identity, account_flags.GENERAL) == flag]
 
     def append(self, step):
         if len(self.steps) >= MAX_STEPS:
@@ -181,7 +196,7 @@ class Compiler:
             tree = ast.parse(code)
             if sum(1 for _ in ast.walk(tree)) > 4000:
                 raise ValueError("Слишком сложный сценарий")
-            self.statements(tree.body, {"all": list(self.accounts)})
+            self.statements(tree.body, {"all": self.with_flag(account_flags.GENERAL)})
         except SyntaxError as exc:
             raise ValueError(f"Строка {exc.lineno}. Проверь синтаксис и отступы") from None
         except RecursionError:
@@ -235,9 +250,10 @@ def simulate(plan, journal, now):
 
 
 class Scenarios:
-    def __init__(self, directory, accounts):
+    def __init__(self, directory, accounts, *, account_flag=None):
         self.path = Path(directory) / "security" / "scenarios.json"
         self.accounts = accounts
+        self.account_flag = account_flag or (lambda name: account_flags.GENERAL)
         self.task = None
         self.membership = channels.ChannelJoiner(lambda: {})
         try:
@@ -263,9 +279,11 @@ class Scenarios:
         params = data.get("params", {})
         if not isinstance(params, dict):
             raise ValueError("Параметры должны быть объектом JSON")
+        connected = self.connected()
         accounts = {key: " ".join(filter(None, (acc.me.first_name, acc.me.last_name))) or acc.me.username or name
-                    for key, (name, acc) in self.connected().items()}
-        steps = Compiler(accounts, self.state["groups"], params).compile(data.get("code"))
+                    for key, (name, acc) in connected.items()}
+        flags = {key: self.account_flag(name) for key, (name, _) in connected.items()}
+        steps = Compiler(accounts, self.state["groups"], params, flags).compile(data.get("code"))
         quiet = plan_options.quiet_hours(data)
         start = plan_options.deadline(data.get("start_at"))
         return {"steps": steps, "quiet": quiet, "start": start, "stop_on_error": data.get("stop_on_error") is not False}

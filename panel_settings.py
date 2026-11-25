@@ -8,7 +8,7 @@ from template_library import atomic_json_save, json_load
 TABS = {'accounts', 'examples', 'upload', 'twofa', 'messages', 'orders', 'miniapp', 'cs3bet', 'automatic', 'vpn', 'scenarios', 'subscriptions'}
 DEFAULTS = {'hidden_tabs': [], 'view_spread': 10, 'reaction_spread': 20, 'search_workers': 5,
             'profile_group': 'https://t.me/minecraft_beseda764',
-            'subscription_hours': 72, 'subscription_spread': 0}
+            'subscription_hours': 72, 'subscription_spread': 0, 'autopilot_for_new_accounts': False}
 
 
 class PanelSettings:
@@ -38,6 +38,10 @@ class PanelSettings:
             return web.json_response({'error': 'Число аккаунтов для поиска должно быть целым и не меньше 1'},
                                      status=400)
         values['search_workers'] = workers
+        autopilot = payload.get('autopilot_for_new_accounts', values['autopilot_for_new_accounts'])
+        if type(autopilot) is not bool:
+            return web.json_response({'error': 'Некорректная метка для новых аккаунтов'}, status=400)
+        values['autopilot_for_new_accounts'] = autopilot
         tabs = payload.get('hidden_tabs', values['hidden_tabs'])
         group = payload.get('profile_group', values['profile_group'])
         if not isinstance(tabs, list) or any(not isinstance(tab, str) or tab not in TABS for tab in tabs):

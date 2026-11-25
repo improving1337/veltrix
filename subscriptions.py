@@ -19,9 +19,10 @@ RETRY_SECONDS = 900
 
 
 class Subscriptions:
-    def __init__(self, directory, accounts, settings, clock=time.time):
+    def __init__(self, directory, accounts, settings, clock=time.time, *, eligible=None):
         self.path = Path(directory) / "security" / "subscriptions.json"
         self.accounts, self.settings, self.clock = accounts, settings, clock
+        self.eligible = eligible or (lambda account: True)
         state = json_load(self.path)
         self.memberships = state.get("memberships", {})
         self.rules = state.get("rules", {})
@@ -165,7 +166,7 @@ class Subscriptions:
             connected = self.connected()
             entries = self.channel_members().get(channel, {})
             candidates = [(account, info) for account, info in entries.items()
-                          if account in connected and self.cooldown.get(account, 0) <= now
+                          if account in connected and self.eligible(connected[account]) and self.cooldown.get(account, 0) <= now
                           and info["access_hash"] is not None]
             if not candidates:
                 if automatic:

@@ -38,6 +38,7 @@ import template_library
 import account_profile_manager
 import account_music_manager
 import account_deploy
+import account_flags
 import session_admin
 import account_security
 import profile_copy
@@ -88,6 +89,8 @@ class Account:
 
 
 ACCOUNTS: dict[str, Account] = {}
+ACCOUNT_FLAGS = None
+PANEL_PREFERENCES = None
 ACCOUNT_LOAD_ERRORS: dict[str, str] = {}  # malformed JSON, absent/corrupted session files
 INDEX: dict[str, Account] = {}      # имя / user id / телефон -> Account
 INBOX: dict[str, dict] = {}         # "аккаунт:чат" -> плашка входящих
@@ -296,9 +299,22 @@ def ser_message(m):
             "date": m.date.timestamp() if m.date else 0, "sender": sender, "buttons": ser_buttons(m)}
 
 
+def flag_for(name):
+    return ACCOUNT_FLAGS.get(name) if ACCOUNT_FLAGS else account_flags.GENERAL
+
+
+def general_account(name):
+    return flag_for(name) == account_flags.GENERAL
+
+
+def service_clients(general_only=False):
+    return {name: acc.client for name, acc in ACCOUNTS.items()
+            if acc.me is not None and (not general_only or general_account(name))}
+
+
 def ser_account(a):
     me = a.me
-    return {"name": a.name, "connected": bool(me is not None and a.client.is_connected()), "spam_status": SPAM_STATUS.get(str(me.id)) if me else None, "status": a.status,
+    return {"name": a.name, "flag": flag_for(a.name), "connected": bool(me is not None and a.client.is_connected()), "spam_status": SPAM_STATUS.get(str(me.id)) if me else None, "status": a.status,
             "id": me.id if me else None, "phone": (me.phone or "") if me else "",
             "first_name": (me.first_name or "") if me else "", "last_name": (me.last_name or "") if me else "",
             "username": (me.username or "") if me else "", "avatar_ver": int(a.avatar_ver), "presence": presence.keeper.info(a.name),
@@ -706,8 +722,12 @@ def load_accounts():
             ACCOUNT_LOAD_ERRORS[name] = f"ошибка открытия сессии [{type(exc).__name__}]: {exc}"[:240]
             print(f"[LOAD] {name}: {ACCOUNT_LOAD_ERRORS[name]}", flush=True)
             continue
-        ACCOUNTS[name] = acc
         new.append(acc)
+    if ACCOUNT_FLAGS and new:
+        default = (account_flags.AUTOPILOT if PANEL_PREFERENCES.get()['autopilot_for_new_accounts']
+                   else account_flags.GENERAL)
+        ACCOUNT_FLAGS.register((acc.name for acc in new), default)
+    ACCOUNTS.update((acc.name, acc) for acc in new)
     for session_file in sorted(SESSION_DIR.glob("*.session")):
         name = session_file.stem
         if name not in ACCOUNTS and not (ACCOUNT_DIR / f"{name}.json").is_file():
@@ -793,6 +813,8 @@ async def connect_account(acc):
             except Exception:
                 pass
             return False
+        if ACCOUNT_FLAGS:
+            ACCOUNT_FLAGS.bind(acc.name, me.id)
         acc.me = me
         acc.status = "онлайн"
         acc.error_kind = None
@@ -1018,6 +1040,18 @@ async def api_accounts(request):
                                               for name, error in sorted(ACCOUNT_LOAD_ERRORS.items())]})
 
 
+async def api_account_flag(request):
+    name = request.match_info["acc"]
+    if name not in ACCOUNTS:
+        fail("Аккаунт не найден", web.HTTPNotFound)
+    payload = await request.json()
+    try:
+        ACCOUNT_FLAGS.select(name, payload.get("flag") if isinstance(payload, dict) else None)
+    except ValueError as exc:
+        fail(str(exc))
+    return web.json_response({"flags": {key: flag_for(key) for key in ACCOUNTS}})
+
+
 async def api_delete_account(request):
     async with SECURITY.lock:
         return await _api_delete_account(request)
@@ -1062,6 +1096,8 @@ async def _api_delete_account(request):
     publish({"type": "read"})   # обновить список «Входящие» у открытых вкладок
     if errors:
         fail("Аккаунт убран из панели, но файлы не удалились: " + "; ".join(errors))
+    if ACCOUNT_FLAGS:
+        ACCOUNT_FLAGS.forget(name)
     return web.json_response({"ok": True, "removed": removed})
 
 
@@ -2360,9 +2396,9 @@ async def api_buttons_check(request):
             fail(str(exc))
         if ch.lower() not in [x.lower() for x in extra]:
             extra.append(ch)
-    accs = [a for a in ACCOUNTS.values() if a.me is not None]
+    accs = [a for a in ACCOUNTS.values() if a.me is not None and general_account(a.name)]
     if not accs:
-        fail("Нет подключённых аккаунтов")
+        fail("Нет подключённых аккаунтов с меткой «Общий»")
 
     sem, errors = asyncio.Semaphore(8), {}
 
@@ -2436,6 +2472,9 @@ async def run_buttons_job(job, chk, dmin, dmax):
             try:
                 if acc is None or acc.me is None:
                     raise ValueError("аккаунт не подключён")
+                if not general_account(acc.name):
+                    it.update(state="skip", note="аккаунт зарезервирован для Автопилота")
+                    continue
                 it["note"] = await press_one(acc, chk["channel"], chk["message_id"])
                 it["state"] = "ok"
             except FloodWaitError as exc:
@@ -2462,7 +2501,7 @@ async def api_buttons_click(request):
         fail("Сначала нажми «Проверить»")
     if BTN_JOB.get("status") == "running":
         fail("Задача уже выполняется")
-    pool = [n for n in chk["accounts"] if n not in chk["used"]]
+    pool = [n for n in chk["accounts"] if n not in chk["used"] and general_account(n)]
     try:
         count = int(data.get("count"))
         dmin, dmax = float(data.get("delay_from") or 0), float(data.get("delay_to") or 0)
@@ -2713,9 +2752,11 @@ def load_password():
 
 
 async def main():
-    global PANEL_PASSWORD, SESSION_ADMIN
+    global PANEL_PASSWORD, SESSION_ADMIN, ACCOUNT_FLAGS, PANEL_PREFERENCES
     print("[START] Скрипт запущен.", flush=True)
     TEMPLATE_AVATARS.mkdir(exist_ok=True)
+    preferences = PANEL_PREFERENCES = panel_settings.PanelSettings(BASE_DIR)
+    ACCOUNT_FLAGS = account_flags.AccountFlags(BASE_DIR)
     sort_incoming()
     load_accounts()
     if not ACCOUNTS:
@@ -2741,6 +2782,7 @@ async def main():
             if path.exists():
                 shutil.move(str(path), destination/(path.name+'.'+secrets.token_hex(4)))
         ACCOUNTS.pop(source.name, None)
+        ACCOUNT_FLAGS.forget(source.name)
         for key in [k for k, value in INDEX.items() if value is source]:
             INDEX.pop(key, None)
         invalidate_account_profile(source)
@@ -2753,8 +2795,8 @@ async def main():
                                         lambda acc, data: upload_avatar(acc, data, prepared=True),
                                         copy_profile_fields, clear_photos=clear_old_avatars)
     copies.register(app, get_acc)
-    preferences = panel_settings.PanelSettings(BASE_DIR)
-    subscription_panel = subscriptions.Subscriptions(BASE_DIR, lambda: ACCOUNTS, preferences.get)
+    subscription_panel = subscriptions.Subscriptions(BASE_DIR, lambda: ACCOUNTS, preferences.get,
+                                                       eligible=lambda acc: general_account(acc.name))
 
     async def update_preferences(request):
         old = preferences.get()
@@ -2767,8 +2809,8 @@ async def main():
     app.router.add_get('/api/panel-settings', preferences.read)
     app.router.add_post('/api/panel-settings', update_preferences)
     subscription_panel.register(app)
-    vpn.VpnSubscriptions(BASE_DIR, lambda: ACCOUNTS).register(app)
-    scenarios.Scenarios(BASE_DIR, lambda: ACCOUNTS).register(app)
+    vpn.VpnSubscriptions(BASE_DIR, lambda: ACCOUNTS, eligible=lambda acc: general_account(acc.name)).register(app)
+    scenarios.Scenarios(BASE_DIR, lambda: ACCOUNTS, account_flag=flag_for).register(app)
 
     async def background(app):
         async def expire_logins():
@@ -2793,6 +2835,7 @@ async def main():
         web.get("/", index),
         web.get("/api/accounts", api_accounts),
         web.delete("/api/accounts/{acc}", api_delete_account),
+        web.post("/api/accounts/{acc}/flag", api_account_flag),
         web.get("/api/accounts/{acc}/avatar", api_my_avatar),
         web.get("/api/accounts/{acc}/profile-photos", api_account_photos),
         web.get("/api/accounts/{acc}/music", api_account_music),
@@ -2837,20 +2880,21 @@ async def main():
         web.get("/api/upload/job", api_upload_job),
         web.post("/api/upload/stop", api_upload_stop),
     ])
-    live_clients = lambda: {n: a.client for n, a in ACCOUNTS.items() if a.me is not None}
+    general_clients = lambda: service_clients(general_only=True)
     channels.set_usernames(lambda: {n: (a.me.username or "") for n, a in ACCOUNTS.items() if a.me is not None})
-    automatic_multi.register(app, live_clients, BASE_DIR,
+    automatic_multi.register(app, service_clients, BASE_DIR,
                        account_ids=lambda: {n: a.me.id for n, a in ACCOUNTS.items()
                                             if a.me is not None}, preferences=preferences.get)
     app[channels.ORDER_JOBS_DIRECTORY] = BASE_DIR / "order_jobs"
     app[channels.ORDER_ACCOUNT_CONNECTING] = (
         lambda name: name in ACCOUNTS and ACCOUNTS[name].error_kind not in ("session", "other"))
     app[channels.ORDER_ACCOUNT_IDS] = lambda: {n: a.me.id for n, a in ACCOUNTS.items() if a.me is not None}
-    channels.register(app, live_clients)
-    multi.register_all(app, live_clients)
-    unsub.register_all(app, live_clients)
-    cs3bet.register_all(app, live_clients, account_ids=lambda: {n: a.me.id for n, a in ACCOUNTS.items() if a.me is not None})
-    presence.keeper.configure(live_clients, BASE_DIR / "presence.json")
+    app[channels.ORDER_ACCOUNT_ALLOWED] = general_account
+    channels.register(app, general_clients)
+    multi.register_all(app, general_clients)
+    unsub.register_all(app, general_clients)
+    cs3bet.register_all(app, general_clients, account_ids=lambda: {n: a.me.id for n, a in ACCOUNTS.items() if a.me is not None})
+    presence.keeper.configure(general_clients, BASE_DIR / "presence.json")
     presence.register(app)
     presence.keeper.start()
     runner = web.AppRunner(app)
