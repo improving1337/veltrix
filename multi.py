@@ -331,7 +331,15 @@ class StartsJoiner(ChannelJoiner):
         from telethon.tl.functions.messages import StartBotRequest
         username, param = key
         try:
-            ent = await client.get_entity(username)
+            try:
+                ent = await client.get_entity(username)
+            except Exception as exc:
+                missing = (type(exc).__name__ in ("UsernameNotOccupiedError", "UsernameInvalidError")
+                           or isinstance(exc, ValueError) and str(exc).startswith("No user has ")
+                           and str(exc).endswith(" as username"))
+                if missing and (extra or {}).get("skip_unavailable_bot"):
+                    return "bot_unavailable", "Telegram не нашёл бота у этого аккаунта"
+                raise
             if await plan_options.wait_before_action(extra):
                 return "skip", "остановлено"
             if param:

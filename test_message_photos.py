@@ -108,3 +108,37 @@ for acc in random_accounts(all, 10):
             self.assertEqual((await service.execute(click, "1", client, extra))[0], "ok")
             heart.click.assert_awaited_once()
             old.click.assert_not_awaited()
+
+    async def test_missing_bot_skips_that_account_and_continues_with_pause_enabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = AsyncMock()
+            missing.get_entity.side_effect = ValueError('No user has "samplebot" as username')
+            working = AsyncMock()
+            working.get_entity.return_value = SimpleNamespace(bot=True)
+            working.send_file.return_value = SimpleNamespace(id=10)
+            heart = SimpleNamespace(click=AsyncMock(), text="❤️",
+                                    button=types.KeyboardButton("❤️", types.InlineButtonTypeCallback(b"click")))
+            working.get_messages.return_value = [SimpleNamespace(id=12, out=False, buttons=[[heart]])]
+            clients = {1: missing, 2: working}
+            for client in clients.values():
+                client.is_connected = lambda: True
+            pool = {str(i): SimpleNamespace(me=types.User(i), client=client) for i, client in clients.items()}
+            service = scenarios.Scenarios(directory, lambda: pool)
+            image = "a" * 64
+            service.images.mkdir(parents=True)
+            (service.images / (image + ".jpg")).write_bytes(b"photo")
+            plan = service.plan({"image": image, "code": '''
+for acc in all:
+    start(acc, "https://t.me/samplebot?start=abc")
+    send_photo(acc, "@samplebot", photo())
+    bot_button(acc, "@samplebot", 1, text="❤️")
+'''})
+            service.state["run"] = plan | {"index": 0, "in_flight": False, "status": "running", "log": [], "due": 0}
+            await service.worker()
+            run = service.state["run"]
+            self.assertEqual(run["status"], "finished")
+            self.assertEqual([entry["status"] for entry in run["log"]], ["skip"] * 3 + ["ok"] * 3)
+            self.assertIn("Telegram не нашёл бота", run["log"][0]["note"])
+            missing.send_file.assert_not_awaited()
+            working.send_file.assert_awaited_once()
+            heart.click.assert_awaited_once()

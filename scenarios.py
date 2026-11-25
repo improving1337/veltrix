@@ -419,6 +419,7 @@ class Scenarios:
                 args = args | {"option": media.poll.answers[args["option"] - 1].option.hex()}
         elif action == "start":
             kind, key = multi.parse_start_link(args["bot"])
+            extra = extra | {"skip_unavailable_bot": True}
         elif action in ("send", "send_photo"):
             peer = await client.get_input_entity(args["peer"])
             if await extra["wait_before_action"]():
@@ -454,6 +455,7 @@ class Scenarios:
 
     async def worker(self):
         run = self.state["run"]
+        unavailable = run.setdefault("unavailable_bots", {})
         while run["status"] == "running" and run["index"] < len(run["steps"]):
             step = run["steps"][run["index"]]
             if step["action"] == "wait" and not run["due"]:
@@ -472,7 +474,11 @@ class Scenarios:
                     continue
                 entry = self.connected().get(step["account"])
                 key = action_key(step)
-                if entry is None:
+                action = step["action"]
+                peer = f'{step["account"]}:{step["target"].split("?", 1)[0]}'
+                if action in ("send", "send_photo", "bot_button") and peer in unavailable:
+                    status, note = "skip", "Бот недоступен для этого аккаунта"
+                elif entry is None:
                     status, note = "err", "Аккаунт сейчас недоступен"
                 elif step["unique"] and step["action"] not in ("sub", "unsub") and key in self.state["journal"]:
                     status, note = "skip", "Действие уже выполнено"
@@ -496,6 +502,11 @@ class Scenarios:
                     except Exception as exc:
                         status, note = posts.explain(exc)
                     run["in_flight"] = False
+                    if status == "bot_unavailable":
+                        unavailable[peer] = True
+                        status = "skip"
+                    elif action == "start" and status == "ok":
+                        unavailable.pop(peer, None)
                     flood = re.search(r"FloodWait: подождать (\d+) сек", note)
                     if status == "err" and flood and run["status"] == "running":
                         run["due"] = time.time() + max(1, int(flood[1]))
@@ -562,7 +573,8 @@ class Scenarios:
 
     def snapshot(self):
         run = self.state["run"]
-        public = None if not run else {key: value for key, value in run.items() if key not in ("steps", "anchors")}
+        public = None if not run else {key: value for key, value in run.items()
+                                       if key not in ("steps", "anchors", "unavailable_bots")}
         if public is not None:
             public["total"] = len(run["steps"])
         return {"run": public, "groups": self.state["groups"], "templates": self.state["templates"]}
