@@ -617,6 +617,16 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
  .scenario-layout pre{white-space:pre-wrap;overflow-wrap:anywhere}
  .scenario-output{max-height:420px;overflow:auto}.scenario-check input{width:auto}
  @media(max-width:850px){.scenario-layout,.scenario-row{grid-template-columns:1fr}}
+.auto-chart-scroll{overflow-x:auto}
+.auto-chart-scroll .auto-plot,.auto-chart-scroll .auto-hours:not(.auto-extended){min-width:490px}
+.auto-chart-scroll .auto-observed-plot:not(.auto-extended){min-width:490px}
+.auto-chart-scroll .auto-extended{min-width:860px}
+.auto-chart-scroll #auto-plot,.auto-chart-scroll #auto-hours{min-width:740px}
+.auto-view-controls{display:flex;align-items:end;gap:12px;flex-wrap:wrap}
+.auto-view-controls .fld{min-width:150px}
+.auto-view-controls button{margin-bottom:14px}
+.auto-legacy-profile summary{cursor:pointer}
+.auto-view-controls input{font-variant-numeric:tabular-nums}
 </style>
 <style id="veltrix-theme">
 /* VELTRIX UI — graphite dashboard treatment adapted from the supplied Ember
@@ -1053,13 +1063,13 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
     <div id="auto-multi-message" class="status"></div>
     <p class="auto-note">Счётчики просмотров, реакций и репостов — публичная статистика Telegram. Репосты только отслеживаются: функции автоматических репостов здесь нет.</p>
    </div>
-   <div class="auto-panel"><div class="auto-head"><div><h3>Посты всех каналов</h3><small>Открывай «Подробности», чтобы увидеть полную 24-часовую статистику выбранной публикации</small></div><small id="auto-multi-count" class="auto-post-count">0 активных</small></div>
+   <div class="auto-panel"><div class="auto-head"><div><h3>Посты всех каналов</h3><small>Открывай «Подробности», чтобы увидеть почасовую статистику выбранной публикации</small></div><small id="auto-multi-count" class="auto-post-count">0 активных</small></div>
     <div id="auto-multi-posts" class="auto-post-list"></div>
    </div>
   </div>
   <div id="auto-detail-view" hidden><div class="auto-detail-nav"><button id="auto-back" class="btn ghost" type="button">← Вернуться к каналам</button><strong id="auto-detail-channel"></strong></div>
 
-  <div class="sectionhead"><div><h2>Автоматическая</h2><p class="subline">Мониторинг канала и выполнение 24-часового плана через услуги «Просмотры» и «Реакции»</p></div></div>
+  <div class="sectionhead"><div><h2>Автоматическая</h2><p class="subline">Мониторинг канала и выполнение плана через услуги «Просмотры» и «Реакции»</p></div></div>
   <div class="auto-panel"><div class="auto-top"><label class="fld"><span>Ссылка на публичный Telegram-канал</span><input id="auto-channel" placeholder="https://t.me/my_channel" autocomplete="off"></label><button class="btn" id="auto-start">Начать</button><button class="btn ghost" id="auto-stop" disabled>Остановить</button></div>
    <div class="auto-live"><span id="auto-dot" class="auto-dot"></span><span id="auto-live-text">Мониторинг остановлен</span></div>
    <div class="auto-stats"><div class="auto-stat"><small>Последний пост</small><strong id="auto-last">—</strong></div><div class="auto-stat"><small>Реальные просмотры</small><strong id="auto-realviews">—</strong></div><div class="auto-stat"><small>Последняя проверка</small><strong id="auto-checked">—</strong></div><div class="auto-stat"><small>Подключено аккаунтов</small><strong id="auto-accounts">—</strong></div></div>
@@ -1075,7 +1085,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
    </div>
   </div>
   <div class="auto-panel">
-   <div class="auto-head"><div><h3>Публикации · независимый мониторинг 24 часа</h3><small>Каждый новый пост получает свои графики, прогресс и анализ DeepSeek</small></div><small id="auto-post-count" class="auto-post-count">0 активных</small></div>
+   <div class="auto-head"><div><h3>Публикации · независимый мониторинг</h3><small>Каждый новый пост получает свои графики, прогресс и анализ DeepSeek</small></div><small id="auto-post-count" class="auto-post-count">0 активных</small></div>
    <div id="auto-posts" class="auto-post-list"><div class="auto-post-empty">Новых публикаций пока нет. Мониторинг ждёт следующий пост.</div></div>
    <button id="auto-post-archive-toggle" class="btn ghost auto-post-archive" type="button" hidden>Показать завершённые</button>
    <p class="auto-note">Графики показывают изменения публичной статистики между замерами замеры каждые 10 минут · поиск каждые 10 секунд. История до первого замера недоступна.</p>
@@ -1086,22 +1096,37 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
    <p class="auto-note">Цель по реакциям случайно выбирается для каждого нового поста в пределах лимита. Если ❤️ разрешено, оно получает минимум 40%, а в голосовании с ❤️ — больше любого другого варианта.</p>
    <p class="auto-note">Просмотры: цель выбирается для каждого поста в диапазоне, заданном в настройках панели, ограничивается доступными аккаунтами и сохраняется между перезапусками.</p>
   </div>
-  <div class="auto-panel"><div class="auto-head"><div><h3>Профиль просмотров · 24 часа</h3><small>Перетаскивай вершины колонок или используй стрелки клавиатуры</small></div><div><button id="auto-default" class="btn ghost" style="width:auto">По умолчанию</button></div></div>
-   <div id="auto-plot" class="auto-plot" aria-label="24 редактируемых столбца с долями просмотров"></div><div id="auto-hours" class="auto-hours"></div><div class="auto-note" id="auto-sum">Сумма: 100%</div>
+  <div class="auto-panel"><div class="auto-head"><div><h3>Активность канала по часам (МСК)</h3><small>Измени высоту столбца мышью или стрелками клавиатуры. Шкала от 0 до 100.</small></div><div><button id="auto-default" class="btn ghost" style="width:auto">По умолчанию</button></div></div>
+   <div class="auto-chart-scroll"><div id="auto-plot" class="auto-plot" aria-label="Активность по часам МСК"></div><div id="auto-hours" class="auto-hours"></div></div>
+   <div class="auto-view-controls">
+    <label class="fld"><span>Доля просмотров на вторые сутки (%)</span><input id="auto-day2" type="number" min="0" max="100" step="1" value="10"></label>
+   </div>
+   <details class="auto-legacy-profile"><summary>Почасовой профиль реакций</summary>
+    <div class="auto-chart-scroll"><div id="auto-reaction-profile" class="auto-plot" aria-label="Почасовые доли реакций"></div><div id="auto-reaction-profile-hours" class="auto-hours"></div></div>
+   </details>
+   <div id="auto-sum" class="auto-note" aria-live="polite"></div>
    <div class="auto-limits"><div><div class="auto-limit-head"><span>Просмотры на один пост (из аккаунтов)</span><strong id="auto-views-value">0</strong></div><input type="range" id="auto-views" min="0" max="0" value="0"><div class="auto-range-ends"><span>0</span><span id="auto-views-max">0</span></div></div>
    <div><div class="auto-limit-head"><span>Лимит реакций на один пост (из аккаунтов)</span><strong id="auto-reactions-value">0</strong></div><input type="range" id="auto-reactions" min="0" max="0" value="0"><div class="auto-range-ends"><span>0</span><span id="auto-reactions-max">0</span></div></div></div>
-   <label class="auto-execution-toggle"><input type="checkbox" id="auto-execute"> <span><strong>Выполнять план автоматически</strong><small>Настройки применяются к новым постам. Чтобы приостановить выполнение для активных постов, остановите мониторинг канала.</small></span></label><p class="auto-note">Каждый уникальный Telegram-аккаунт получает не более одного задания на просмотр и одного на реакцию на каждый пост, даже если подключён под разными именами. Эмодзи реакций перемешиваются по времени с сохранением их количества. Для новостей рекомендации даёт DeepSeek. Для явной рекламы и голосований варианты определяются по тексту и разрешённым реакциям канала. Публикации старше 24 часов не обрабатываются.</p><button id="auto-save" class="btn" style="width:auto">Сохранить настройки</button>
-   <div class="auto-head" style="margin-top:22px"><h3>Ориентиры по каждому часу</h3><small>Распределение чисел по сохранённому / редактируемому профилю</small></div>
-   <div class="auto-hour-table-wrap"><table class="auto-hour-table"><thead><tr><th>Час</th><th>Доля</th><th>Просмотры (модель)</th><th>Реакции (рекомендация ИИ)</th></tr></thead><tbody id="auto-hour-table"></tbody></table></div>
+   <label class="auto-execution-toggle"><input type="checkbox" id="auto-execute"> <span><strong>Выполнять план автоматически</strong><small>Настройки применяются к новым постам. Чтобы приостановить выполнение для активных постов, остановите мониторинг канала.</small></span></label><p class="auto-note">Каждый уникальный Telegram-аккаунт получает не более одного задания на просмотр и одного на реакцию на каждый пост, даже если подключён под разными именами. Эмодзи реакций перемешиваются по времени с сохранением их количества. Для новостей рекомендации даёт DeepSeek. Для явной рекламы и голосований варианты определяются по тексту и разрешённым реакциям канала. График просмотров для новых постов рассчитан на 48 часов, а реакции планируются на первые 24 часа.</p><button id="auto-save" class="btn" style="width:auto">Сохранить настройки</button>
+   <div class="auto-head" style="margin-top:22px"><h3>Предпросмотр «ёлочки» на 48 часов</h3></div>
+   <form id="auto-view-preview-form" class="auto-view-controls">
+    <label class="fld"><span>Время публикации (МСК)</span><input id="auto-preview-time" type="time" required value="22:30"></label>
+    <label class="fld"><span>Просмотров для примера</span><input id="auto-preview-total" type="number" min="1" max="1000000" step="1" required value="200"></label>
+    <button type="submit" class="btn ghost" id="auto-preview-button" style="width:auto">Построить график</button>
+   </form>
+   <p id="auto-view-preview-note" class="auto-note" role="status"></p>
+   <div id="auto-view-preview-chart" class="auto-chart-scroll" hidden><div class="auto-observed-plot" id="auto-view-preview-plot" aria-label="Предпросмотр просмотров на 48 часов"></div><div class="auto-hours" id="auto-view-preview-hours"></div></div>
+   <div class="auto-head" style="margin-top:22px"><h3>Почасовая модель выбранного поста</h3><small>Рассчитана по настройкам, сохранённым при обнаружении</small></div>
+   <div class="auto-hour-table-wrap"><table class="auto-hour-table"><thead><tr><th>Час</th><th>Доля просмотров</th><th>Просмотры (модель)</th><th>Реакции (рекомендация ИИ)</th></tr></thead><tbody id="auto-hour-table"></tbody></table></div>
   </div>
-  <div class="auto-panel"><div class="auto-head"><h3>Реальные изменения выбранного поста · 24 часа</h3><small>Считаются из периодических замеров поста</small></div>
+  <div class="auto-panel"><div class="auto-head"><h3 id="auto-observed-title">Реальные изменения выбранного поста</h3><small>Считаются из периодических замеров поста</small></div>
    <div class="auto-toggles"><button class="btn ghost auto-toggle on" id="auto-observe-views">Просмотры</button><button class="btn ghost auto-toggle" id="auto-observe-reactions">Реакции</button></div>
-   <div class="auto-observed-plot" id="auto-observed-plot" aria-label="Фактические изменения метрик поста по часам"></div><div class="auto-hours" id="auto-observed-hours"></div>
+   <div class="auto-chart-scroll"><div class="auto-observed-plot" id="auto-observed-plot" aria-label="Фактические изменения метрик поста по часам"></div><div class="auto-hours" id="auto-observed-hours"></div></div>
    <p class="auto-note" id="auto-observed-note">Для почасовой статистики нужны повторные измерения. Просмотры до запуска мониторинга невозможно точно распределить по часам.</p>
   </div>
   <div class="auto-panel"><div class="auto-head"><h3>DeepSeek · рекомендации для выбранного поста</h3><small>Ключ DEEPSEEK_API_KEY в .env</small></div>
    <div class="auto-recommend" id="auto-ai" style="margin-top:12px">ИИ проанализирует новую публикацию, если настроен DeepSeek API.</div>
-   <div class="auto-head" style="margin-top:20px"><h3>24 часа · модель рекомендаций по реакциям</h3><small>Использует те же доли, что и график просмотров</small></div>
+   <div class="auto-head" style="margin-top:20px"><h3>24 часа · модель рекомендаций по реакциям</h3><small>Использует почасовой профиль реакций</small></div>
    <div class="auto-observed-plot" id="auto-reaction-model-plot"></div><div class="auto-hours" id="auto-reaction-model-hours"></div>
    <p class="auto-note">При включённом автовыполнении рекомендации DeepSeek определяют эмодзи и количество для функции «Реакции». Репосты не выполняются. Фактические реакции на посте отображаются выше.</p>
   </div>
@@ -3940,47 +3965,48 @@ upPoll();
 const AUTO_EMOJI=['❤️','👍','👎','🔥','😭','🤬','😍','💔','🤡','💩','😡'];
 function autoPolicyFields(d){const root=$('#auto-emoji-options');root.replaceChildren();for(const emoji of AUTO_EMOJI){const label=el('label','auto-emoji-choice'),input=el('input');input.type='checkbox';input.value=emoji;input.checked=(d.allowed_reactions||AUTO_EMOJI).includes(emoji);input.onchange=()=>{AUTO.dirty=true;};label.append(input,document.createTextNode(emoji));root.append(label);}$('#auto-reaction-prompt').value=d.reaction_prompt||'';}
 $('#auto-reaction-prompt').oninput=()=>{AUTO.dirty=true;};
-const AUTO={data:null,values:[34,15,9,7,5,4,3,2,2,2,1,1,2,2,1,1,1,2,1,1,1,1,1,1],timer:null,drag:null,dirty:false,selectedId:null,lockSelection:false,showArchive:false,raw:null,serverClockOffsetMs:0};
+const DEFAULT_VIEW_ACTIVITY=[43,29,20,13,12,15,26,47,73,80,75,67,64,66,64,66,73,81,91,100,98,88,73,57];
+const AUTO={data:null,activity:DEFAULT_VIEW_ACTIVITY.slice(),previewRevision:0,values:[34,15,9,7,5,4,3,2,2,2,1,1,2,2,1,1,1,2,1,1,1,1,1,1],timer:null,drag:null,dirty:false,selectedId:null,lockSelection:false,showArchive:false,raw:null,serverClockOffsetMs:0};
 function autoStatus(text,kind=''){const e=$('#auto-message');e.textContent=text;e.className='status '+kind}
-function autoApportion(total,weights){
-  total=Math.max(0,Math.floor(Number(total)||0));const positives=weights.map(x=>Math.max(0,Number(x)||0)),sum=positives.reduce((a,b)=>a+b,0);
-  if(!sum)return positives.map(()=>0);
-  const raw=positives.map(x=>x*total/sum),base=raw.map(Math.floor);
-  let left=total-base.reduce((a,b)=>a+b,0);
-  const order=raw.map((x,i)=>({i,f:x-base[i]})).sort((a,b)=>b.f-a.f||a.i-b.i);
-  for(let i=0;i<left;i++)base[order[i].i]++;
-  return base;
-}
-function autoHoursPlot(id, hoursId, values, kind='views', coverage=null){
+function autoHoursPlot(id, hoursId, values, kind='views', coverage=null, times=null){
   const plot=$('#'+id),label=$('#'+hoursId);plot.replaceChildren();label.replaceChildren();
-  values=values||Array(24).fill(0);
   const max=Math.max(1,...values);
+  for(const node of [plot,label]){
+    node.style.gridTemplateColumns=`repeat(${values.length},minmax(0,1fr))`;
+    node.classList.toggle('auto-extended',values.length>24);
+  }
   values.forEach((v,i)=>{
-    const col=el('div','auto-observed-col'),caption=el('span','auto-observed-val',coverage&&!coverage[i]?'—':String(v));
+    const captionText=coverage&&!coverage[i]?'—':String(v);
+    const start=times?.[i]||`${i+1} ч`;
+    const col=el('div','auto-observed-col'),caption=el('span','auto-observed-val',captionText);
     const bar=el('div','auto-observed-bar'+(kind==='reactions'?' reactions':'')+(coverage&&!coverage[i]?' empty':''));
     bar.style.height=(coverage&&!coverage[i]?2:Math.max(2,v/max*144))+'px';
-    bar.title=`${i+1} ч: ${coverage&&!coverage[i]?'Нет измерений':v}`;
-    col.append(caption,bar);plot.append(col);label.append(el('span','',String(i+1)));
+    col.title=`${start} · ${coverage&&!coverage[i]?'Нет измерений':v}`;
+    col.append(caption,bar);plot.append(col);
+    const tick=el('span','',times?(i%3===0?start:''):values.length<=24||i%2===0?String(i+1):'');
+    label.append(tick);
   });
 }
 let AUTO_OBSERVE='views';
 function autoForecast(){
   const d=AUTO.data;if(!d)return;
-  const hours=d.plan_hours||AUTO.values;
-  const views=d.model_view_hours||autoApportion(+$('#auto-views').value,hours);
-  const s=d.suggestion, recTotal=s&&s.status==='ok'?s.total:0;
-  const reactions=d.model_reaction_hours||autoApportion(recTotal,hours);
+  const window=d.window_hours||24;
+  const views=d.model_view_hours||Array(window).fill(0);
+  const shares=d.model_view_shares||Array(window).fill(0);
+  const reactions=d.model_reaction_hours||Array(24).fill(0);
   const table=$('#auto-hour-table');table.replaceChildren();
   const now=d.post_age_seconds==null?null:Math.floor(d.post_age_seconds/3600);
-  for(let i=0;i<24;i++){
-    const row=el('tr',now===i?'current':'');
-    for(const val of [i+1+' ч',hours[i].toFixed(1).replace('.0','')+'%',String(views[i]),String(reactions[i])])row.append(el('td','',val));
-    table.append(row);
+  if(d.post_date){
+    for(let i=0;i<window;i++){
+      const row=el('tr',now===i?'current':'');
+      for(const val of [i+1+' ч',(shares[i]/10).toFixed(1).replace(/\.0$/,'')+'%',String(views[i]),String(reactions[i]??'—')])row.append(el('td','',val));
+      table.append(row);
+    }
   }
-  const active=now!==null&&now>=0&&now<24;
-  $('#auto-hour-now').textContent=active?now+1+' / 24':now===null?'—':'24 ч прошли';
+  const active=now!==null&&now>=0&&now<window;
+  $('#auto-hour-now').textContent=active?now+1+' / '+window:now===null?'—':window+' ч прошли';
   $('#auto-age').textContent=d.post_age_seconds==null?'Нет данных о публикации':`Опубликовано ${Math.floor(d.post_age_seconds/3600)} ч ${Math.floor(d.post_age_seconds%3600/60)} мин назад`;
-  $('#auto-hour-model').textContent=active?`${views[now]} просмотров · ${reactions[now]} реакций`:'—';
+  $('#auto-hour-model').textContent=active?`${views[now]} просмотров${now<reactions.length?' · '+reactions[now]+' реакций':''}`:'—';
   const obs=d.observed_view_hours||[];
   $('#auto-hour-observed').textContent=active&&(d.observed_coverage||[])[now]?obs[now]: 'Недостаточно замеров';
   $('#auto-time-fill').style.width=active?((d.post_age_seconds%3600)/36).toFixed(2)+'%':now===null?'0%':'100%';
@@ -3991,37 +4017,93 @@ function autoObserved(){
   const coverage=d.observed_coverage||Array(24).fill(false);
   autoHoursPlot('auto-observed-plot','auto-observed-hours',
     (AUTO_OBSERVE==='views'?d.observed_view_hours:d.observed_reaction_hours)||Array(24).fill(0),AUTO_OBSERVE,coverage);
+  $('#auto-observed-title').textContent='Реальные изменения выбранного поста'+(d.post_date?' · '+(d.window_hours||24)+' ч':'');
   $('#auto-observed-note').textContent=d.waiting_for_new_post?'Ожидание нового поста. Измерения начнутся после его публикации.':`Замеров: ${d.sample_count||0}. Значения показывают только прирост между замерами, не полный объём просмотров за час. До первого замера данные по часам недоступны.`;
   $('#auto-observe-views').classList.toggle('on',AUTO_OBSERVE==='views');
   $('#auto-observe-reactions').classList.toggle('on',AUTO_OBSERVE==='reactions');
 }
 $('#auto-observe-views').onclick=()=>{AUTO_OBSERVE='views';autoObserved()};
 $('#auto-observe-reactions').onclick=()=>{AUTO_OBSERVE='reactions';autoObserved()};
+function autoMarkProfileDirty(){
+  AUTO.dirty=true;
+  $('#auto-sum').textContent='Есть несохранённые изменения';
+  autoClearViewPreview();
+}
 function autoGraph(){
-  const plot=$('#auto-plot'),hours=$('#auto-hours');plot.replaceChildren();hours.replaceChildren();
+  autoProfileEditor('activity','auto-plot','auto-hours',100);
+  autoProfileEditor('values','auto-reaction-profile','auto-reaction-profile-hours',40);
+}
+function autoProfileEditor(key,id,hoursId,limit){
+  const plot=$('#'+id),hours=$('#'+hoursId);
+  const activity=key==='activity';
+  const scale=activity?100:Math.max(limit,...AUTO[key]);
+  plot.replaceChildren();hours.replaceChildren();
+  const clock=i=>String(i).padStart(2,'0')+':00';
+  const draw=i=>{
+    const [val,bar]=plot.children[i].children;
+    const x=AUTO[key][i];
+    val.textContent=x.toFixed(1).replace(/\.0$/,'')+(activity?'':'%');
+    bar.style.height=Math.max(3,x/scale*206)+'px';
+    bar.setAttribute('aria-valuenow',x.toFixed(1));
+  };
+  const set=(i,value)=>{
+    const v=Math.round(Math.max(0,Math.min(scale,value))*10)/10;
+    const profile=AUTO[key];
+    if(activity){
+      profile[i]=v;draw(i);
+    }else{
+      const other=profile.reduce((sum,x,j)=>sum+(j===i?0:x),0);
+      AUTO[key]=profile.map((x,j)=>j===i?v:(other>0?x/other*(100-v):(100-v)/23));
+      AUTO[key].forEach((_,j)=>draw(j));
+    }
+    autoMarkProfileDirty();
+  };
+  const move=(i,event)=>{const rect=plot.getBoundingClientRect();set(i,(rect.bottom-event.clientY)/206*scale);};
   for(let i=0;i<24;i++){
-    const col=el('div','auto-bar-col'),val=el('div','auto-bar-val',AUTO.values[i].toFixed(1).replace('.0','')+'%'),bar=el('div','auto-bar');
-    const draw=()=>{val.textContent=AUTO.values[i].toFixed(1).replace('.0','')+'%';bar.style.height=(AUTO.values[i]/40*206)+'px';bar.setAttribute('aria-valuenow',AUTO.values[i].toFixed(1))};
-    bar.setAttribute('role','slider');bar.setAttribute('tabindex','0');bar.setAttribute('aria-label',`Час ${i+1}, доля просмотров`);bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','40');
-    draw();bar.onkeydown=e=>{if(e.key==='ArrowUp'||e.key==='ArrowDown'){e.preventDefault();autoSet(i,AUTO.values[i]+(e.key==='ArrowUp'?.5:-.5))}};
-    bar.onpointerdown=e=>{e.preventDefault();bar.setPointerCapture(e.pointerId);AUTO.drag=i;bar.classList.add('drag');autoMove(i,e)};
-    bar.onpointermove=e=>{if(AUTO.drag===i)autoMove(i,e)};
-    const release=()=>{AUTO.drag=null;bar.classList.remove('drag')};bar.onpointerup=release;bar.onpointercancel=release;
-    col.append(val,bar);plot.append(col);hours.append(el('span','',String(i+1)));
+    const col=el('div','auto-bar-col'),val=el('div','auto-bar-val'),bar=el('div','auto-bar');
+    bar.setAttribute('role','slider');bar.tabIndex=0;
+    bar.setAttribute('aria-label',activity?'Активность в '+clock(i)+' МСК':'Час '+(i+1)+', доля реакций');
+    bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax',String(scale));
+    bar.onkeydown=event=>{
+      if(event.key!=='ArrowUp'&&event.key!=='ArrowDown')return;
+      event.preventDefault();set(i,AUTO[key][i]+(event.key==='ArrowUp'?1:-1)*(activity?1:.5));
+    };
+    bar.onpointerdown=event=>{event.preventDefault();bar.setPointerCapture(event.pointerId);bar.classList.add('drag');move(i,event);};
+    bar.onpointermove=event=>{if(bar.hasPointerCapture(event.pointerId))move(i,event);};
+    bar.onlostpointercapture=()=>bar.classList.remove('drag');
+    col.append(val,bar);plot.append(col);hours.append(el('span','',activity?clock(i):String(i+1)));
+    draw(i);
   }
 }
-function autoMove(i,e){const r=$('#auto-plot').getBoundingClientRect();const y=Math.max(0,Math.min(1,(r.bottom-e.clientY)/206));autoSet(i,Math.round(y*400)/10)}
-function autoSet(i,value){
-  // Keep the 24 columns adding up to 100%, redistributing the remainder.
-  const prev=AUTO.values.slice(),v=Math.round(Math.max(0,Math.min(40,value))*10)/10,remain=100-v,other=prev.reduce((s,x,j)=>s+(j===i?0:x),0);
-  AUTO.values=prev.map((x,j)=>j===i?v:(other>0?x/other*remain:remain/23));AUTO.dirty=true;
-  const bars=$('#auto-plot').children;for(let j=0;j<24;j++){
-    const n=bars[j],x=AUTO.values[j];n.children[0].textContent=x.toFixed(1).replace('.0','')+'%';
-    n.children[1].style.height=Math.max(3,x/40*206)+'px';n.children[1].setAttribute('aria-valuenow',x.toFixed(1));
-  }
-  $('#auto-sum').textContent='Сумма: 100% · Есть несохранённые изменения';
-  autoForecast();
+function autoClearViewPreview(){
+  AUTO.previewRevision++;
+  $('#auto-view-preview-chart').hidden=true;
+  $('#auto-view-preview-note').textContent='';
 }
+$('#auto-view-preview-form').onsubmit=async event=>{
+  event.preventDefault();
+  const channel=autoMultiSelected();if(!channel)return;
+  const revision=++AUTO.previewRevision;
+  const note=$('#auto-view-preview-note'),button=$('#auto-preview-button');
+  const published='2000-01-01T'+$('#auto-preview-time').value+':00+03:00';
+  const total=$('#auto-preview-total').valueAsNumber;
+  note.textContent='Строим график…';button.disabled=true;
+  try{
+    const result=await api('/api/automatic/channels/'+channel.id+'/preview-views',{method:'POST',json:{
+      published,total,view_activity:AUTO.activity,view_day2_pct:$('#auto-day2').valueAsNumber}});
+    if(revision!==AUTO.previewRevision||autoMultiSelected()?.id!==channel.id)return;
+    const counts=result.counts, start=Date.parse(result.published);
+    const formatter=new Intl.DateTimeFormat('ru-RU',{timeZone:'Europe/Moscow',hour:'2-digit',minute:'2-digit'});
+    const times=counts.map((_,i)=>formatter.format(start+i*3600000));
+    autoHoursPlot('auto-view-preview-plot','auto-view-preview-hours',counts,'views',null,times);
+    const first=counts.slice(0,24).reduce((a,b)=>a+b,0);
+    note.textContent=`Первые сутки: ${first} · вторые сутки: ${total-first} · время по МСК. Повторное построение покажет другой вариант.`;
+    $('#auto-view-preview-chart').hidden=false;
+  }catch(error){if(revision===AUTO.previewRevision)note.textContent=error.message;}
+  finally{button.disabled=false;}
+};
+for(const id of ['auto-preview-time','auto-preview-total'])$('#'+id).oninput=autoClearViewPreview;
+$('#auto-day2').oninput=autoMarkProfileDirty;
 function autoRanges(d){
   const total=d.connected_accounts||0;
   for(const [id,key] of [['auto-views','max_views'],['auto-reactions','max_reactions']]){
@@ -4031,7 +4113,8 @@ function autoRanges(d){
 }
 function autoMiniChart(values,coverage,kind){
   const chart=el('div','auto-mini-bars'),xs=values||Array(24).fill(0),max=Math.max(1,...xs);
-  for(let i=0;i<24;i++){
+  chart.style.gridTemplateColumns=`repeat(${xs.length},minmax(0,1fr))`;
+  for(let i=0;i<xs.length;i++){
     const available=coverage&&coverage[i],bar=el('span','auto-mini-bar'+(kind==='reactions'?' reactions':'')+(available?'':' no-data'));
     bar.style.height=(available?Math.max(2,(xs[i]||0)/max*55):2)+'px';
     bar.title=`Час ${i+1}: ${available?xs[i]:'нет замера'}`;chart.append(bar);
@@ -4070,8 +4153,8 @@ function autoActionCountdown(p,summary,service,d){
   }else if(!d.active||!(p.execution_enabled??d.execute_plan)){
     description=`План по ${name} приостановлен`;
     row.classList.add('warning');
-  }else if(p.status!=='active'){
-    description=`План по ${name} не выполнен (24 часа прошли)`;
+  }else if(p.status!=='active'||(!isView&&p.post_age_seconds>=86400)){
+    description=`План по ${name} не выполнен (${isView?(p.window_hours||24):24} ч прошли)`;
     row.classList.add('warning');
   }else if(summary.running>0){
     description=`${isView?'Просмотр':'Реакция'} выполняется сейчас…`;
@@ -4093,14 +4176,14 @@ function autoCards(d){
   const root=$('#auto-posts');root.replaceChildren();
   const all=d.posts||[],running=all.filter(p=>p.status==='active'),finished=all.filter(p=>p.status!=='active');
   $('#auto-post-count').textContent=`Активных: ${running.length} · завершённых: ${finished.length}`;
-  if(!all.length){root.append(el('div','auto-post-empty',d.active?'Ожидание нового поста. Старые публикации не обрабатываются.':'Начни мониторинг, чтобы отслеживать каждую новую публикацию 24 часа.'));}
+  if(!all.length){root.append(el('div','auto-post-empty',d.active?'Ожидание нового поста. Старые публикации не обрабатываются.':'Начни мониторинг, чтобы отслеживать новые публикации.'));}
   const archived=$('#auto-post-archive-toggle');archived.hidden=true;
   archived.textContent=AUTO.showArchive?'Скрыть завершённые':`Показать завершённые (${finished.length})`;
   const visible=running.concat(finished.slice(0,2));
   for(const p of visible){
     const card=el('article','auto-post-card'+(p.post_id===AUTO.selectedId?' selected':''));
     const head=el('div','auto-post-title'),left=el('div','auto-post-left');
-    left.append(el('strong','',`Пост #${p.post_id}`),el('span','auto-post-pill'+(p.status==='active'?'':' done'),p.status==='active'?'● Идёт мониторинг':'✓ 24 часа завершены'));
+    left.append(el('strong','',`Пост #${p.post_id}`),el('span','auto-post-pill'+(p.status==='active'?'':' done'),p.status==='active'?'● Идёт мониторинг':'✓ Мониторинг завершён'));
     const select=el('button','auto-post-choose',p.post_id===AUTO.selectedId?'Выбран':'Подробности');
     select.type='button';select.onclick=()=>{AUTO.selectedId=p.post_id;AUTO.lockSelection=true;autoRender(AUTO.raw,false);document.getElementById('auto-selected-title').scrollIntoView({behavior:'smooth',block:'center'});};
     head.append(left,select);card.append(head);
@@ -4120,11 +4203,11 @@ function autoCards(d){
     const passed=p.post_age_seconds||0,h=Math.floor(passed/3600),m=Math.floor((passed%3600)/60),remain=p.time_remaining_seconds||0;
     const tl=el('div','auto-post-time');tl.append(el('span','',`Прошло ${h} ч ${m} мин`),el('span','',p.status==='active'?`Осталось ${Math.floor(remain/3600)} ч ${Math.ceil(remain%3600/60)} мин`:'Мониторинг завершён'));
     card.append(tl);
-    const progress=el('div','auto-post-progress'),line=el('i');line.style.width=Math.min(100,Math.max(0,passed/864))+'%';progress.append(line);card.append(progress);
+    const progress=el('div','auto-post-progress'),line=el('i');line.style.width=Math.min(100,Math.max(0,passed/((p.window_hours||24)*36)))+'%';progress.append(line);card.append(progress);
     const graphs=el('div','auto-post-graphs');
     for(const [name,field,kind] of [['Просмотры','observed_view_hours','views'],['Реакции','observed_reaction_hours','reactions']]){
       const chartbox=el('div',''),hdr=el('div','auto-post-graph-title');
-      hdr.append(el('span','',`${name} · 24 часа`),el('span','',`Замеров: ${p.sample_count||0}`));
+      hdr.append(el('span','',`${name} · ${p.window_hours||24} ч`),el('span','',`Замеров: ${p.sample_count||0}`));
       chartbox.append(hdr,autoMiniChart(p[field],p.observed_coverage,kind));graphs.append(chartbox);
     }
     card.append(graphs);
@@ -4154,7 +4237,7 @@ function autoRender(d,full=false){
     post_text:'',post_date:null,views:null,forwards:null,actual_reactions:null,
     reaction_breakdown:[],suggestion:null,post_age_seconds:null,
     observed_view_hours:Array(24).fill(0),observed_reaction_hours:Array(24).fill(0),
-    observed_coverage:Array(24).fill(false),sample_count:0};
+    observed_coverage:Array(24).fill(false),model_view_hours:null,model_reaction_hours:null,sample_count:0};
   AUTO.data=selected;
   $('#auto-channel').value=full?d.channel||'':$('#auto-channel').value;
   $('#auto-dot').className='auto-dot '+(d.error?'error':d.active?'active':'');
@@ -4173,7 +4256,11 @@ function autoRender(d,full=false){
   else if(d.active&&!posts.length)autoStatus('Канал подключён. Ожидаем новую публикацию; исходный пост не обрабатывается.','ok');
   else if(d.active)autoStatus(`Параллельный мониторинг: ${d.active_posts_count||0} активных публикаций. Новые посты не прерывают предыдущие.`, 'ok');
   else autoStatus('Мониторинг остановлен. Сохранённые данные остаются доступными.');
-  if(full){autoPolicyFields(d);AUTO.values=(d.hours||AUTO.values).slice();AUTO.dirty=false;autoGraph();$('#auto-sum').textContent='Сумма: 100%';}
+  if(full){
+    autoPolicyFields(d);AUTO.values=(d.hours||AUTO.values).slice();AUTO.activity=(d.view_activity||DEFAULT_VIEW_ACTIVITY).slice();
+    $('#auto-day2').value=d.view_day2_pct??10;$('#auto-preview-total').value=d.max_views||200;
+    AUTO.dirty=false;autoGraph();autoClearViewPreview();$('#auto-sum').textContent='';
+  }
   autoRanges(d);
   autoCards(d);
   const s=selected.suggestion,rec=$('#auto-ai');rec.replaceChildren();
@@ -4280,7 +4367,7 @@ function autoMultiForms(d,force=false){
         autoMultiStatus('Канал удалён из списка. История на сервере сохранена.','ok');
       }catch(e){autoMultiStatus(e.message,'err')}finally{remove.disabled=false}
     };
-    const policy=el('button','btn ghost','Реакции / промпт');policy.type='button';policy.onclick=()=>{AUTO_MULTI.selectedChannelId=c.id;autoMultiShowDetails(true);autoRender(c,true);$('#auto-detail-channel').textContent=autoMultiChannelName(c.channel);$('#auto-policy-panel').scrollIntoView({behavior:'smooth',block:'center'});};
+    const policy=el('button','btn ghost','График / реакции');policy.type='button';policy.onclick=()=>{AUTO_MULTI.selectedChannelId=c.id;autoMultiShowDetails(true);autoRender(c,true);$('#auto-detail-channel').textContent=autoMultiChannelName(c.channel);$('#auto-policy-panel').scrollIntoView({behavior:'smooth',block:'center'});};
     buttons.append(save,policy,remove);row.append(buttons);root.append(row);
   }
   const add=el('div','auto-multi-row add-row'),link=el('div','auto-multi-link');
@@ -4367,11 +4454,13 @@ for(const id of ['auto-views','auto-reactions'])$('#'+id).oninput=()=>{
   AUTO.dirty=true;autoForecast();
 };
 $('#auto-execute').onchange=()=>{AUTO.dirty=true;$('#auto-sum').textContent='Есть несохранённые изменения — нажми «Сохранить настройки»'};
-$('#auto-default').onclick=()=>{AUTO.values=[34,15,9,7,5,4,3,2,2,2,1,1,2,2,1,1,1,2,1,1,1,1,1,1];AUTO.dirty=true;autoGraph();autoForecast();$('#auto-sum').textContent='Сумма: 100% · Есть несохранённые изменения'};
+$('#auto-default').onclick=()=>{
+  AUTO.activity=DEFAULT_VIEW_ACTIVITY.slice();$('#auto-day2').value=10;autoGraph();autoMarkProfileDirty();
+};
 $('#auto-save').onclick=async()=>{
   const c=autoMultiSelected();if(!c)return;
   try{
-    const d=await api('/api/automatic/channels/'+c.id+'/config',{method:'POST',json:{hours:AUTO.values,max_views:+$('#auto-views').value,max_reactions:+$('#auto-reactions').value,execute_plan:$('#auto-execute').checked,allowed_reactions:[...$('#auto-emoji-options').querySelectorAll('input:checked')].map(input=>input.value),reaction_prompt:$('#auto-reaction-prompt').value}});
+    const d=await api('/api/automatic/channels/'+c.id+'/config',{method:'POST',json:{hours:AUTO.values,view_activity:AUTO.activity,view_day2_pct:$('#auto-day2').valueAsNumber,max_views:+$('#auto-views').value,max_reactions:+$('#auto-reactions').value,execute_plan:$('#auto-execute').checked,allowed_reactions:[...$('#auto-emoji-options').querySelectorAll('input:checked')].map(input=>input.value),reaction_prompt:$('#auto-reaction-prompt').value}});
     autoMultiRender(d,true);autoStatus('Настройки выбранного канала сохранены','ok');
   }catch(e){autoStatus(e.message,'err')}
 };

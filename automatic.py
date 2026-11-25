@@ -22,6 +22,14 @@ from aiohttp import web
 from telethon import functions, types
 from telethon.errors import ChannelPrivateError, FloodPremiumWaitError, FloodWaitError, UserNotParticipantError
 
+# Activity at 00:00 through 23:00 Moscow time, on a relative scale.
+DEFAULT_VIEW_ACTIVITY = [43, 29, 20, 13, 12, 15, 26, 47, 73, 80, 75, 67,
+                         64, 66, 64, 66, 73, 81, 91, 100, 98, 88, 73, 57]
+DEFAULT_VIEW_DAY2_PCT = 10
+VIEW_HOURS = 48
+VIEW_SHAPE_SPREAD = .07
+MOSCOW = timezone(timedelta(hours=3))
+
 DEFAULT_HOURS = [34, 15, 9, 7, 5, 4, 3, 2, 2, 2, 1, 1, 2, 2, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1]
 assert len(DEFAULT_HOURS) == 24 and sum(DEFAULT_HOURS) == 100
 ALLOWED_EMOJI = ('❤️', '👍', '👎', '🔥', '😭', '🤬', '😍', '💔', '🤡', '💩', '😡')
@@ -30,7 +38,7 @@ DEFAULT_PROMPT = 'Подбирай реакции по содержанию но
 INTENSITY_RATIOS = {'low': 0.25, 'normal': 0.5, 'high': 0.85}
 LOG = logging.getLogger(__name__)
 POST_SETTINGS = ('hours', 'max_views', 'max_reactions', 'execute_plan', 'views_enabled',
-                 'allowed_reactions', 'reaction_prompt', 'subscribers_only')
+                 'allowed_reactions', 'reaction_prompt', 'subscribers_only', 'view_activity', 'view_day2_pct')
 EMOJI_PATTERN = r'[\U0001f000-\U0001faff\u2600-\u27bf]\ufe0f?'
 REACTION_POLICY_VERSION = 3
 MEMBERSHIP_ROSTER_TTL = 15 * 60
@@ -151,7 +159,7 @@ def clean_link(link):
 
 
 def apportion(total, weights):
-    """Largest-remainder apportionment: exact integer total across 24 buckets."""
+    """Largest-remainder apportionment: exact integer total across weighted buckets."""
     total = max(0, int(total))
     weights = [max(0., float(x)) for x in weights]
     denom = sum(weights)
@@ -294,15 +302,83 @@ def reaction_snapshot(msg):
     return total, result
 
 
-def observed_hours(history, post_date):
+def view_curve(published, activity, rng=random):
+    """Integrate a smooth activity profile over post-age hours."""
+    local = published.astimezone(MOSCOW)
+    hour = (local.hour * 3600 + local.minute * 60 + local.second) / 3600
+    evening_hour = hour - 24 if hour >= 12 else hour
+
+    def ease(x):
+        x = max(0, min(1, x))
+        return x * x * (3 - 2 * x)
+
+    night = ease((evening_hour + 2.5) / 2.5) * ease((7 - evening_hour) / 2.5)
+    peak_age = 8.5 + rng.uniform(-.5, .5) - evening_hour
+    width = rng.uniform(1.15, 1.85)
+    activity_scale = max(activity)
+    variation = [rng.uniform(-VIEW_SHAPE_SPREAD, VIEW_SHAPE_SPREAD) for _ in range(17)]
+
+    def weight(age):
+        clock_hour = (hour + age) % 24
+        index = int(clock_hour)
+        blend = ease(clock_hour - index)
+        local_activity = (activity[index] * (1 - blend) + activity[(index + 1) % 24] * blend) / activity_scale
+        if age < 24:
+            recency = .14 + .70 * math.exp(-age / 5) + 2.0 * math.exp(-age / 1.15)
+            # Keep the wake-up wave broad while still responding to channel activity.
+            wave = 1.95 * night * math.exp(-.5 * ((age - peak_age) / width) ** 2)
+            audience_peak = .58 * ease((local_activity - .66) / .34)
+            later = ease((age - 1) / 4) * math.exp(-age / 13)
+            baseline = local_activity * recency + audience_peak * later + (.40 + .60 * local_activity) * wave
+        else:
+            baseline = local_activity * math.exp(-(age - 24) / 38)
+        anchor = age / 3
+        left = int(anchor)
+        blend = ease(anchor - left)
+        noise = variation[left] * (1 - blend) + variation[left + 1] * blend
+        return baseline * (1 + noise)
+
+    return [sum(weight(h + (part + .5) / 4) for part in range(4)) / 4
+            for h in range(VIEW_HOURS)]
+
+
+def view_day_totals(total, day2_pct):
+    return apportion(total, [100 - day2_pct, day2_pct])
+
+
+def validate_view_profile(activity, percent):
+    if (not isinstance(activity, list) or len(activity) != 24 or any(
+            type(value) not in (int, float) or not 0 <= value <= 100 for value in activity)
+            or not any(activity)):
+        raise ValueError('Укажи 24 значения активности от 0 до 100, хотя бы одно выше нуля')
+    if type(percent) is not int or not 0 <= percent <= 100:
+        raise ValueError('Доля просмотров на вторые сутки должна быть целым числом от 0 до 100')
+
+
+def view_counts(total, weights, day2_pct):
+    first, second = view_day_totals(total, day2_pct)
+    return apportion(first, weights[:24]) + apportion(second, weights[24:])
+
+
+def view_window(post):
+    weights = post.get('view_curve')
+    return VIEW_HOURS if isinstance(weights, list) and len(weights) == VIEW_HOURS else MONITOR_HOURS
+
+
+def within_window(post, now, hours=None):
+    age = post_age_seconds(post, now)
+    return age is not None and age < (hours if hours is not None else view_window(post)) * 3600
+
+
+def observed_hours(history, post_date, window=24):
     """Observed *changes* in displayed counts, not synthetic views.
 
     Counts before the first sample cannot be attributed to a particular hour.
     Changes crossing hour boundaries are associated with the later sample.
     """
-    views = [0] * 24
-    reacts = [0] * 24
-    covered = [False] * 24
+    views = [0] * window
+    reacts = [0] * window
+    covered = [False] * window
     if not history or not post_date:
         return views, reacts, covered
     try:
@@ -318,7 +394,7 @@ def observed_hours(history, post_date):
             index = int((current_at - published).total_seconds() // 3600)
         except (ValueError, TypeError, KeyError):
             continue
-        if not 0 <= index < 24:
+        if not 0 <= index < window:
             continue
         covered[index] = True
         for key, series in [('views', views), ('reactions', reacts)]:
@@ -339,28 +415,34 @@ MAX_ACTIONS_PER_TICK = 4
 MAX_PARALLEL_ACTIONS = 3
 
 
-def timed_slots(total, weights, published, now):
-    """Spread actions through the *remaining* part of a post's 24-hour window.
-
-    Never schedule a backdated burst when a post is discovered late or after a
-    restart. Redistribute hourly weights to the remaining window instead.
-    """
+def timed_slots(total, weights, published, now, *, day2_pct=None, retained=()):
+    """Spread new actions through the future part of the publication window."""
     published = parse_timestamp(published)
-    if published is None or total <= 0:
+    window = len(weights)
+    if published is None or total <= 0 or now >= published + timedelta(hours=window):
         return []
-    end = published + timedelta(hours=MONITOR_HOURS)
-    if now >= end:
-        return []
-    remaining = []
-    for h in range(MONITOR_HOURS):
-        start = max(now, published + timedelta(hours=h))
-        stop = published + timedelta(hours=h + 1)
-        frac = max(0., (stop - start).total_seconds() / 3600)
-        remaining.append(max(0., float(weights[h])) * min(frac, 1.))
-    if not sum(remaining):
-        remaining = [max(0., (published + timedelta(hours=h + 1) - max(now, published + timedelta(hours=h))).total_seconds())
-                     for h in range(MONITOR_HOURS)]
-    by_hour = apportion(total, remaining)
+    fractions = [
+        max(0., (published + timedelta(hours=h + 1) - max(now, published + timedelta(hours=h))).total_seconds() / 3600)
+        for h in range(window)
+    ]
+    remaining = [max(0., float(weight)) * frac for weight, frac in zip(weights, fractions)]
+    if day2_pct is None:
+        by_hour = apportion(total, remaining if any(remaining) else fractions)
+    else:
+        _, second = view_day_totals(total + len(retained), day2_pct)
+        split = published + timedelta(hours=24)
+        reserved_first = sum((parse_timestamp(a.get('due')) or split) < split for a in retained)
+        eligible = (day2_pct < 100 and any(fractions[:24]), day2_pct > 0 and any(fractions[24:]))
+        if all(eligible):
+            # Reserve the tail even if some original tasks have already run.
+            second = min(total, max(0, second - (len(retained) - reserved_first)))
+            first = total - second
+        else:
+            first, second = (total if active else 0 for active in eligible)
+        by_hour = (
+            apportion(first, remaining[:24] if any(remaining[:24]) else fractions[:24])
+            + apportion(second, remaining[24:] if any(remaining[24:]) else fractions[24:])
+        )
     slots = []
     for h, count in enumerate(by_hour):
         if count <= 0:
@@ -425,7 +507,7 @@ def post_age_seconds(post, now=None):
 
 
 class Monitor:
-    """Independent 24-hour windows for monitoring and optional execution."""
+    """Independent per-post windows for monitoring and optional execution."""
 
     def __init__(self, storage, clients, account_ids=None, env_directory=None, preferences=None):
         self.storage = Path(storage)
@@ -441,7 +523,8 @@ class Monitor:
         self.state = {
             'channel': '', 'active': False, 'baseline_post_id': None,
             'last_post_id': None, 'checked_at': None, 'error': '',
-            'hours': DEFAULT_HOURS.copy(), 'max_views': 0, 'max_reactions': 0,
+            'hours': DEFAULT_HOURS.copy(), 'view_activity': DEFAULT_VIEW_ACTIVITY.copy(),
+            'view_day2_pct': DEFAULT_VIEW_DAY2_PCT, 'max_views': 0, 'max_reactions': 0,
             'execute_plan': False, 'views_enabled': True, 'subscribers_only': False,
             'allowed_reactions': list(ALLOWED_EMOJI), 'reaction_prompt': DEFAULT_PROMPT,
             'posts': [],
@@ -621,12 +704,12 @@ class Monitor:
         return {name: live[name] for name, confirmed in zip(live, included) if confirmed}
 
     @staticmethod
-    def needs_subscribers(post, settings):
+    def needs_subscribers(post, settings, reactions_open=True):
         execution = post.get('execution', {})
         suggestion = post.get('suggestion') or {}
         targets = {
             'views': settings['max_views'] if settings['views_enabled'] else 0,
-            'reactions': suggestion.get('total', 0) if suggestion.get('status') == 'ok' else 0,
+            'reactions': suggestion.get('total', 0) if reactions_open and suggestion.get('status') == 'ok' else 0,
         }
         for service, target in targets.items():
             if not target:
@@ -663,26 +746,36 @@ class Monitor:
 
     def snapshot_post(self, post, now=None):
         now = now or utc_now()
-        result = {k: v for k, v in post.items() if k not in ('samples', 'settings')}
+        result = {k: v for k, v in post.items() if k not in ('samples', 'settings', 'view_curve')}
         age = post_age_seconds(post, now)
         result['post_age_seconds'] = age
-        result['current_hour'] = min(24, age // 3600 + 1) if age is not None else None
-        result['status'] = 'active' if age is not None and age < MONITOR_HOURS * 3600 else 'completed'
-        result['time_remaining_seconds'] = max(0, MONITOR_HOURS * 3600 - (age or 0))
+        window = view_window(post)
+        result['window_hours'] = window
+        result['current_hour'] = min(window, age // 3600 + 1) if age is not None else None
+        result['status'] = 'active' if age is not None and age < window * 3600 else 'completed'
+        result['time_remaining_seconds'] = max(0, window * 3600 - (age or 0))
         result['sample_count'] = len(post.get('samples', []))
-        observed = observed_hours([post], post.get('post_date'))
+        observed = observed_hours([post], post.get('post_date'), window)
         result['observed_view_hours'], result['observed_reaction_hours'], result['observed_coverage'] = observed
         settings = self.post_settings(post)
         result['execution_enabled'] = settings['execute_plan']
         result['plan_hours'] = settings['hours']
-        if settings['subscribers_only'] or (age is not None and age >= MONITOR_HOURS*3600):
-            result['view_target'] = ((post.get('execution') or {}).get('views') or {}).get('target', (post.get('view_budget') or {}).get('target', 0))
+        execution = post.get('execution') or {}
+        planned_views = (execution.get('views') or {}).get('target', 0)
+        if settings['subscribers_only'] or (age is not None and age >= window * 3600):
+            result['view_target'] = planned_views or (post.get('view_budget') or {}).get('target', 0)
         else:
-            result['view_target'] = self.view_target(post)
-        result['model_view_hours'] = apportion(result['view_target'], settings['hours'])
+            result['view_target'] = planned_views or self.view_target(post)
+        if window == VIEW_HOURS:
+            curve = post['view_curve']
+            percent = settings['view_day2_pct']
+            result['model_view_hours'] = view_counts(result['view_target'], curve, percent)
+            result['model_view_shares'] = view_counts(1000, curve, percent)
+        else:
+            result['model_view_hours'] = apportion(result['view_target'], settings['hours'])
+            result['model_view_shares'] = [x * 10 for x in settings['hours']]
         suggestion = post.get('suggestion') or {}
         result['model_reaction_hours'] = apportion(suggestion.get('total', 0), settings['hours'])
-        execution = post.get('execution') or {}
         result['execution_views'] = execution_summary(execution.get('views'))
         result['execution_reactions'] = execution_summary(execution.get('reactions'))
         result.pop('execution', None)  # Don't send account identities or action logs to browser.
@@ -696,7 +789,7 @@ class Monitor:
         st['max_views'] = min(int(st['max_views']), st['connected_accounts'])
         st['max_reactions'] = min(int(st['max_reactions']), st['connected_accounts'])
         ordered = sorted(self.state['posts'], key=lambda p: p['post_id'], reverse=True)
-        active = [p for p in ordered if post_age_seconds(p, now) is not None and post_age_seconds(p, now) < MONITOR_HOURS*3600]
+        active = [post for post in ordered if within_window(post, now)]
         finished = [p for p in ordered if p not in active][:2]
         st['posts'] = [self.snapshot_post(p, now) for p in active+finished]
         st['active_posts_count'] = sum(p['status'] == 'active' for p in st['posts'])
@@ -790,6 +883,7 @@ class Monitor:
                            {'status': 'unavailable', 'message': 'Для анализа DeepSeek нужен текст новости'}),
             'samples': [], 'missing': False,
         }
+        post['view_curve'] = view_curve(parse_timestamp(post['post_date']), settings['view_activity'])
         self.sample_message(post, message, now)
         self.state['posts'].append(post)
         return post
@@ -851,20 +945,17 @@ class Monitor:
                     # A newly discovered historical message is archived, not tracked.
                     if post_age_seconds(post, now_dt) < MONITOR_HOURS * 3600 and post['post_text']:
                         ids_of_new_posts.append(post['post_id'])
-                # An independent 24-hour window for every post. Newly seen posts
+                # An independent window for every post. Newly seen posts
                 # have already had their initial sample; do not duplicate it.
                 eligible = [p for p in self.state['posts']
                             if p['post_id'] not in ids_of_new_posts
-                            and post_age_seconds(p, now_dt) is not None
-                            and post_age_seconds(p, now_dt) < MONITOR_HOURS * 3600
+                            and within_window(p, now_dt)
                             and (not p['samples'] or parse_timestamp(p['samples'][-1].get('at')) is None or (now_dt - parse_timestamp(p['samples'][-1]['at'])).total_seconds() >= POLL_SECONDS)]
                 if eligible and sample_stats:
                     await self.sample_existing(entity, eligible, now)
                 # Retain all still-active posts and recent finished ones.
                 if len(self.state['posts']) > MAX_STORED_POSTS:
-                    active = [p for p in self.state['posts']
-                              if post_age_seconds(p, now_dt) is not None
-                              and post_age_seconds(p, now_dt) < MONITOR_HOURS * 3600]
+                    active = [post for post in self.state['posts'] if within_window(post, now_dt)]
                     finished = [p for p in self.state['posts'] if p not in active]
                     keep_finished = max(0, MAX_STORED_POSTS - len(active))
                     self.state['posts'] = (finished[-keep_finished:] if keep_finished else []) + active
@@ -1000,9 +1091,18 @@ class Monitor:
         """
         execution = post.setdefault('execution', {})
         prior = execution.get(service) or {}
-        hours = self.post_settings(post)['hours']
-        signature = {'target': target, 'hours': list(hours),
+        settings = self.post_settings(post)
+        new_view_timing = service == 'views' and view_window(post) == VIEW_HOURS
+        weights = post['view_curve'] if new_view_timing else settings['hours']
+        day2_pct = settings['view_day2_pct'] if new_view_timing else None
+        if service == 'views':
+            # Accounts reconnect gradually after startup. A temporary drop in
+            # availability should not delete the saved view plan or its tail.
+            target = max(target, prior.get('target', 0))
+        signature = {'target': target, 'hours': list(settings['hours']),
                      'emojis': [[emoji, count] for emoji, count in (emojis or [])]}
+        if new_view_timing:
+            signature['view_day2_pct'] = day2_pct
         reconciled = self.deduplicate_actions(prior)
         if live is None:
             live = self.live_accounts()
@@ -1012,6 +1112,9 @@ class Monitor:
             if action.get('status') == 'pending' and action.get('account') not in live:
                 replacement = aliases.get(self.action_identity(action))
                 if replacement is None:
+                    if service == 'views' and len(live) < target:
+                        retained.append(action)
+                        continue
                     reconciled = True  # Unattempted work may be reassigned to an available user.
                     continue
                 action['account'] = replacement
@@ -1028,15 +1131,17 @@ class Monitor:
         # When only upgrading the algorithm or eliminating duplicate aliases,
         # retain surviving pending due times. When changing profile/target,
         # redistribute only those that have not been attempted.
+        preserve_times = current_timing and (same_signature or new_view_timing)
         pending = ([a for a in prior.get('actions', []) if a.get('status') == 'pending']
-                   if same_signature and current_timing else [])
+                   if preserve_times else [])
         pending = sorted(pending, key=lambda a: a['due'])[:max(0, target - len(fixed))]
         reserved = {self.action_identity(a) for a in fixed + pending}
         candidates = [(name, client) for name, client in live.items()
                       if self.account_identity(name, client) not in reserved]
         random.shuffle(candidates)  # Do not always choose the first account names.
         needed = min(max(0, target - len(fixed) - len(pending)), len(candidates))
-        slots = timed_slots(needed, hours, post['post_date'], now)
+        slots = timed_slots(needed, weights, post['post_date'], now, day2_pct=day2_pct,
+                            retained=fixed + pending)
         new_actions = [
             {'account': name, 'account_id': self.account_identity(name, client),
              'due': due, 'status': 'pending'}
@@ -1074,14 +1179,13 @@ class Monitor:
             live = self.live_accounts()
             subscribers = None
             for post in self.state['posts']:
-                age = post_age_seconds(post, now)
                 settings = self.post_settings(post)
-                if (age is None or not 0 <= age < MONITOR_HOURS * 3600 or post.get('missing')
-                        or not settings['execute_plan']):
+                if not within_window(post, now) or post.get('missing') or not settings['execute_plan']:
                     continue
+                reactions_open = within_window(post, now, MONITOR_HOURS)
                 pool = live
                 if settings['subscribers_only']:
-                    if not self.needs_subscribers(post, settings):
+                    if not self.needs_subscribers(post, settings, reactions_open):
                         continue
                     if subscribers is None:
                         subscribers = await self.subscriber_accounts(live, channel)
@@ -1091,7 +1195,7 @@ class Monitor:
                 view_target = self.view_target(post, len(pool))
                 planned |= self.update_execution_plan(post, 'views', view_target, [], now, pool)
                 recommendation = post.get('suggestion') or {}
-                if recommendation.get('status') == 'ok':
+                if reactions_open and recommendation.get('status') == 'ok':
                     if recommendation.get('policy_version') not in (2, REACTION_POLICY_VERSION):
                         recommendation = validated_reaction_plan(recommendation, int(settings['max_reactions']), settings['allowed_reactions'])
                         post['suggestion'] = recommendation
@@ -1107,7 +1211,7 @@ class Monitor:
                     emojis = [(emoji, count) for emoji, count in allocation.items() if count]
                     planned |= self.update_execution_plan(post, 'reactions', target, emojis, now, pool)
                 for service, plan in post.get('execution', {}).items():
-                    if service == 'reactions' and recommendation.get('status') != 'ok':
+                    if service == 'reactions' and (not reactions_open or recommendation.get('status') != 'ok'):
                         continue
                     for action in plan['actions']:
                         if (action['status'] == 'pending' and action['account'] in pool
@@ -1270,6 +1374,13 @@ class Monitor:
 
     async def configure(self, request):
         payload = await request.json()
+        activity = payload.get('view_activity', self.state['view_activity'])
+        day2_pct = payload.get('view_day2_pct', self.state['view_day2_pct'])
+        try:
+            validate_view_profile(activity, day2_pct)
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=json.dumps({'error': str(exc)}, ensure_ascii=False),
+                                     content_type='application/json') from None
         hours = payload.get('hours')
         if not isinstance(hours, list) or len(hours) != 24 or any(
                 not isinstance(x, (int, float)) or isinstance(x, bool)
@@ -1304,12 +1415,35 @@ class Monitor:
             if 'settings' not in post:
                 post['settings'] = self.capture_settings()
         self.state.update({'hours': [float(x) for x in hours],
+                           'view_activity': activity, 'view_day2_pct': day2_pct,
                            'max_views': max_views, 'max_reactions': max_reactions,
                            'execute_plan': execute, 'views_enabled': views_enabled,
                            'subscribers_only': subscribers_only, 'allowed_reactions': allowed,
                            'reaction_prompt': prompt})
         self.save()
         return web.json_response(self.snapshot())
+
+    async def preview_views(self, request):
+        payload = await request.json()
+        try:
+            if not isinstance(payload, dict):
+                raise ValueError('Укажи параметры предпросмотра')
+            activity = payload.get('view_activity', self.state['view_activity'])
+            day2_pct = payload.get('view_day2_pct', self.state['view_day2_pct'])
+            validate_view_profile(activity, day2_pct)
+            published = parse_timestamp(payload.get('published'))
+            if published is None:
+                raise ValueError('Укажи время публикации по МСК')
+            total = payload.get('total')
+            if type(total) is not int or not 1 <= total <= 1000000:
+                raise ValueError('Укажи целое число просмотров от 1 до 1 000 000')
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=json.dumps({'error': str(exc)}, ensure_ascii=False),
+                                     content_type='application/json') from None
+        weights = view_curve(published, activity)
+        return web.json_response({'counts': view_counts(total, weights, day2_pct),
+                                  'published': published.isoformat()},
+                                 headers={'Cache-Control': 'no-store'})
 
     async def get(self, request):
         return web.json_response(self.snapshot())
@@ -1340,6 +1474,7 @@ def register(app, clients, directory, account_ids=None):
     app.router.add_post('/api/automatic/start', mon.start)
     app.router.add_post('/api/automatic/stop', mon.stop)
     app.router.add_post('/api/automatic/config', mon.configure)
+    app.router.add_post('/api/automatic/preview-views', mon.preview_views)
 
     async def shutdown(app):
         await mon.close()

@@ -182,6 +182,8 @@ class Hub:
         payload = await request.json()
         await mon.configure(_JsonRequest({
             'hours': payload.get('hours', mon.state['hours']),
+            'view_activity': payload.get('view_activity', mon.state['view_activity']),
+            'view_day2_pct': payload.get('view_day2_pct', mon.state['view_day2_pct']),
             'max_views': payload.get('max_views', mon.state['max_views']),
             'max_reactions': payload.get('max_reactions', mon.state['max_reactions']),
             'execute_plan': payload.get('execute_plan', mon.state['execute_plan']),
@@ -191,6 +193,9 @@ class Hub:
             'reaction_prompt': payload.get('reaction_prompt', mon.state['reaction_prompt']),
         }))
         return web.json_response(self.snapshot())
+
+    async def preview_views(self, request):
+        return await self.lookup(request.match_info['id']).preview_views(request)
 
     async def start_all(self, request):
         failures = {}
@@ -237,5 +242,6 @@ def register(app, clients, directory, account_ids=None, preferences=None):
     app.router.add_post('/api/automatic/channels/{id}/start', hub.channel_start)
     app.router.add_post('/api/automatic/channels/{id}/stop', hub.channel_stop)
     app.router.add_post('/api/automatic/channels/{id}/config', hub.channel_config)
+    app.router.add_post('/api/automatic/channels/{id}/preview-views', hub.preview_views)
     app.router.add_post('/api/automatic/start-all', hub.start_all)
     app.router.add_post('/api/automatic/stop-all', hub.stop_all)

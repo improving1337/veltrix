@@ -14,6 +14,44 @@ import automatic
 from automatic_multi import Hub, _JsonRequest, channel_key
 
 
+class ViewCurveTests(unittest.TestCase):
+    @staticmethod
+    def counts(hour, minute=0, seed=1, day=25, total=200):
+        published = datetime(2026, 11, day, hour, minute, tzinfo=automatic.MOSCOW)
+        curve = automatic.view_curve(published, automatic.DEFAULT_VIEW_ACTIVITY, random.Random(seed))
+        return automatic.view_counts(total, curve, 10)
+
+    def test_moscow_peaks_and_smooth_night_transition(self):
+        for hour in (0, 3, 5, 10, 15, 20, 23):
+            with self.subTest(hour=hour):
+                counts = self.counts(hour)
+                self.assertEqual(len(counts), 48)
+                self.assertEqual((sum(counts[:24]), sum(counts[24:])), (180, 20))
+                if hour in (0, 3, 5, 23):
+                    peak = max(range(24), key=counts.__getitem__)
+                    self.assertIn((hour + peak) % 24, (7, 8, 9))
+        before, after = self.counts(22, 59), self.counts(23)
+        self.assertLessEqual(sum(abs(a - b) for a, b in zip(before, after)), 6)
+        self.assertGreater(self.counts(0)[0], self.counts(3)[0])
+        self.assertGreater(self.counts(20)[0], self.counts(10)[0])
+        self.assertGreater(self.counts(15)[4], self.counts(15)[2])
+
+    def test_each_post_gets_a_new_shape_and_small_counts_are_conserved(self):
+        self.assertNotEqual(self.counts(22, 30, 1), self.counts(22, 30, 2, 26))
+        for total in (1, 5, 11, 25, 30):
+            self.assertEqual(sum(self.counts(23, total=total)), total)
+
+    def test_late_schedule_respects_remaining_window(self):
+        published = datetime(2026, 11, 25, 0, tzinfo=automatic.MOSCOW)
+        curve = automatic.view_curve(published, automatic.DEFAULT_VIEW_ACTIVITY, random.Random(1))
+        later = published + timedelta(hours=27)
+        due = automatic.timed_slots(10, curve, published, later, day2_pct=10)
+        self.assertEqual(len(due), 10)
+        self.assertTrue(all(later <= automatic.parse_timestamp(slot) < published + timedelta(hours=48)
+                            for slot in due))
+        self.assertEqual(automatic.timed_slots(10, curve, published, later, day2_pct=0), [])
+
+
 class AutopilotTests(unittest.IsolatedAsyncioTestCase):
     async def test_panel_spreads_are_frozen_for_each_post(self):
         mon = self.monitor
@@ -80,6 +118,64 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(old_plans['views']['signature']['hours'], old_settings['hours'])
         self.assertEqual(old_plans['reactions']['target'], 10)
         self.assertEqual(restored.find_post(2)['execution'], {})
+
+    async def test_two_day_due_times_persist_and_legacy_plan_stays_one_day(self):
+        mon = self.monitor
+        mon.preferences = lambda: {'view_spread': 0}
+        mon.state.update(max_views=100, max_reactions=10, execute_plan=True)
+        new = mon.add_post(self.message(1, 'Test'), self.now.isoformat())
+        old = self.post(2, age=0)
+        mon.state['posts'].append(old)
+        split = self.now + timedelta(hours=24)
+        mon.update_execution_plan(new, 'views', 100, [], self.now)
+        mon.update_execution_plan(old, 'views', 100, [], self.now)
+        initial = new['execution']['views']['actions']
+        self.assertEqual(sum(automatic.parse_timestamp(a['due']) >= split for a in initial), 10)
+        self.assertTrue(all(automatic.parse_timestamp(a['due']) < split
+                            for a in old['execution']['views']['actions']))
+        new['suggestion'] = automatic.validated_reaction_plan({'post_kind': 'ad'}, 10)
+        old_curve = new['view_curve'].copy()
+        with patch('automatic.utc_now', return_value=self.now):
+            await mon.configure(_JsonRequest({
+                'hours': automatic.DEFAULT_HOURS, 'max_views': 100, 'max_reactions': 10,
+                'view_activity': [100] * 24, 'view_day2_pct': 25,
+            }))
+        restored = automatic.Monitor(mon.storage, lambda: self.clients)
+        restored.state['active'] = True
+        tracked = restored.find_post(1)
+        self.assertEqual(tracked['view_curve'], old_curve)
+        self.assertEqual(tracked['settings']['view_day2_pct'], 10)
+        self.assertEqual(tracked['execution']['views']['actions'], initial)
+        self.assertEqual(restored.state['view_day2_pct'], 25)
+        self.assertEqual(automatic.view_window(restored.find_post(2)), 24)
+        first_client = next(iter(self.clients))
+        partial = {first_client: self.clients[first_client]}
+        restored.update_execution_plan(tracked, 'views', 0, [], self.now, {})
+        restored.update_execution_plan(tracked, 'views', 1, [], self.now, partial)
+        self.assertEqual(tracked['execution']['views']['actions'], initial)
+        for action in tracked['execution']['views']['actions'][:90]:
+            action['status'] = 'done'
+        action = tracked['execution']['views']['actions'][90]
+        now = automatic.parse_timestamp(action['due'])
+        with (patch('automatic.utc_now', return_value=now),
+              patch.object(restored, 'perform_action', AsyncMock()) as perform):
+            await restored.dispatch_actions()
+            await asyncio.gather(*restored.action_tasks.values())
+        perform.assert_awaited_once()
+        self.assertEqual(perform.await_args.args[1], 'views')
+        self.assertNotIn('reactions', tracked['execution'])
+        self.assertEqual(restored.snapshot_post(tracked, now)['status'], 'active')
+        self.assertEqual(restored.snapshot_post(restored.find_post(2), now)['status'], 'completed')
+
+    async def test_preview_is_read_only_and_rejects_invalid_settings(self):
+        data = {'published': '2026-11-25T22:30:00+03:00', 'total': 200, 'view_day2_pct': 15}
+        response = await self.monitor.preview_views(_JsonRequest(data))
+        counts = json.loads(response.text)['counts']
+        self.assertEqual((sum(counts[:24]), sum(counts[24:])), (170, 30))
+        self.assertEqual(self.monitor.state['view_day2_pct'], 10)
+        self.assertFalse(self.monitor.storage.exists())
+        with self.assertRaises(web.HTTPBadRequest):
+            await self.monitor.preview_views(_JsonRequest(data | {'view_activity': [0] * 24}))
 
     async def test_subscribers_only_for_views_and_reactions(self):
         class Client:
