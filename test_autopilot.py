@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from aiohttp import web
 from telethon import types
 from telethon.errors import FloodWaitError
@@ -50,6 +50,22 @@ class ViewCurveTests(unittest.TestCase):
         self.assertTrue(all(later <= automatic.parse_timestamp(slot) < published + timedelta(hours=48)
                             for slot in due))
         self.assertEqual(automatic.timed_slots(10, curve, published, later, day2_pct=0), [])
+
+
+class RepostBudgetTests(unittest.TestCase):
+    def test_ordinary_news_giveaway_and_long_term_impact(self):
+        with patch('automatic.random.randint', side_effect=lambda low, high: high):
+            routine = automatic.repost_percent('Игрок дал короткое интервью.\n\nРеклама: розыгрыш приза.', {})
+            major = automatic.repost_percent('Команда объявила о закрытии состава.', {})
+            giveaway = automatic.repost_percent('Запускаем розыгрыш трёх билетов.', {})
+            ai = automatic.repost_percent('Вышло заявление организаторов.', {'repost_priority': 'major'})
+        self.assertEqual([routine, major, giveaway, ai], [3, 8, 10, 8])
+        self.assertEqual(automatic.repost_target(200, routine), 6)
+        self.assertEqual(automatic.repost_target(29, giveaway), 2)
+        self.assertEqual(automatic.repost_target(9, giveaway), 0)
+        for views in range(200):
+            for percent in range(2, 11):
+                self.assertLessEqual(automatic.repost_target(views, percent) * 10, views)
 
 
 class AutopilotTests(unittest.IsolatedAsyncioTestCase):
@@ -123,9 +139,10 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         mon = self.monitor
         mon.preferences = lambda: {'view_spread': 0}
         mon.state.update(max_views=100, max_reactions=10, execute_plan=True)
+        self.assertEqual(mon.state['view_mode'], 'legacy')
+        old = mon.add_post(self.message(2, 'Test'), self.now.isoformat())
+        mon.state['view_mode'] = 'realistic'
         new = mon.add_post(self.message(1, 'Test'), self.now.isoformat())
-        old = self.post(2, age=0)
-        mon.state['posts'].append(old)
         split = self.now + timedelta(hours=24)
         mon.update_execution_plan(new, 'views', 100, [], self.now)
         mon.update_execution_plan(old, 'views', 100, [], self.now)
@@ -138,7 +155,7 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         with patch('automatic.utc_now', return_value=self.now):
             await mon.configure(_JsonRequest({
                 'hours': automatic.DEFAULT_HOURS, 'max_views': 100, 'max_reactions': 10,
-                'view_activity': [100] * 24, 'view_day2_pct': 25,
+                'view_activity': [100] * 24, 'view_day2_pct': 25, 'view_mode': 'legacy',
             }))
         restored = automatic.Monitor(mon.storage, lambda: self.clients)
         restored.state['active'] = True
@@ -147,6 +164,7 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tracked['settings']['view_day2_pct'], 10)
         self.assertEqual(tracked['execution']['views']['actions'], initial)
         self.assertEqual(restored.state['view_day2_pct'], 25)
+        self.assertEqual(restored.state['view_mode'], 'legacy')
         self.assertEqual(automatic.view_window(restored.find_post(2)), 24)
         first_client = next(iter(self.clients))
         partial = {first_client: self.clients[first_client]}
@@ -169,6 +187,9 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_preview_is_read_only_and_rejects_invalid_settings(self):
         data = {'published': '2026-11-25T22:30:00+03:00', 'total': 200, 'view_day2_pct': 15}
+        legacy = json.loads((await self.monitor.preview_views(_JsonRequest(data))).text)
+        self.assertEqual(legacy['counts'], automatic.apportion(200, automatic.DEFAULT_HOURS))
+        self.monitor.state['view_mode'] = 'realistic'
         response = await self.monitor.preview_views(_JsonRequest(data))
         counts = json.loads(response.text)['counts']
         self.assertEqual((sum(counts[:24]), sum(counts[24:])), (170, 30))
@@ -176,6 +197,53 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.monitor.storage.exists())
         with self.assertRaises(web.HTTPBadRequest):
             await self.monitor.preview_views(_JsonRequest(data | {'view_activity': [0] * 24}))
+
+    async def test_reposts_are_saved_with_unique_accounts_and_use_existing_service(self):
+        mon = self.monitor
+        mon.preferences = lambda: {'view_spread': 0}
+        mon.account_ids = lambda: {name: int(name) // 2 for name in self.clients}
+        mon.state.update(max_views=50, max_reactions=0, execute_plan=True, active=True,
+                         view_mode='realistic', subscribers_only=True, channel='https://t.me/example')
+        post = mon.add_post(self.message(3, 'Начался розыгрыш билетов'), self.now.isoformat())
+        subscribers = {name: self.clients[name] for name in map(str, range(0, 40, 2))}
+        with (patch('automatic.env_value', return_value=''), patch('automatic.utc_now', return_value=self.now),
+              patch('automatic.random.randint', side_effect=lambda low, high: high),
+              patch.object(mon, 'subscriber_accounts', AsyncMock(return_value=subscribers))):
+            await mon.analyze(3)
+            await mon.dispatch_actions()
+        restored = automatic.Monitor(mon.storage, lambda: self.clients, mon.account_ids)
+        saved = restored.find_post(3)
+        plan = saved['execution']['reposts']
+        self.assertEqual(saved['repost_pct'], 10)
+        self.assertEqual(plan['target'], 2)
+        actions = plan['actions']
+        self.assertEqual(len({action['account_id'] for action in actions}), 2)
+        self.assertLessEqual({action['account'] for action in actions}, subscribers.keys())
+        with (patch('posts.RepostJoiner._join', AsyncMock(return_value=('ok', 'Переслано'))) as send,
+              patch.object(restored, 'is_subscriber', AsyncMock(return_value=True))):
+            await restored.perform_action(3, 'reposts', actions[0], 'example')
+        send.assert_awaited_once()
+        self.assertEqual(send.await_args.args[2], ('example', 3))
+        self.assertEqual(restored.snapshot_post(saved, self.now)['execution_reposts']['done'], 1)
+
+    async def test_deepseek_repost_score_works_with_reactions_disabled(self):
+        mon = self.monitor
+        mon.state.update(max_views=50, max_reactions=0)
+        post = mon.add_post(self.message(4, 'Появились подробности заявления.'), self.now.isoformat())
+        response = SimpleNamespace(status=200, json=AsyncMock(return_value={'choices': [
+            {'message': {'content': '{"repost_priority":"major","post_kind":"news"}'}}
+        ]}))
+        session = MagicMock()
+        session.post.return_value.__aenter__.return_value = response
+        with (patch('automatic.env_value', return_value='test-key'),
+              patch('automatic.random.randint', side_effect=lambda low, high: high),
+              patch('automatic.aiohttp.ClientSession') as http,
+              patch.object(mon, 'channel_reactions', AsyncMock()) as reactions):
+            http.return_value.__aenter__.return_value = session
+            await mon.analyze(4)
+        reactions.assert_not_awaited()
+        self.assertEqual(post['repost_pct'], 8)
+        self.assertEqual(post['suggestion']['total'], 0)
 
     async def test_subscribers_only_for_views_and_reactions(self):
         class Client:

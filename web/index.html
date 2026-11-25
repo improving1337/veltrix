@@ -627,6 +627,8 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 .auto-view-controls button{margin-bottom:14px}
 .auto-legacy-profile summary{cursor:pointer}
 .auto-view-controls input{font-variant-numeric:tabular-nums}
+.auto-multi-range .auto-view-mode{margin-top:10px;flex-wrap:wrap}
+.auto-view-mode select{width:auto;max-width:100%;padding:4px 8px}
 </style>
 <style id="veltrix-theme">
 /* VELTRIX UI — graphite dashboard treatment adapted from the supplied Ember
@@ -1096,19 +1098,20 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
    <p class="auto-note">Цель по реакциям случайно выбирается для каждого нового поста в пределах лимита. Если ❤️ разрешено, оно получает минимум 40%, а в голосовании с ❤️ — больше любого другого варианта.</p>
    <p class="auto-note">Просмотры: цель выбирается для каждого поста в диапазоне, заданном в настройках панели, ограничивается доступными аккаунтами и сохраняется между перезапусками.</p>
   </div>
-  <div class="auto-panel"><div class="auto-head"><div><h3>Активность канала по часам (МСК)</h3><small>Измени высоту столбца мышью или стрелками клавиатуры. Шкала от 0 до 100.</small></div><div><button id="auto-default" class="btn ghost" style="width:auto">По умолчанию</button></div></div>
+  <div class="auto-panel"><div id="auto-realistic-profile"><div class="auto-head"><div><h3>Активность канала по часам (МСК)</h3><small>Измени высоту столбца мышью или стрелками клавиатуры. Шкала от 0 до 100.</small></div><div><button id="auto-default" class="btn ghost" style="width:auto">По умолчанию</button></div></div>
    <div class="auto-chart-scroll"><div id="auto-plot" class="auto-plot" aria-label="Активность по часам МСК"></div><div id="auto-hours" class="auto-hours"></div></div>
    <div class="auto-view-controls">
     <label class="fld"><span>Доля просмотров на вторые сутки (%)</span><input id="auto-day2" type="number" min="0" max="100" step="1" value="10"></label>
    </div>
-   <details class="auto-legacy-profile"><summary>Почасовой профиль реакций</summary>
+   </div>
+   <details class="auto-legacy-profile" id="auto-legacy-profile"><summary id="auto-legacy-title">Почасовой профиль реакций</summary>
     <div class="auto-chart-scroll"><div id="auto-reaction-profile" class="auto-plot" aria-label="Почасовые доли реакций"></div><div id="auto-reaction-profile-hours" class="auto-hours"></div></div>
    </details>
    <div id="auto-sum" class="auto-note" aria-live="polite"></div>
    <div class="auto-limits"><div><div class="auto-limit-head"><span>Просмотры на один пост (из аккаунтов)</span><strong id="auto-views-value">0</strong></div><input type="range" id="auto-views" min="0" max="0" value="0"><div class="auto-range-ends"><span>0</span><span id="auto-views-max">0</span></div></div>
    <div><div class="auto-limit-head"><span>Лимит реакций на один пост (из аккаунтов)</span><strong id="auto-reactions-value">0</strong></div><input type="range" id="auto-reactions" min="0" max="0" value="0"><div class="auto-range-ends"><span>0</span><span id="auto-reactions-max">0</span></div></div></div>
-   <label class="auto-execution-toggle"><input type="checkbox" id="auto-execute"> <span><strong>Выполнять план автоматически</strong><small>Настройки применяются к новым постам. Чтобы приостановить выполнение для активных постов, остановите мониторинг канала.</small></span></label><p class="auto-note">Каждый уникальный Telegram-аккаунт получает не более одного задания на просмотр и одного на реакцию на каждый пост, даже если подключён под разными именами. Эмодзи реакций перемешиваются по времени с сохранением их количества. Для новостей рекомендации даёт DeepSeek. Для явной рекламы и голосований варианты определяются по тексту и разрешённым реакциям канала. График просмотров для новых постов рассчитан на 48 часов, а реакции планируются на первые 24 часа.</p><button id="auto-save" class="btn" style="width:auto">Сохранить настройки</button>
-   <div class="auto-head" style="margin-top:22px"><h3>Предпросмотр «ёлочки» на 48 часов</h3></div>
+   <label class="auto-execution-toggle"><input type="checkbox" id="auto-execute"> <span><strong>Выполнять план автоматически</strong><small>Настройки применяются к новым постам. Чтобы приостановить выполнение для активных постов, остановите мониторинг канала.</small></span></label><p class="auto-note">Каждый уникальный Telegram-аккаунт получает не более одного задания на просмотр и одного на реакцию на каждый пост, даже если подключён под разными именами. Эмодзи реакций перемешиваются по времени с сохранением их количества. Для новостей рекомендации даёт DeepSeek. Для явной рекламы и голосований варианты определяются по тексту и разрешённым реакциям канала. «Легаси» распределяет просмотры по 24 часам от публикации. «Реалистик» использует активность по МСК и 48 часов.</p><button id="auto-save" class="btn" style="width:auto">Сохранить настройки</button>
+   <div class="auto-head" style="margin-top:22px"><h3 id="auto-view-preview-title">Предпросмотр «ёлочки»</h3></div>
    <form id="auto-view-preview-form" class="auto-view-controls">
     <label class="fld"><span>Время публикации (МСК)</span><input id="auto-preview-time" type="time" required value="22:30"></label>
     <label class="fld"><span>Просмотров для примера</span><input id="auto-preview-total" type="number" min="1" max="1000000" step="1" required value="200"></label>
@@ -1128,7 +1131,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
    <div class="auto-recommend" id="auto-ai" style="margin-top:12px">ИИ проанализирует новую публикацию, если настроен DeepSeek API.</div>
    <div class="auto-head" style="margin-top:20px"><h3>24 часа · модель рекомендаций по реакциям</h3><small>Использует почасовой профиль реакций</small></div>
    <div class="auto-observed-plot" id="auto-reaction-model-plot"></div><div class="auto-hours" id="auto-reaction-model-hours"></div>
-   <p class="auto-note">При включённом автовыполнении рекомендации DeepSeek определяют эмодзи и количество для функции «Реакции». Репосты не выполняются. Фактические реакции на посте отображаются выше.</p>
+   <p class="auto-note">При включённом автовыполнении рекомендации DeepSeek определяют эмодзи и количество для функции «Реакции». Для репостов оценивается важность публикации. План ограничен 10% от целевых просмотров. Репосты сохраняются в «Избранное» аккаунтов.</p>
   </div>
   </div></div></div></section>
  <section id="v-accounts" class="view on">
@@ -4090,14 +4093,16 @@ $('#auto-view-preview-form').onsubmit=async event=>{
   note.textContent='Строим график…';button.disabled=true;
   try{
     const result=await api('/api/automatic/channels/'+channel.id+'/preview-views',{method:'POST',json:{
-      published,total,view_activity:AUTO.activity,view_day2_pct:$('#auto-day2').valueAsNumber}});
+      published,total,hours:AUTO.values,view_activity:AUTO.activity,view_day2_pct:$('#auto-day2').valueAsNumber}});
     if(revision!==AUTO.previewRevision||autoMultiSelected()?.id!==channel.id)return;
     const counts=result.counts, start=Date.parse(result.published);
     const formatter=new Intl.DateTimeFormat('ru-RU',{timeZone:'Europe/Moscow',hour:'2-digit',minute:'2-digit'});
     const times=counts.map((_,i)=>formatter.format(start+i*3600000));
     autoHoursPlot('auto-view-preview-plot','auto-view-preview-hours',counts,'views',null,times);
     const first=counts.slice(0,24).reduce((a,b)=>a+b,0);
-    note.textContent=`Первые сутки: ${first} · вторые сутки: ${total-first} · время по МСК. Повторное построение покажет другой вариант.`;
+    note.textContent=result.view_mode==='realistic'?
+      `Первые сутки: ${first} · вторые сутки: ${total-first} · время по МСК. Повторное построение покажет другой вариант.`:
+      `Легаси · ${total} просмотров за 24 часа · время по МСК.`;
     $('#auto-view-preview-chart').hidden=false;
   }catch(error){if(revision===AUTO.previewRevision)note.textContent=error.message;}
   finally{button.disabled=false;}
@@ -4137,27 +4142,27 @@ function autoTickCountdowns(){
   }
 }
 function autoActionCountdown(p,summary,service,d){
-  const isView=service==='views';
-  const name=isView?'просмотрам':'реакциям';
-  const label=isView?'Следующий просмотр добавится через: ':'Следующая реакция добавится через: ';
+  const isReaction=service==='reactions';
+  const name={views:'просмотрам',reactions:'реакциям',reposts:'репостам'}[service];
+  const label={views:'Следующий просмотр: ',reactions:'Следующая реакция: ',reposts:'Следующий репост: '}[service];
   const row=el('div','auto-next-action');
   let description='';
   if(summary.completed){
     description=`План по ${name} выполнен`;
     row.classList.add('done');
   }else if(!(summary.target>0)){
-    if(!isView&&p.suggestion?.status==='pending')description='Реакции: ожидаем анализ DeepSeek';
-    else if(!isView&&!p.suggestion)description='Реакции: ожидаем анализ DeepSeek';
-    else if(!isView&&p.suggestion?.status==='error')description='Реакции: анализ DeepSeek недоступен';
+    if(isReaction&&p.suggestion?.status==='pending')description='Реакции: ожидаем анализ DeepSeek';
+    else if(isReaction&&!p.suggestion)description='Реакции: ожидаем анализ DeepSeek';
+    else if(isReaction&&p.suggestion?.status==='error')description='Реакции: анализ DeepSeek недоступен';
     else description=`План по ${name} не задан`;
   }else if(!d.active||!(p.execution_enabled??d.execute_plan)){
     description=`План по ${name} приостановлен`;
     row.classList.add('warning');
-  }else if(p.status!=='active'||(!isView&&p.post_age_seconds>=86400)){
-    description=`План по ${name} не выполнен (${isView?(p.window_hours||24):24} ч прошли)`;
+  }else if(p.status!=='active'||(isReaction&&p.post_age_seconds>=86400)){
+    description=`План по ${name} не выполнен (${isReaction?24:(p.window_hours||24)} ч прошли)`;
     row.classList.add('warning');
   }else if(summary.running>0){
-    description=`${isView?'Просмотр':'Реакция'} выполняется сейчас…`;
+    description=`${{views:'Просмотр',reactions:'Реакция',reposts:'Репост'}[service]} выполняется сейчас…`;
   }else if(summary.next_due_at){
     row.append(document.createTextNode(label));
     const time=el('strong','');time.dataset.autoNextDue=summary.next_due_at;
@@ -4194,11 +4199,12 @@ function autoCards(d){
       const item=el('span','');item.append(el('b','',value==null?'—':Number(value).toLocaleString('ru-RU')),' '+label.toLowerCase());stats.append(item);
     }
     card.append(stats);
-    const ex=el('div','auto-execution-summary'),v=p.execution_views||{},r=p.execution_reactions||{};
-    ex.textContent=`Услуги: просмотры ${v.done||0}/${v.target||0} · реакции ${r.done||0}/${r.target||0}`+((v.errors||0)+(r.errors||0)?` · ошибки/неизвестно ${(v.errors||0)+(r.errors||0)}`:'');
+    const ex=el('div','auto-execution-summary'),v=p.execution_views||{},r=p.execution_reactions||{},f=p.execution_reposts||{};
+    ex.textContent=`Услуги: просмотры ${v.done||0}/${v.target||0} · реакции ${r.done||0}/${r.target||0} · репосты ${f.done||0}/${f.target||p.repost_target||0}`+((v.errors||0)+(r.errors||0)+(f.errors||0)?` · ошибки/неизвестно ${(v.errors||0)+(r.errors||0)+(f.errors||0)}`:'');
     card.append(ex);
     const next=el('div','auto-next-actions');
     next.append(autoActionCountdown(p,v,'views',d),autoActionCountdown(p,r,'reactions',d));
+    if(f.target||p.repost_target)next.append(autoActionCountdown(p,{...f,target:f.target||p.repost_target},'reposts',d));
     card.append(next);
     const passed=p.post_age_seconds||0,h=Math.floor(passed/3600),m=Math.floor((passed%3600)/60),remain=p.time_remaining_seconds||0;
     const tl=el('div','auto-post-time');tl.append(el('span','',`Прошло ${h} ч ${m} мин`),el('span','',p.status==='active'?`Осталось ${Math.floor(remain/3600)} ч ${Math.ceil(remain%3600/60)} мин`:'Мониторинг завершён'));
@@ -4258,6 +4264,10 @@ function autoRender(d,full=false){
   else autoStatus('Мониторинг остановлен. Сохранённые данные остаются доступными.');
   if(full){
     autoPolicyFields(d);AUTO.values=(d.hours||AUTO.values).slice();AUTO.activity=(d.view_activity||DEFAULT_VIEW_ACTIVITY).slice();
+    const realistic=d.view_mode==='realistic';
+    $('#auto-realistic-profile').hidden=!realistic;$('#auto-legacy-profile').open=!realistic;
+    $('#auto-legacy-title').textContent=realistic?'Почасовой профиль реакций':'Почасовой профиль Легаси и реакций';
+    $('#auto-view-preview-title').textContent=realistic?'Предпросмотр «ёлочки» на 48 часов':'Предпросмотр Легаси на 24 часа';
     $('#auto-day2').value=d.view_day2_pct??10;$('#auto-preview-total').value=d.max_views||200;
     AUTO.dirty=false;autoGraph();autoClearViewPreview();$('#auto-sum').textContent='';
   }
@@ -4303,7 +4313,7 @@ async function autoMultiAdd(link){
 }
 function autoMultiForms(d,force=false){
   const rows=d.channels||[];
-  const signature=rows.map(c=>[c.id,c.channel,c.max_views,c.max_reactions,c.views_enabled,c.subscribers_only,c.execute_plan,c.connected_accounts,c.active,c.error].join(':')).join('|');
+  const signature=rows.map(c=>[c.id,c.channel,c.max_views,c.max_reactions,c.views_enabled,c.subscribers_only,c.view_mode,c.execute_plan,c.connected_accounts,c.active,c.error].join(':')).join('|');
   if(!force&&AUTO_MULTI.formSignature===signature)return;
   // Preserve in-progress slider edits until that channel's Save button runs.
   if(!force&&$('#auto-multi-fields').querySelector('[data-dirty=\"1\"]'))return;
@@ -4331,6 +4341,11 @@ function autoMultiForms(d,force=false){
     const viewCheck=el('input','');viewCheck.type='checkbox';viewCheck.checked=c.views_enabled!==false;viewCheck.dataset.key='views_enabled';
     viewCheck.onchange=()=>{row.dataset.dirty='1'};
     viewToggle.append(viewCheck,document.createTextNode('Добавлять просмотры'));viewBlock.append(viewToggle);
+    const modeLabel=el('label','auto-view-mode','График просмотров'),mode=el('select');
+    mode.append(new Option('Легаси','legacy'),new Option('Реалистик','realistic'));
+    mode.value=c.view_mode||'legacy';
+    mode.onchange=()=>{row.dataset.dirty='1'};
+    modeLabel.append(mode);viewBlock.append(modeLabel);
     const reactionBlock=makeRange('max_reactions','Лимит реакций на пост');
     const reactionSpread=el('small','auto-note'),reactionSlider=reactionBlock.querySelector('input[type=range]'),reactionChange=reactionSlider.oninput;
     const updateReactionSpread=()=>{
@@ -4352,11 +4367,11 @@ function autoMultiForms(d,force=false){
     const buttons=el('div','auto-multi-buttons'),save=el('button','btn ghost','Сохранить'),remove=el('button','btn ghost','Удалить');
     save.type='button';remove.type='button';
     save.onclick=async()=>{
-      const values={views_enabled:viewCheck.checked,execute_plan:planCheck.checked,subscribers_only:subscriberCheck.checked};for(const slider of row.querySelectorAll('input[type=range]'))values[slider.dataset.key]=+slider.value;
+      const values={views_enabled:viewCheck.checked,execute_plan:planCheck.checked,subscribers_only:subscriberCheck.checked,view_mode:mode.value};for(const slider of row.querySelectorAll('input[type=range]'))values[slider.dataset.key]=+slider.value;
       save.disabled=true;
       try{
         const result=await api('/api/automatic/channels/'+c.id+'/config',{method:'POST',json:values});
-        row.dataset.dirty='';AUTO_MULTI.formSignature='';autoMultiRender(result,true);autoMultiStatus('Лимиты канала сохранены','ok');
+        row.dataset.dirty='';AUTO_MULTI.formSignature='';autoMultiRender(result,true);autoMultiStatus('Настройки канала сохранены','ok');
       }catch(e){autoMultiStatus(e.message,'err')}finally{save.disabled=false}
     };
     remove.onclick=async()=>{
@@ -4405,8 +4420,8 @@ function autoMultiCards(d){
       const item=el('span','');item.append(el('b','',value==null?'—':Number(value).toLocaleString('ru-RU')),' '+name);stats.append(item);
     }
     card.append(stats);
-    const v=p.execution_views||{},r=p.execution_reactions||{};
-    card.append(el('div','auto-execution-summary',`Услуги: просмотры ${v.done||0}/${v.target||0} · реакции ${r.done||0}/${r.target||0}`));
+    const v=p.execution_views||{},r=p.execution_reactions||{},f=p.execution_reposts||{};
+    card.append(el('div','auto-execution-summary',`Услуги: просмотры ${v.done||0}/${v.target||0} · реакции ${r.done||0}/${r.target||0} · репосты ${f.done||0}/${f.target||p.repost_target||0}`));
     root.append(card);
   }
 }

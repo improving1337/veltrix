@@ -184,6 +184,7 @@ class Hub:
             'hours': payload.get('hours', mon.state['hours']),
             'view_activity': payload.get('view_activity', mon.state['view_activity']),
             'view_day2_pct': payload.get('view_day2_pct', mon.state['view_day2_pct']),
+            'view_mode': payload.get('view_mode', mon.state['view_mode']),
             'max_views': payload.get('max_views', mon.state['max_views']),
             'max_reactions': payload.get('max_reactions', mon.state['max_reactions']),
             'execute_plan': payload.get('execute_plan', mon.state['execute_plan']),
