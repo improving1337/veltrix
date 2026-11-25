@@ -7,14 +7,18 @@ import logging
 import os
 import random
 import re
+import secrets
+import tempfile
 import time
 from pathlib import Path
 
 from aiohttp import web
+from telethon.errors import BotResponseTimeoutError
 from telethon.tl import types
 
 import channels
 import account_flags
+import message_photos
 import multi
 import plan_options
 import posts
@@ -28,12 +32,14 @@ POST_ACTIONS = {
     "repost": posts.RepostJoiner, "button": multi.ButtonsJoiner,
 }
 ACTIONS = POST_ACTIONS | {"sub": channels.ChannelJoiner, "unsub": unsub.UnsubJoiner,
-                         "start": multi.StartsJoiner, "online": None, "send": None}
+                         "start": multi.StartsJoiner, "online": None, "send": None, "send_photo": None, "bot_button": None}
 ARGUMENTS = {name: ("post",) for name in POST_ACTIONS} | {
     "react": ("post", "emoji"), "poll": ("post", "option"), "sub": ("channel",),
     "unsub": ("channel",), "start": ("bot",), "online": ("seconds",), "send": ("peer", "text"),
+    "send_photo": ("peer", "image", "caption"), "bot_button": ("peer", "position", "text"),
 }
-DEFAULTS = {"emoji": "❤️"}
+DEFAULTS = {"emoji": "❤️", "caption": ""}
+IMAGE_ID = re.compile(r"[a-f0-9]{64}")
 STATUSES = {"running", "paused", "uncertain"}
 
 
@@ -52,11 +58,13 @@ def account_ids(value):
 
 
 class Compiler:
-    def __init__(self, accounts, groups, params, flags=None):
+    def __init__(self, accounts, groups, params, flags=None, *, image=None, seed=None):
         self.accounts = accounts
         self.flags = flags or {}
         self.groups = groups
         self.params = params
+        self.image = image
+        self.random = random.Random(seed)
         self.steps = []
         self.statements_left = 10000
 
@@ -70,6 +78,17 @@ class Compiler:
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub):
             excluded = set(account_ids(self.value(node.right, scope)))
             return [item for item in account_ids(self.value(node.left, scope)) if item not in excluded]
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "photo" and not node.args and not node.keywords:
+                if not self.image:
+                    raise ValueError("Прикрепи фото к сценарию")
+                return self.image
+            if node.func.id == "random_accounts" and len(node.args) == 2 and not node.keywords:
+                choices = account_ids(self.value(node.args[0], scope))
+                count = self.value(node.args[1], scope)
+                if type(count) is not int or not 1 <= count <= len(choices):
+                    raise ValueError(f"Нужно выбрать от 1 до {len(choices)} доступных аккаунтов")
+                return self.random.sample(choices, count)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "accounts":
             if node.args or len(node.keywords) != 1 or node.keywords[0].arg != "flag":
                 raise ValueError('Используй accounts(flag=general) или accounts(flag=autopilot)')
@@ -86,7 +105,7 @@ class Compiler:
             if isinstance(name, str) and node.func.id == "param" and name in self.params:
                 return self.params[name]
             raise ValueError("Не найдена группа или параметр")
-        raise ValueError("Используй переменные, значения, списки, accounts(…), group(…) или param(…)")
+        raise ValueError("Используй переменные, списки, accounts(…), random_accounts(…), photo(), group(…) или param(…)")
 
     def with_flag(self, flag):
         return [identity for identity in self.accounts
@@ -120,7 +139,8 @@ class Compiler:
         fields = ("account",) + ARGUMENTS[name]
         if len(values) > len(fields) or kwargs.keys() - {*fields, "unique"} or kwargs.keys() & set(fields[:len(values)]):
             raise ValueError(f"Аргументы команды {name} — " + ", ".join(fields))
-        args = DEFAULTS | dict(zip(fields, values)) | kwargs
+        defaults = DEFAULTS | ({"text": ""} if name == "bot_button" else {})
+        args = defaults | dict(zip(fields, values)) | kwargs
         if any(key not in args for key in fields):
             raise ValueError(f"Заполни аргументы {name} — " + ", ".join(fields))
         unique = args.get("unique", False)
@@ -137,6 +157,15 @@ class Compiler:
     @staticmethod
     def validate(name, args):
         for key, value in args.items():
+            if key == "position":
+                if type(value) is not int or not 1 <= value <= 100:
+                    raise ValueError("Укажи номер кнопки от 1 до 100")
+                continue
+            if key == "caption" or key == "text" and name == "bot_button":
+                limit = 1024 if key == "caption" else 256
+                if not isinstance(value, str) or len(value) > limit:
+                    raise ValueError(f"Текст должен быть до {limit} символов")
+                continue
             if key == "option" and type(value) is int and 1 <= value <= 10:
                 continue
             if key != "seconds" and (not isinstance(value, str) or not value.strip() or len(value) > 4096):
@@ -155,7 +184,11 @@ class Compiler:
         if name == "start":
             _, (bot, param) = multi.parse_start_link(args["bot"])
             return "@" + bot.lower() + ("?start=" + param if param else "")
-        if name == "send":
+        if name in ("send", "send_photo", "bot_button"):
+            if name == "send_photo" and not IMAGE_ID.fullmatch(args["image"]):
+                raise ValueError("Используй photo() для прикреплённого изображения")
+            if name == "bot_button" and args["peer"].lower() == "me":
+                raise ValueError("Укажи @username бота")
             if not re.fullmatch(r"me|@[A-Za-z][A-Za-z0-9_]{2,31}", args["peer"], re.I):
                 raise ValueError("Укажи @username получателя либо me для Избранного")
             return args["peer"].lower()
@@ -211,7 +244,13 @@ def digest(value):
 
 
 def action_key(step):
-    return digest([step["account"], step["action"], step["target"], step["args"].get("text")])
+    args = step["args"]
+    key = [step["account"], step["action"], step["target"], args.get("text")]
+    if step["action"] == "send_photo":
+        key.extend((args["image"], args["caption"]))
+    elif step["action"] == "bot_button":
+        key.append(args["position"])
+    return digest(key)
 
 
 def simulate(plan, journal, now):
@@ -252,6 +291,7 @@ def simulate(plan, journal, now):
 class Scenarios:
     def __init__(self, directory, accounts, *, account_flag=None):
         self.path = Path(directory) / "security" / "scenarios.json"
+        self.images = self.path.parent / "scenario_photos"
         self.accounts = accounts
         self.account_flag = account_flag or (lambda name: account_flags.GENERAL)
         self.task = None
@@ -275,7 +315,33 @@ class Scenarios:
         return {acc.me.id: (name, acc) for name, acc in self.accounts().items()
                 if acc.me is not None and acc.client.is_connected()}
 
-    def plan(self, data):
+    def image_path(self, image):
+        if not isinstance(image, str) or not IMAGE_ID.fullmatch(image):
+            raise ValueError("Файл фото не найден. Прикрепи его снова.")
+        path = self.images / (image + ".jpg")
+        if not path.is_file():
+            raise ValueError("Файл фото не найден. Прикрепи его снова.")
+        return path
+
+    async def upload_photo(self, request):
+        try:
+            photo, _ = await message_photos.read_upload(request)
+        except (ValueError, AssertionError) as exc:
+            return web.json_response({"error": str(exc) or "Прикрепи фото"}, status=400)
+        identity = hashlib.sha256(photo).hexdigest()
+        self.images.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd, temp = tempfile.mkstemp(dir=self.images)
+        try:
+            with os.fdopen(fd, "wb") as file:
+                file.write(photo)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temp, self.images / (identity + ".jpg"))
+        finally:
+            Path(temp).unlink(missing_ok=True)
+        return web.json_response({"image": identity}, headers={"Cache-Control": "no-store"})
+
+    def plan(self, data, seed=None):
         params = data.get("params", {})
         if not isinstance(params, dict):
             raise ValueError("Параметры должны быть объектом JSON")
@@ -283,7 +349,12 @@ class Scenarios:
         accounts = {key: " ".join(filter(None, (acc.me.first_name, acc.me.last_name))) or acc.me.username or name
                     for key, (name, acc) in connected.items()}
         flags = {key: self.account_flag(name) for key, (name, _) in connected.items()}
-        steps = Compiler(accounts, self.state["groups"], params, flags).compile(data.get("code"))
+        image = data.get("image")
+        if image is not None:
+            self.image_path(image)
+        steps = Compiler(accounts, self.state["groups"], params, flags, image=image, seed=seed).compile(data.get("code"))
+        for image_id in {step["args"]["image"] for step in steps if step["action"] == "send_photo"}:
+            self.image_path(image_id)
         quiet = plan_options.quiet_hours(data)
         start = plan_options.deadline(data.get("start_at"))
         return {"steps": steps, "quiet": quiet, "start": start, "stop_on_error": data.get("stop_on_error") is not False}
@@ -291,6 +362,39 @@ class Scenarios:
     def record(self, run, step, status, note):
         run["log"].append({"time": time.time(), "status": status, "note": note[:220],
                            **{key: step[key] for key in ("action", "label", "target", "line") if key in step}})
+
+    async def bot_button(self, step, client, args, extra):
+        bot = await client.get_entity(args["peer"])
+        if not getattr(bot, "bot", False):
+            return "err", "Получатель не является ботом"
+        anchors = (self.state["run"] or {}).get("anchors", {})
+        anchor = anchors.get(str(step["account"]), {}).get(step["target"], 0)
+        position = args["position"]
+        label = args["text"].replace("\ufe0f", "").strip()
+        for attempt in range(6):
+            if attempt:
+                await asyncio.sleep(1)
+            messages = await client.get_messages(bot, limit=8)
+            newest = max((m for m in messages if m and not m.out and m.id > anchor),
+                         key=lambda m: m.id, default=None)
+            buttons = [button for row in (getattr(newest, "buttons", None) or ()) for button in row]
+            if len(buttons) < position:
+                continue
+            button = buttons[position - 1]
+            if label and label != button.text.replace("\ufe0f", "").strip():
+                continue
+            if not isinstance(button.button.type, (types.ButtonTypeDefault, types.InlineButtonTypeCallback)):
+                return "err", "Эта кнопка открывает ссылку или требует отдельного действия"
+            if getattr(button.button.type, "requires_password", False):
+                return "err", "Кнопка требует пароль"
+            if await extra["wait_before_action"]():
+                return "skip", "Остановлено"
+            try:
+                await button.click()
+            except BotResponseTimeoutError:
+                return "ok", "Кнопка нажата, бот не ответил"
+            return "ok", f"Нажата кнопка {position} · {button.text}"
+        return "err", f"В свежем сообщении бота не появилась кнопка {position}" + (f" · {args['text']}" if label else "")
 
     async def execute(self, step, name, client, extra):
         action, args = step["action"], step["args"]
@@ -315,12 +419,23 @@ class Scenarios:
                 args = args | {"option": media.poll.answers[args["option"] - 1].option.hex()}
         elif action == "start":
             kind, key = multi.parse_start_link(args["bot"])
-        elif action == "send":
+        elif action in ("send", "send_photo"):
             peer = await client.get_input_entity(args["peer"])
             if await extra["wait_before_action"]():
                 return "skip", "Остановлено"
-            await client.send_message(peer, args["text"])
-            return "ok", "Сообщение отправлено"
+            if action == "send_photo":
+                data = self.image_path(args["image"]).read_bytes()
+                sent = await message_photos.send(client, peer, data, args["caption"])
+            else:
+                sent = await client.send_message(peer, args["text"])
+            run = self.state["run"]
+            if run is not None:
+                if not isinstance(getattr(sent, "id", None), int):
+                    raise ConnectionError("Telegram не подтвердил отправку")
+                run.setdefault("anchors", {}).setdefault(str(step["account"]), {})[step["target"]] = sent.id
+            return "ok", "Фото отправлено" if action == "send_photo" else "Сообщение отправлено"
+        elif action == "bot_button":
+            return await self.bot_button(step, client, args, extra)
         else:
             if await extra["wait_before_action"]():
                 return "skip", "Остановлено"
@@ -389,7 +504,7 @@ class Scenarios:
                         continue
                     if status == "ok" and step["action"] not in ("online", "sub", "unsub"):
                         self.state["journal"][key] = True
-                    if run["status"] != "stopped" and status == "err" and step["action"] in ("send", "button", "start", "repost") and re.search(
+                    if run["status"] != "stopped" and status == "err" and step["action"] in ("send", "send_photo", "bot_button", "button", "start", "repost") and re.search(
                             r"timeout|connection|oserror|network", note, re.I):
                         run["status"] = "uncertain"
                         self.record(run, step, "err", "Результат не подтверждён. Проверь Telegram перед повтором.")
@@ -447,7 +562,7 @@ class Scenarios:
 
     def snapshot(self):
         run = self.state["run"]
-        public = None if not run else {key: value for key, value in run.items() if key != "steps"}
+        public = None if not run else {key: value for key, value in run.items() if key not in ("steps", "anchors")}
         if public is not None:
             public["total"] = len(run["steps"])
         return {"run": public, "groups": self.state["groups"], "templates": self.state["templates"]}
@@ -466,11 +581,14 @@ class Scenarios:
                 raise ValueError("Ожидается объект JSON")
             run = self.state["run"]
             if command in ("preview", "start"):
-                plan = self.plan(data)
+                seed = secrets.token_hex(16) if command == "preview" else data.get("seed")
+                if seed is not None and (not isinstance(seed, str) or not re.fullmatch(r"[a-f0-9]{32}", seed)):
+                    raise ValueError("Обнови предпросмотр")
+                plan = self.plan(data, seed)
                 token = digest(plan)
                 if command == "preview":
                     simulation = simulate(plan, self.state["journal"], time.time())
-                    return web.json_response(plan | {"token": token, "simulation": simulation},
+                    return web.json_response(plan | {"token": token, "seed": seed, "simulation": simulation},
                                              headers={"Cache-Control": "no-store"})
                 if token != data.get("token"):
                     raise ValueError("Сценарий или список аккаунтов изменился. Построй предпросмотр заново.")
@@ -522,4 +640,5 @@ class Scenarios:
     def register(self, app):
         app.cleanup_ctx.append(self.lifecycle)
         app.router.add_get("/api/scenarios", self.handle)
+        app.router.add_post("/api/scenarios/photo", self.upload_photo)
         app.router.add_post("/api/scenarios/{command}", self.handle)

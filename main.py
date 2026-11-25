@@ -39,6 +39,7 @@ import account_profile_manager
 import account_music_manager
 import account_deploy
 import account_flags
+import message_photos
 import session_admin
 import account_security
 import profile_copy
@@ -2188,11 +2189,21 @@ async def sound(request):
 
 async def api_send(request):
     acc, cid = get_acc(request), int(request.match_info["chat_id"])
-    text = str((await request.json()).get("text", "")).strip()
-    if not text:
-        fail("Пустое сообщение")
+    photo = None
+    if request.content_type == "multipart/form-data":
+        try:
+            photo, text = await message_photos.read_upload(request)
+        except ValueError as exc:
+            fail(str(exc))
+    else:
+        text = str((await request.json()).get("text", "")).strip()
+        if not text:
+            fail("Пустое сообщение")
     entity = await resolve(acc, cid)
-    sent = await acc.client.send_message(entity, text)
+    if photo is None:
+        sent = await acc.client.send_message(entity, text)
+    else:
+        sent = await message_photos.send(acc.client, entity, photo, text)
     try:
         await acc.client.send_read_acknowledge(entity)
     except Exception:
@@ -2206,7 +2217,7 @@ async def api_send(request):
             ent = await acc.client.get_entity(entity)
             if isinstance(ent, types.User) and not ent.bot:   # чаты с ботами во «Входящие» не добавляем
                 INBOX[key] = {"account": acc.name, "chat_id": cid, "unread": 0, "title": display_name(ent) or str(cid),
-                              "kind": "user", "last_text": text,
+                              "kind": "user", "last_text": text or "Фото",
                               "last_sender": "", "date": sent.date.timestamp() if sent.date else time.time()}
         except Exception as exc:
             print(f"[SEND] карточка чата {key}: {type(exc).__name__}: {exc}", flush=True)
