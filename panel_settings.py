@@ -5,16 +5,19 @@ from aiohttp import web
 
 from template_library import atomic_json_save, json_load
 
-TABS = {'accounts', 'examples', 'upload', 'twofa', 'messages', 'orders', 'miniapp', 'cs3bet', 'automatic', 'vpn', 'scenarios', 'subscriptions'}
+TABS = {'accounts', 'examples', 'upload', 'twofa', 'messages', 'orders', 'miniapp', 'cs3bet', 'automatic', 'vpn', 'scenarios'}
 DEFAULTS = {'hidden_tabs': [], 'view_spread': 10, 'reaction_spread': 20, 'search_workers': 5,
             'profile_group': 'https://t.me/minecraft_beseda764',
-            'subscription_hours': 72, 'subscription_spread': 0, 'autopilot_for_new_accounts': False}
+            'autopilot_for_new_accounts': False}
 
 
 class PanelSettings:
     def __init__(self, directory):
         self.path = Path(directory) / 'panel_settings.json'
-        self.values = DEFAULTS | json_load(self.path)
+        saved = json_load(self.path)
+        self.values = {key: saved.get(key, default) for key, default in DEFAULTS.items()}
+        self.values['hidden_tabs'] = [tab for tab in self.values['hidden_tabs']
+                                      if isinstance(tab, str) and tab in TABS]
 
     def get(self):
         return self.values.copy()
@@ -27,11 +30,10 @@ class PanelSettings:
         if not isinstance(payload, dict):
             return web.json_response({'error': 'Некорректные настройки'}, status=400)
         values = self.get()
-        for key, low, high in [('view_spread', 0, 100), ('reaction_spread', 0, 100),
-                               ('subscription_hours', 1, 8760), ('subscription_spread', 0, 100)]:
+        for key in ('view_spread', 'reaction_spread'):
             value = payload.get(key, values[key])
-            if type(value) is not int or not low <= value <= high:
-                return web.json_response({'error': f'Значение должно быть от {low} до {high}'}, status=400)
+            if type(value) is not int or not 0 <= value <= 100:
+                return web.json_response({'error': 'Значение должно быть от 0 до 100'}, status=400)
             values[key] = value
         workers = payload.get('search_workers', values['search_workers'])
         if type(workers) is not int or workers < 1:

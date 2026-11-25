@@ -46,7 +46,6 @@ import profile_copy
 import panel_settings
 import vpn
 import scenarios
-import subscriptions
 
 # ============== НАСТРОЙКИ ==============
 BASE_DIR = Path(__file__).resolve().parent
@@ -77,7 +76,6 @@ class Account:
         self.me = None
         self.status = "не подключён"
         self.avatar_ver = 0
-        self.channels = None     # на сколько каналов подписан (None — ещё не считали)
         self.connecting = False
         self.connect_attempts = 0
         self.error_kind = None  # temporary / session / other
@@ -319,7 +317,6 @@ def ser_account(a):
             "id": me.id if me else None, "phone": (me.phone or "") if me else "",
             "first_name": (me.first_name or "") if me else "", "last_name": (me.last_name or "") if me else "",
             "username": (me.username or "") if me else "", "avatar_ver": int(a.avatar_ver), "presence": presence.keeper.info(a.name),
-            "channels": a.channels if me else None,
             "profile_meta": _cached_profile_meta(a) if me else None,
             "connecting": bool(a.connecting),
             "connect_attempts": int(a.connect_attempts),
@@ -2807,20 +2804,8 @@ async def main():
                                         lambda acc, data: upload_avatar(acc, data, prepared=True),
                                         copy_profile_fields, clear_photos=clear_old_avatars)
     copies.register(app, get_acc)
-    subscription_panel = subscriptions.Subscriptions(BASE_DIR, lambda: ACCOUNTS, preferences.get,
-                                                       eligible=lambda acc: general_account(acc.name))
-
-    async def update_preferences(request):
-        old = preferences.get()
-        response = await preferences.update(request)
-        new = preferences.get()
-        if any(old[key] != new[key] for key in ('subscription_hours', 'subscription_spread')):
-            subscription_panel.reschedule()
-        return response
-
     app.router.add_get('/api/panel-settings', preferences.read)
-    app.router.add_post('/api/panel-settings', update_preferences)
-    subscription_panel.register(app)
+    app.router.add_post('/api/panel-settings', preferences.update)
     vpn.VpnSubscriptions(BASE_DIR, lambda: ACCOUNTS, eligible=lambda acc: general_account(acc.name)).register(app)
     scenarios.Scenarios(BASE_DIR, lambda: ACCOUNTS, account_flag=flag_for).register(app)
 
