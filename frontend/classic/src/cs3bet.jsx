@@ -40,14 +40,22 @@ export function Cs3bet({accounts}) {
       }catch(error){popup.close();throw error}
     })
   }
-  const rows=users.map(account=>({...account,game:state.data?.items?.[account.name]||{}})).filter(account=>!hideEmpty||account.game.balance==null||Number(account.game.balance)!==0)
+  const eligible=new Set(users.map(account=>account.name))
+  const rows=accounts.map(account=>({...account,game:state.data?.items?.[account.name]||{}})).filter(account=>!hideEmpty||account.game.balance==null||Number(account.game.balance)!==0)
   const columns=[
-    {id:'account',header:'Аккаунт',accessorFn:fullName,cell:({row})=><button className="flex cursor-pointer items-center gap-2 text-start font-medium hover:text-primary-text" onClick={()=>open('bet',row.original.name)}><AccountAvatar account={row.original}/>{fullName(row.original)}</button>},
+    {id:'account',header:'Аккаунт',accessorFn:fullName,cell:({row})=>{
+      const account=row.original
+      const label=<><AccountAvatar account={account}/>{fullName(account)}</>
+      return eligible.has(account.name)?
+        <button className="flex cursor-pointer items-center gap-2 text-start font-medium hover:text-primary-text" onClick={()=>open('bet',account.name)}>{label}</button>:
+        <span className="flex items-center gap-2 font-medium">{label}</span>
+    }},
     {id:'username',header:'Username',accessorFn:account=>account.username?'@'+account.username:'—'},
     {id:'balance',header:'Баланс',accessorFn:account=>account.game.balance==null?undefined:Number(account.game.balance),sortUndefined:'last',cell:({getValue})=>num(getValue())},
+    {id:'access',header:'Статус',accessorFn:account=>account.frozen?'Заморожен':!account.connected?'Отключён':account.flag==='autopilot'?'Только Автопилот':'Доступен'},
     {id:'checked',header:'Проверено (МСК)',accessorFn:account=>account.game.ts,cell:({getValue})=>moscow(getValue())},
-    {id:'actions',header:'Действия',cell:({row})=><FormActions><Button variant="outline" size="sm" onClick={()=>open('bet',row.original.name)}>Ставка</Button>
-      <Button variant="outline" size="sm" disabled={action.busy} title="Открыть Mini App" onClick={()=>miniApp(row.original)}><ExternalLink/>Mini App</Button></FormActions>},
+    {id:'actions',header:'Действия',cell:({row})=>eligible.has(row.original.name)?<FormActions><Button variant="outline" size="sm" onClick={()=>open('bet',row.original.name)}>Ставка</Button>
+      <Button variant="outline" size="sm" disabled={action.busy} title="Открыть Mini App" onClick={()=>miniApp(row.original)}><ExternalLink/>Mini App</Button></FormActions>:null},
   ]
   if(view==='bulk')return <BulkBets users={users} selected={target} setSelected={setTarget} back={()=>setView('accounts')}/>
   if(view==='bet'||view==='template')return <BetDesk key={view+target} view={view} users={users} selected={user} template={template} change={setTarget}
@@ -64,9 +72,9 @@ export function Cs3bet({accounts}) {
       <MetricCard label="Наибольший баланс" value={overview.data?.largest??null} icon={<Trophy/>} locale="ru-RU"/>
     </div>
     <History data={overview.data} type="balance"/>
-    <Card title="Аккаунты CS3BET" action={<Button variant="outline" size="sm" onClick={state.reload}><RefreshCw/>Обновить</Button>}>
+    <Card title="Аккаунты CS3BET" description={`Всего: ${accounts.length} · доступны для действий: ${users.length}`} action={<Button variant="outline" size="sm" onClick={state.reload}><RefreshCw/>Обновить</Button>}>
       <div className="mb-3"><Check checked={hideEmpty} onChange={setHideEmpty}>Скрыть нулевой баланс</Check></div>
-      {state.data?<SortableTable columns={columns} data={rows} getRowId={account=>account.name} autoResetPage={false} emptyMessage="Нет подключённых аккаунтов"/>:!state.error&&<Loading/>}
+      <SortableTable columns={columns} data={rows} getRowId={account=>account.name} autoResetPage={false} emptyMessage="Нет аккаунтов"/>
     </Card>
     {promo&&<Promo users={users} close={()=>setPromo(false)}/>}
   </>
@@ -221,6 +229,9 @@ function BulkBets({users,selected,setSelected,back}) {
   const [tiered,setTiered]=useState(false)
   const [shorter,setShorter]=useState(false)
   const [targetBalance,setTargetBalance]=useState(1500000)
+  const [balanceOp,setBalanceOp]=useState('all')
+  const [balanceValue,setBalanceValue]=useState('')
+  const validBalance=balanceOp==='all'||(balanceValue!==''&&Number.isFinite(Number(balanceValue))&&Number(balanceValue)>=0)
   const single=format==='single'
   const [plan,setPlan]=useState(null)
   const [quote,setQuote]=useState(null)
@@ -279,6 +290,12 @@ function BulkBets({users,selected,setSelected,back}) {
           {!single&&<Input label="Максимум вариантов" type="number" min={2} max={256} value={limit} onChange={event=>{setLimit(event.target.value);setPlan(null)}}/>}
           <Input label="Целевой баланс аккаунта" type="number" min={1} value={targetBalance} onChange={event=>{setTargetBalance(event.target.value);setPlan(null)}}/>
         </div>
+        <div className="grid items-start gap-3 sm:grid-cols-2">
+          <Picker label="Аккаунты по балансу" items={[[ 'all','Все доступные'],['>','Больше (>)'],['>=','Не меньше (≥)'],['<','Меньше (<)'],['<=','Не больше (≤)'],['=','Ровно (=)']]}
+            value={balanceOp} disabled={action.busy} onValueChange={value=>{setBalanceOp(value);setPlan(null)}}/>
+          {balanceOp!=='all'&&<Input label="Баланс для отбора" description="Учитывается последний известный баланс." type="number" min={0} step="any"
+            value={balanceValue} disabled={action.busy} onChange={event=>{setBalanceValue(event.target.value);setPlan(null)}}/>}
+        </div>
         {!single&&<fieldset className="flex flex-wrap items-center gap-3">
           <legend className="mb-2 text-sm font-medium">Длина экспресса</legend>
           {[2,3,4,6,8].map(length=><Check key={length} checked={lengths.includes(length)} onChange={checked=>{
@@ -297,9 +314,10 @@ function BulkBets({users,selected,setSelected,back}) {
           <input type="checkbox" className="size-4 accent-primary" checked={!!picks[match.id]} onChange={event=>chooseMatch(match.id,event.target.checked)}/>
           <span className="flex-1">{match.team_a} — {match.team_b}</span><span className="text-muted-foreground">{num(match.odds_a)} / {num(match.odds_b)}</span>
         </label>)}</div>}
-        <div><Button disabled={action.busy||job?.running||!validMatches||!(Number(targetBalance)>0)||(!single&&(Number(limit)<2||Number(limit)>256))}
+        <div><Button disabled={action.busy||job?.running||!validMatches||!validBalance||!(Number(targetBalance)>0)||(!single&&(Number(limit)<2||Number(limit)>256))}
           onClick={()=>request('plan',{match_ids:selectedMatches,max_variants:single?2:Number(limit),single,
-            lengths:single?null:lengths,tiered,allow_shorter:!single&&shorter,target_balance:Number(targetBalance)})}><GitBranch/>Рассчитать распределение</Button></div>
+            lengths:single?null:lengths,tiered,allow_shorter:!single&&shorter,target_balance:Number(targetBalance),
+            balance_filter:balanceOp==='all'?null:{op:balanceOp,value:balanceValue}})}><GitBranch/>Рассчитать распределение</Button></div>
       </div>
     </Card>
     {plan&&<Card title="Предпросмотр вариантов" description="Покрытие считается для выбранных бинарных исходов. Общий банк может уменьшиться."

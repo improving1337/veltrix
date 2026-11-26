@@ -595,7 +595,7 @@ async def poller_loop(get_clients):
 
 
 # ---------------- хендлеры ----------------
-def make_handlers(get_clients, app=None, account_ids=None):
+def make_handlers(get_clients, app=None, account_ids=None, account_names=None):
     def client_for(request):
         name = request.match_info["acc"]
         client = get_clients().get(name)
@@ -912,7 +912,7 @@ def make_handlers(get_clients, app=None, account_ids=None):
     async def state_get(request):
         """Данные для списка аккаунтов — из файла, без запросов к API."""
         items = {}
-        for name in get_clients():
+        for name in (account_names() if account_names is not None else get_clients()):
             rec = STATE.get(name) or {}
             items[name] = {k: rec.get(k) for k in ("balance", "bets", "rw", "msg", "msg_ok", "msg_ts", "error", "ts")}
         return web.json_response({"now": time.time(), "items": items,
@@ -964,10 +964,10 @@ def make_handlers(get_clients, app=None, account_ids=None):
             rewards_collect, state_get)
 
 
-def register_all(app, get_clients, account_ids=None):
+def register_all(app, get_clients, account_ids=None, account_names=None):
     state_load()
     (balance, express_stats, matches, bet, template_get, template_set, promo, rewards_state,
-     rewards_collect, state_get) = make_handlers(get_clients, app, account_ids)
+     rewards_collect, state_get) = make_handlers(get_clients, app, account_ids, account_names)
 
     async def start_poller(app):
         app["cs3bet_poller"] = asyncio.create_task(poller_loop(get_clients))

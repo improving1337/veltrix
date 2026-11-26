@@ -2,6 +2,7 @@
 import asyncio
 import itertools
 import json
+import operator
 import time
 import uuid
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
@@ -25,6 +26,27 @@ def amount(value):
     if not result.is_finite():
         raise ValueError('Некорректное число')
     return result
+
+
+def filter_accounts_by_balance(accounts, rule):
+    if rule is None:
+        return accounts
+    operators = {'>': operator.gt, '>=': operator.ge, '<': operator.lt, '<=': operator.le, '=': operator.eq}
+    if not isinstance(rule, dict) or not isinstance(rule.get('op'), str) or rule['op'] not in operators:
+        raise ValueError('Выберите оператор фильтра баланса')
+    threshold = amount(rule.get('value'))
+    if threshold < 0:
+        raise ValueError('Баланс для фильтра должен быть неотрицательным')
+    compare = operators[rule['op']]
+    filtered = []
+    for account in accounts:
+        try:
+            balance = amount(account.get('balance'))
+        except ValueError:
+            continue
+        if compare(balance, threshold):
+            filtered.append(account)
+    return filtered
 
 
 def payout(value):
@@ -432,8 +454,11 @@ class BulkGame:
         blocked=set(self.unknown_accounts)
         accounts=[{'name':n,'identity':identities.get(n,n),'balance':self.state.get(n,{}).get('balance'),
                    'balance_ts':self.state.get(n,{}).get('balance_ts')} for n in clients if n not in blocked]
-        source=max(clients,key=lambda n: float(self.state.get(n,{}).get('balance') or 0))
         try:
+            accounts = filter_accounts_by_balance(accounts, data.get('balance_filter'))
+            if not accounts and data.get('balance_filter') is not None:
+                raise ValueError('Нет доступных аккаунтов с таким балансом')
+            source = max(clients, key=lambda name: float(self.state.get(name, {}).get('balance') or 0))
             matches=await self.fetch_matches(source,clients[source])
             selected=data.get('match_ids')
             if selected is not None:

@@ -156,6 +156,22 @@ class BulkTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(settled_coverage(self.bulk.job)['covered'], 8)
         self.assertEqual((await self.bulk.resume(Request({'job_id':preview['id']}))).status, 409)
 
+    async def test_balance_filter_selects_only_matching_accounts(self):
+        for name, balance in zip(self.state, (50000, 65000, 75000, 49999, 100, 4999, 5000, 6000)):
+            self.state[name]['balance'] = balance
+        parameters = {'match_ids':[1], 'single':True, 'max_variants':2}
+        for operator, threshold, expected in (
+            ('>', '50000', {65000,75000}), ('<', '5000', {100,4999}), ('>=', '50000', {50000,65000,75000}),
+        ):
+            with self.subTest(operator=operator):
+                result = await self.bulk.preview(Request(parameters|{'balance_filter':{'op':operator,'value':threshold}}))
+                self.assertEqual(result.status, 200, result.text)
+                self.assertEqual({Decimal(item['balance']) for item in json.loads(result.text)['items']}, expected)
+        result = await self.bulk.preview(Request(parameters|{'balance_filter':{'op':'>','value':'99999'}}))
+        self.assertEqual(result.status, 400)
+        self.assertIn('Нет доступных аккаунтов',json.loads(result.text)['error'])
+        self.submit.assert_not_awaited()
+
     async def test_preview_is_read_only_then_one_shot_start(self):
         plan=await self.plan();self.submit.assert_not_awaited()
         await self.bulk.start(Request({'plan_id':plan['id']}));await self.bulk.task
