@@ -195,6 +195,14 @@ class Hub:
         }))
         return web.json_response(self.snapshot())
 
+    async def refresh_subscribers(self, request):
+        monitor = self.lookup(request.match_info['id'])
+        await monitor.refresh_subscriber_roster(monitor.state['channel'], force=True)
+        return web.json_response(self.snapshot())
+
+    async def preview_reaction_prompt(self, request):
+        return await self.lookup(request.match_info['id']).preview_reaction_prompt(request)
+
     async def preview_views(self, request):
         return await self.lookup(request.match_info['id']).preview_views(request)
 
@@ -244,5 +252,7 @@ def register(app, clients, directory, account_ids=None, preferences=None):
     app.router.add_post('/api/automatic/channels/{id}/stop', hub.channel_stop)
     app.router.add_post('/api/automatic/channels/{id}/config', hub.channel_config)
     app.router.add_post('/api/automatic/channels/{id}/preview-views', hub.preview_views)
+    app.router.add_post('/api/automatic/channels/{id}/subscribers', hub.refresh_subscribers)
+    app.router.add_post('/api/automatic/channels/{id}/preview-reaction-prompt', hub.preview_reaction_prompt)
     app.router.add_post('/api/automatic/start-all', hub.start_all)
     app.router.add_post('/api/automatic/stop-all', hub.stop_all)

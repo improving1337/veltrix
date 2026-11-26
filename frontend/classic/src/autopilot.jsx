@@ -78,7 +78,7 @@ export function Autopilot() {
       {channel&&<Card title={name(channel.channel)} description={channel.view_mode==='realistic'?'Режим «Реалистик»':'Режим «Легаси»'} action={activeBadge(channel.active)}>
         <div className="flex flex-wrap gap-2">
           <Badge variant="soft" color={channel.execute_plan?'success':'neutral'}>{channel.execute_plan?'Автовыполнение':'Наблюдение'}</Badge>
-          {channel.subscribers_only&&<Badge variant="soft" color="info">Только подписчики</Badge>}
+          {channel.subscribers_only&&<Badge variant="soft" color="info">Только подписчики{channel.subscriber_count!=null?' · '+channel.subscriber_count:''}</Badge>}
           <span className="text-sm text-muted-foreground">Последняя проверка {moscow(channel.last_checked)}</span>
         </div>
       </Card>}
@@ -117,10 +117,34 @@ function ChannelSettings({channel,path,close,refresh,remove}) {
   })
   const [testAt,setTestAt]=useState('')
   const [preview,setPreview]=useState(null)
-  const update=(key,value)=>{setPreview(null);setForm(state=>({...state,[key]:value}))}
+  const [fullPrompt,setFullPrompt]=useState('')
+  const [pollPrompt,setPollPrompt]=useState(false)
+  const [roster,setRoster]=useState({count:channel.subscriber_count,checkedAt:channel.subscribers_checked_at})
+  const viewLimit=form.subscribers_only ? roster.count : channel.connected_accounts
+  const clampViews=value=>value!==''&&viewLimit!=null&&Number(value)>viewLimit?viewLimit:value
+  const update=(key,value)=>{
+    setPreview(null);setFullPrompt('')
+    setForm(state=>{
+      const next={...state,[key]:value}
+      if(key==='subscribers_only'&&value&&roster.count!=null)next.max_views=Math.min(Number(next.max_views),roster.count)
+      return next
+    })
+  }
   const action=useAction()
-  const payload=()=>({...form,max_views:Number(form.max_views),max_reactions:Number(form.max_reactions),view_day2_pct:Number(form.view_day2_pct),
+  const payload=()=>({...form,max_views:Number(clampViews(form.max_views)),max_reactions:Number(form.max_reactions),view_day2_pct:Number(form.view_day2_pct),
     hours:form.hours.split(',').map(Number),view_activity:form.view_activity.split(',').map(Number)})
+  function refreshSubscribers(){
+    action.run(async()=>{
+      const result=await post(path+'/subscribers')
+      const refreshed=result.channels.find(item=>item.id===channel.id)
+      if(!refreshed)return
+      setRoster({count:refreshed.subscriber_count,checkedAt:refreshed.subscribers_checked_at})
+      if(refreshed.subscriber_count!=null)setForm(previous=>previous.subscribers_only?{
+        ...previous,max_views:Math.min(Number(previous.max_views),refreshed.subscriber_count),
+      }:previous)
+      await refresh()
+    })
+  }
   return <Dialog open title="Настройки канала" description={name(channel.channel)} onOpenChange={open=>{if(!open&&!action.busy)close()}}
     size="xl" form={{onSubmit:event=>{event.preventDefault();action.run(async()=>{await post(path+'/config',payload());await refresh();close()})}}}
     footer={<><Button type="button" variant="ghost" color="destructive" disabled={action.busy} onClick={remove}>Удалить канал</Button><Button type="submit" disabled={action.busy}>Сохранить</Button></>}>
@@ -128,11 +152,21 @@ function ChannelSettings({channel,path,close,refresh,remove}) {
       <div className="grid gap-3 sm:grid-cols-2">
         <Picker label="График" items={[[ 'legacy','Легаси'],['realistic','Реалистик']]} value={form.view_mode} onValueChange={value=>update('view_mode',value)}/>
         {[['max_views','Цель просмотров'],['max_reactions','Лимит реакций'],['view_day2_pct','Доля второго дня, %']].map(([key,label])=><Input key={key} label={label} type="number" min={0}
-          max={key==='view_day2_pct'?100:channel.connected_accounts} value={form[key]} onChange={event=>update(key,event.target.value)} required/>)}
+          max={key==='view_day2_pct'?100:key==='max_views'?undefined:channel.connected_accounts}
+          description={key==='max_views'&&viewLimit!=null?'Максимум: '+viewLimit:undefined}
+          value={form[key]} onChange={event=>update(key,key==='max_views'?clampViews(event.target.value):event.target.value)} required/>)}
       </div>
       <div className="flex flex-wrap gap-x-4">
-        {[['views_enabled','Добавлять просмотры'],['execute_plan','Выполнять план'],['subscribers_only','Только подписчики']].map(([key,label])=><Check key={key} checked={form[key]} onChange={value=>update(key,value)}>{label}</Check>)}
+        {[['views_enabled','Добавлять просмотры'],['execute_plan','Выполнять план'],['subscribers_only','Только подписчики']].map(([key,label])=><Check key={key} checked={form[key]} disabled={action.busy} onChange={value=>{
+          update(key,value)
+          if(key==='subscribers_only'&&value&&roster.count==null)refreshSubscribers()
+        }}>{label}</Check>)}
       </div>
+      {form.subscribers_only&&<div className="grid gap-2 rounded-lg border border-divider p-3 text-sm">
+        <p>{roster.count==null?'Список подписчиков ещё не проверен.':'Подтверждено подписчиков: '+roster.count}
+          {roster.checkedAt&&<span className="ms-2 text-muted-foreground">{moscow(roster.checkedAt)} МСК</span>}</p>
+        <div><Button type="button" variant="outline" size="sm" disabled={action.busy} onClick={refreshSubscribers}>Обновить список подписчиков</Button></div>
+      </div>}
       <details className="rounded-lg border border-divider p-3">
         <summary className="cursor-pointer text-sm font-medium">Почасовой профиль</summary>
         <div className="mt-3 grid gap-3">
@@ -156,7 +190,19 @@ function ChannelSettings({channel,path,close,refresh,remove}) {
             onClick={()=>update('allowed_reactions',form.allowed_reactions.includes(emoji)?form.allowed_reactions.filter(item=>item!==emoji):[...form.allowed_reactions,emoji])}>{emoji}</Button>)}
         </div>
       </div>
-      <TextArea label="Промпт реакций" rows={4} maxLength={6000} value={form.reaction_prompt} onChange={event=>update('reaction_prompt',event.target.value)}/>
+      <TextArea label="Промпт реакций · инструкция канала" rows={6} maxLength={6000} value={form.reaction_prompt} onChange={event=>update('reaction_prompt',event.target.value)}/>
+      <div className="grid gap-2">
+        <p className="text-sm text-muted-foreground">Инструкция канала добавляется к системному промпту DeepSeek.</p>
+        <Check checked={pollPrompt} onChange={value=>{setPollPrompt(value);setFullPrompt('')}}>Промпт для поста с опросом</Check>
+        <div><Button type="button" variant="outline" size="sm" disabled={action.busy} onClick={()=>action.run(async()=>{
+          if(fullPrompt){setFullPrompt('');return}
+          setFullPrompt((await post(path+'/preview-reaction-prompt',{...payload(),poll:pollPrompt})).prompt)
+        })}>{fullPrompt?'Скрыть полный промпт':'Показать полный промпт'}</Button></div>
+        {fullPrompt&&<>
+          <pre className="whitespace-pre-wrap break-words rounded-lg border border-divider bg-background p-3 text-sm">{fullPrompt}</pre>
+          <p className="text-xs text-muted-foreground">Для конкретного поста подставляются его лимит и разрешённые реакции. Для встроенного опроса добавляется инструкция для голосования.</p>
+        </>}
+      </div>
       <Problem message={action.error}/>
     </div>
   </Dialog>

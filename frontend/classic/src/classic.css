@@ -9,3 +9,24 @@
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklch, var(--muted-foreground) 30%, transparent) transparent;
 }
+
+.veltrix-auth-panel {
+  --wash-background: white;
+  --wash-base: color-mix(in oklab, var(--gradient-via) 4%, var(--wash-background));
+  --wash-grid: color-mix(in oklab, var(--primary) 7%, transparent);
+  background:
+    radial-gradient(ellipse 70% 55% at 100% 0%, color-mix(in oklab, var(--gradient-via) 55%, var(--wash-background)), transparent),
+    radial-gradient(ellipse 60% 50% at 0% 100%, color-mix(in oklab, var(--gradient-from) 50%, var(--wash-background)), transparent),
+    radial-gradient(ellipse 55% 45% at 70% 105%, color-mix(in oklab, var(--gradient-to) 45%, var(--wash-background)), transparent),
+    var(--wash-base);
+}
+.dark .veltrix-auth-panel {
+  --wash-background: oklch(0.12 0 0);
+  --wash-base: color-mix(in oklab, var(--gradient-via) 8%, oklch(0.15 0 0));
+  --wash-grid: color-mix(in oklab, var(--primary-text) 8%, transparent);
+}
+.veltrix-auth-grid {
+  background-image: linear-gradient(to right, var(--wash-grid) 1px, transparent 1px), linear-gradient(to bottom, var(--wash-grid) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 25%, transparent 80%);
+}

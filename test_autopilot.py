@@ -398,16 +398,57 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         for _ in range(2):
             self.assertEqual(list(await mon.subscriber_accounts(self.clients, 'example')), ['member'])
         self.assertEqual(member_client.channels, ['example'])
-        entry = mon.membership_cache[('example', 'member')]
-        entry.checked_at -= automatic.MEMBERSHIP_ACTION_TTL
+        # The allowlist survives restart and is reused for each action.
         self.clients['member'].participant = left
+        restored = automatic.Monitor(mon.storage, lambda: self.clients)
+        saved = restored.find_post(1)['execution']['views']['actions'][0]
+        with patch('posts.ViewsJoiner._join', new=AsyncMock(return_value=('ok','просмотр'))) as perform:
+            await restored.perform_action(1, 'views', saved, 'example')
+        perform.assert_awaited_once()
+        self.assertEqual(member_client.channels, ['example'])
+        await restored.refresh_subscriber_roster('https://t.me/example', force=True)
+        self.assertEqual(restored.snapshot()['subscriber_count'], 0)
+        saved['status'] = 'running'
         with patch('posts.ViewsJoiner._join', new_callable=AsyncMock) as perform:
-            await mon.perform_action(1, 'views', action, 'example')
+            await restored.perform_action(1, 'views', saved, 'example')
         perform.assert_not_awaited()
-        self.assertEqual(action['status'], 'pending')
-        self.assertEqual(self.clients['member'].channels, ['example', 'example'])
-        self.assertEqual(await mon.subscriber_accounts(self.clients, 'example'), {})
-        self.assertEqual(member_client.channels, ['example', 'example'])
+        self.assertEqual(saved['status'], 'pending')
+        self.assertEqual(member_client.channels, ['example','example'])
+
+    async def test_start_saves_confirmed_list_before_monitoring_begins(self):
+        mon = self.monitor
+        mon.state['subscribers_only'] = True
+        with (patch.object(mon, 'latest_message', new=AsyncMock(return_value=SimpleNamespace(id=17))),
+              patch.object(mon, 'loop', new=AsyncMock()),
+              patch.object(mon, 'subscriber_accounts', new=AsyncMock(return_value={'2':self.clients['2']})) as scan):
+            await mon.start(_JsonRequest({'channel':'https://t.me/example'}))
+            await mon.task
+        scan.assert_awaited_once()
+        stored = json.loads(mon.storage.read_text(encoding='utf-8'))
+        self.assertEqual(stored['subscriber_roster']['identities'], ['name:2'])
+        self.assertEqual(stored['baseline_post_id'], 17)
+
+    async def test_subscriber_limit_clamps_and_prompt_keeps_full_guidance(self):
+        mon = self.monitor
+        mon.state['channel'] = 'https://t.me/example'
+        guidance = 'Начало\n' + 'абв'*1000 + '\nКонец'
+        roster = dict(list(self.clients.items())[:50])
+        with patch.object(mon, 'subscriber_accounts', new=AsyncMock(return_value=roster)) as scan:
+            await mon.configure(_JsonRequest({'hours':automatic.DEFAULT_HOURS,'max_views':90,'max_reactions':10,
+                                              'subscribers_only':True,'reaction_prompt':guidance}))
+            await mon.configure(_JsonRequest({'hours':automatic.DEFAULT_HOURS,'max_views':90,'max_reactions':10}))
+        scan.assert_awaited_once()
+        restored = automatic.Monitor(mon.storage, lambda: self.clients)
+        result = restored.snapshot()
+        self.assertEqual(result['subscriber_count'], 50)
+        self.assertEqual(result['max_views'], 50)
+        self.assertNotIn('subscriber_roster', result)
+        self.assertEqual(result['reaction_prompt'], guidance)
+        response = await restored.preview_reaction_prompt(_JsonRequest({'poll':True}))
+        prompt = json.loads(response.text)['prompt']
+        self.assertIn(guidance, prompt)
+        self.assertIn('poll_weights', prompt)
+        self.assertIn('Распредели ровно 10 реакций', prompt)
 
     async def test_recent_membership_is_shared_across_concurrent_actions(self):
         mon = self.monitor
