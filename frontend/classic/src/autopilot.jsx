@@ -110,7 +110,7 @@ export function Autopilot() {
 function ChannelSettings({channel,path,close,refresh,remove}) {
   const [form,setForm]=useState({
     view_mode:channel.view_mode||'legacy',max_views:channel.max_views||0,max_reactions:channel.max_reactions||0,
-    execute_plan:!!channel.execute_plan,views_enabled:!!channel.views_enabled,subscribers_only:!!channel.subscribers_only,
+    giveaway_entries:!!channel.giveaway_entries,execute_plan:!!channel.execute_plan,views_enabled:!!channel.views_enabled,subscribers_only:!!channel.subscribers_only,
     allowed_reactions:channel.allowed_reactions||['❤️'],reaction_prompt:channel.reaction_prompt||'',
     view_day2_pct:channel.view_day2_pct??10,
     hours:channel.hours?.join(', ')||'',view_activity:channel.view_activity?.join(', ')||'',
@@ -157,11 +157,12 @@ function ChannelSettings({channel,path,close,refresh,remove}) {
           value={form[key]} onChange={event=>update(key,key==='max_views'?clampViews(event.target.value):event.target.value)} required/>)}
       </div>
       <div className="flex flex-wrap gap-x-4">
-        {[['views_enabled','Добавлять просмотры'],['execute_plan','Выполнять план'],['subscribers_only','Только подписчики']].map(([key,label])=><Check key={key} checked={form[key]} disabled={action.busy} onChange={value=>{
+        {[['views_enabled','Добавлять просмотры'],['execute_plan','Выполнять план'],['subscribers_only','Только подписчики'],['giveaway_entries','Участвовать в розыгрышах']].map(([key,label])=><Check key={key} checked={form[key]} disabled={action.busy} onChange={value=>{
           update(key,value)
           if(key==='subscribers_only'&&value&&roster.count==null)refreshSubscribers()
         }}>{label}</Check>)}
       </div>
+      {form.giveaway_entries&&<p className="text-sm text-muted-foreground">При включённом выполнении плана Автопилот создаёт заказ «Уч» для доступных аккаунтов с меткой «Публичный».</p>}
       {form.subscribers_only&&<div className="grid gap-2 rounded-lg border border-divider p-3 text-sm">
         <p>{roster.count==null?'Список подписчиков ещё не проверен.':'Подтверждено подписчиков: '+roster.count}
           {roster.checkedAt&&<span className="ms-2 text-muted-foreground">{moscow(roster.checkedAt)} МСК</span>}</p>
@@ -223,6 +224,11 @@ function PostDetail({post,close}) {
   const chart=metric==='views'?['model_view_hours','observed_view_hours','План просмотров']:['model_reaction_hours','observed_reaction_hours','План реакций']
   return <Dialog open onOpenChange={open=>{if(!open)close()}} size="xl" title={name(post.channel)+' · #'+post.post_id} description={moscow(post.post_date)+' МСК'}>
     <div className="grid gap-4">
+      {post.giveaway&&<p className="text-sm text-muted-foreground">
+        {post.giveaway.status==='queued'?'Розыгрыш · создан заказ «Уч» · аккаунтов: '+post.giveaway.account_count:
+          post.giveaway.status==='pending'?'Розыгрыш · подготавливается заказ «Уч»':'Розыгрыш · '+post.giveaway.note}
+        {post.giveaway.deadline&&' · до '+moscow(post.giveaway.deadline)+' МСК'}
+      </p>}
       {post.post_text&&<p className="max-h-32 overflow-auto whitespace-pre-wrap text-sm">{post.post_text}</p>}
       <div className="grid gap-2 sm:grid-cols-2">
         {actions.map(([key,label])=>{

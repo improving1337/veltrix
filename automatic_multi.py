@@ -32,12 +32,13 @@ def channel_key(link):
 
 
 class Hub:
-    def __init__(self, directory, clients, account_ids=None, preferences=None):
+    def __init__(self, directory, clients, account_ids=None, preferences=None, giveaway_order=None):
         self.directory = Path(directory)
         self.registry_path = self.directory / 'automatic_channels.json'
         self.clients = clients
         self.account_ids = account_ids
         self.preferences = preferences
+        self.giveaway_order = giveaway_order
         self.monitors = {}
         # Shared cross-channel limits, so adding channels does not multiply the
         # number of simultaneous Telegram actions / DeepSeek HTTP requests.
@@ -94,6 +95,7 @@ class Hub:
             mon.action_semaphore = self.action_semaphore
             mon.analysis_semaphore = self.analysis_semaphore
             mon.membership_requests = self.membership_requests
+            mon.giveaway_order = self.giveaway_order
             # A stored monitor for this channel may have been stopped and removed
             # from registry; the same JSON is recovered if it is later re-added.
             self.monitors[ident] = mon
@@ -188,6 +190,7 @@ class Hub:
             'max_views': payload.get('max_views', mon.state['max_views']),
             'max_reactions': payload.get('max_reactions', mon.state['max_reactions']),
             'execute_plan': payload.get('execute_plan', mon.state['execute_plan']),
+            'giveaway_entries': payload.get('giveaway_entries', mon.state['giveaway_entries']),
             'views_enabled': payload.get('views_enabled', mon.state['views_enabled']),
             'subscribers_only': payload.get('subscribers_only', mon.state['subscribers_only']),
             'allowed_reactions': payload.get('allowed_reactions', mon.state['allowed_reactions']),
@@ -240,8 +243,8 @@ class Hub:
         self.save()
 
 
-def register(app, clients, directory, account_ids=None, preferences=None):
-    hub = Hub(directory, clients, account_ids, preferences)
+def register(app, clients, directory, account_ids=None, preferences=None, giveaway_order=None):
+    hub = Hub(directory, clients, account_ids, preferences, giveaway_order)
     app['automatic_hub'] = hub
     app.on_startup.append(hub.startup)
     app.on_cleanup.append(hub.shutdown)

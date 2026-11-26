@@ -101,6 +101,29 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
     def message(self, ident, text):
         return SimpleNamespace(id=ident, message=text, date=self.now)
 
+    async def test_giveaway_reads_hidden_sponsors_and_queues_once(self):
+        mon = self.monitor
+        mon.state.update(channel='https://t.me/example', giveaway_entries=True, execute_plan=True)
+        post_time = datetime(2026, 11, 26, 7, 0, tzinfo=timezone.utc)
+        text = 'Условия розыгрыша:\nПодписаться на СПОНСОРА(https://t.me/test) и @second\nНажать кнопку ❤️\nИтоги 26.11 в 11:11'
+        message = self.message(7,text)
+        message.date = post_time
+        message.buttons = [[SimpleNamespace(text='❤️')]]
+        post = mon.add_post(message,post_time.isoformat())
+        mon.giveaway_order = AsyncMock(return_value={'items':[{'account':'public'}]})
+        with patch('automatic.utc_now', return_value=post_time):
+            await mon.queue_giveaways()
+            await mon.queue_giveaways()
+        self.assertEqual(post['giveaway']['status'],'queued')
+        mon.giveaway_order.assert_awaited_once()
+        _, link, channels, deadline, heart = mon.giveaway_order.await_args.args
+        self.assertEqual(channels,['https://t.me/test','@second'])
+        self.assertEqual(link,'https://t.me/example/7')
+        self.assertTrue(heart)
+        self.assertEqual(datetime.fromtimestamp(deadline,timezone.utc).isoformat(),'2026-11-26T08:11:00+00:00')
+        from giveaway import giveaway_deadline
+        self.assertEqual(giveaway_deadline('Итоги через 3 дня',post_time).timestamp()-post_time.timestamp(),259200)
+
     async def test_text_url_entities_follow_telegram_utf16_offsets(self):
         message = self.message(7,'⚡ 🐱 Канал и текст')
         message.entities = [

@@ -3027,9 +3027,12 @@ async def main():
     ])
     general_clients = lambda: service_clients(general_only=True)
     channels.set_usernames(lambda: {n: (a.me.username or "") for n, a in ACCOUNTS.items() if a.me is not None})
+    async def giveaway_order(*args):
+        return await app[dashboard.ORDER_SERVICES]["multi"].start_giveaway(*args)
+
     automatic_multi.register(app, service_clients, BASE_DIR,
                        account_ids=lambda: {n: a.me.id for n, a in ACCOUNTS.items()
-                                            if a.me is not None}, preferences=preferences.get)
+                                            if a.me is not None}, preferences=preferences.get, giveaway_order=giveaway_order)
     app[channels.ORDER_JOBS_DIRECTORY] = BASE_DIR / "order_jobs"
     app[channels.ORDER_ACCOUNT_CONNECTING] = (
         lambda name: name in ACCOUNTS and not is_frozen(ACCOUNTS[name])

@@ -329,6 +329,24 @@ class EligibilityTests(unittest.IsolatedAsyncioTestCase):
                 await joiner._steps(job, item, clients[item['account']], job['key'])
                 self.assertEqual(reaction.await_count, int(item['account'] in expected))
 
+    async def test_giveaway_order_filters_to_public_and_enforces_deadline(self):
+        clients = {'one':client(), 'two':client(), 'general':client()}
+        joiner = multi.MultiJoiner(lambda:clients)
+        flags = {'one':'public','two':'public','general':'general'}
+        joiner.account_metadata = lambda name: {'flag':flags[name]}
+        deadline = time.time()+300
+        with patch.object(joiner,'_run',new=AsyncMock()), patch('multi.random.randrange',side_effect=[49,50]):
+            job = await joiner.start_giveaway('contest','https://t.me/example/12',['@second'],deadline,True)
+            await job['task']
+        self.assertCountEqual([item['account'] for item in job['items']],['one','two'])
+        self.assertEqual(len(job['extra']['reaction_accounts']),1)
+        self.assertLess(job['finish_at'],deadline)
+        flags['one']='general'
+        item = next(item for item in job['items'] if item['account']=='one')
+        self.assertTrue(await plan_options.wait_before_action(joiner._action_extra(job,item)))
+        with patch('multi.time.time',return_value=deadline):
+            self.assertTrue(await plan_options.wait_before_action(joiner._action_extra(job,job['items'][0])))
+
     async def test_subentry_subscribes_and_visits_posts_in_order(self):
         accounts = {'a': client()}
         joiner = multi.SubEntryJoiner(lambda: accounts)

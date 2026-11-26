@@ -4,6 +4,7 @@ Execution is opt-in. Every action is recorded before network I/O to avoid
 repeating an ambiguous Telegram operation following a restart.
 """
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -19,6 +20,8 @@ from weakref import WeakValueDictionary
 
 import aiohttp
 from aiohttp import web
+
+from giveaway import read_giveaway
 from telethon import functions, types
 from telethon.helpers import add_surrogate, del_surrogate
 from telethon.errors import ChannelPrivateError, FloodPremiumWaitError, FloodWaitError, UserNotParticipantError
@@ -39,7 +42,7 @@ DEFAULT_PROMPT = 'Подбирай реакции по содержанию но
 INTENSITY_RATIOS = {'low': 0.25, 'normal': 0.5, 'high': 0.85}
 LOG = logging.getLogger(__name__)
 POST_SETTINGS = ('hours', 'max_views', 'max_reactions', 'execute_plan', 'views_enabled',
-                 'allowed_reactions', 'reaction_prompt', 'subscribers_only', 'view_activity', 'view_day2_pct', 'view_mode')
+                 'allowed_reactions', 'reaction_prompt', 'subscribers_only', 'view_activity', 'view_day2_pct', 'view_mode', 'giveaway_entries')
 EMOJI_PATTERN = r'[\U0001f000-\U0001faff\u2600-\u27bf]\ufe0f?'
 REACTION_POLICY_VERSION = 3
 VIEW_MODES = ('legacy', 'realistic')
@@ -658,7 +661,7 @@ class Monitor:
             'last_post_id': None, 'checked_at': None, 'error': '',
             'hours': DEFAULT_HOURS.copy(), 'view_activity': DEFAULT_VIEW_ACTIVITY.copy(),
             'view_day2_pct': DEFAULT_VIEW_DAY2_PCT, 'view_mode': 'legacy', 'max_views': 0, 'max_reactions': 0,
-            'execute_plan': False, 'views_enabled': True, 'subscribers_only': False,
+            'execute_plan': False, 'views_enabled': True, 'subscribers_only': False, 'giveaway_entries': False,
             'allowed_reactions': list(ALLOWED_EMOJI), 'reaction_prompt': DEFAULT_PROMPT,
             'posts': [], 'subscriber_roster': None,
         }
@@ -704,6 +707,7 @@ class Monitor:
         self.action_semaphore = asyncio.Semaphore(MAX_PARALLEL_ACTIONS)
         self.membership_requests = MembershipRequests()
         self.membership_cache = {}
+        self.giveaway_order = None
         self.roster_lock = asyncio.Lock()
         self.reactions_cache = None
         migrated = False
@@ -1100,6 +1104,10 @@ class Monitor:
             'samples': [], 'missing': False,
         }
         published = parse_timestamp(post['post_date'])
+        if published and settings["giveaway_entries"] and settings["execute_plan"]:
+            entry = read_giveaway(post["post_text"], published, getattr(message, "buttons", None))
+            if entry is not None:
+                post["giveaway"] = entry
         poll = native_poll(message, published)
         if poll:
             post['poll'] = poll
@@ -1147,6 +1155,29 @@ class Monitor:
         self.analysis_tasks[post_id] = task
         task.add_done_callback(lambda t, pid=post_id:
             self.analysis_tasks.pop(pid, None) if self.analysis_tasks.get(pid) is t else None)
+
+    async def queue_giveaways(self):
+        if not self.giveaway_order:
+            return
+        channel = self.state["channel"]
+        for post in self.state["posts"]:
+            entry = post.get("giveaway")
+            if not entry or entry["status"] != "pending":
+                continue
+            deadline = parse_timestamp(entry["deadline"])
+            if not deadline or deadline <= utc_now():
+                entry.update(status="skipped", note="Срок розыгрыша истёк")
+                self.save()
+                continue
+            link = f"{channel}/{post['post_id']}"
+            order_id = hashlib.sha256(("giveaway:" + link.lower()).encode()).hexdigest()[:32]
+            try:
+                job = await self.giveaway_order(order_id, link, entry["channels"], deadline.timestamp(), entry["heart"])
+            except ValueError as exc:
+                entry.update(status="skipped", note=str(exc))
+            else:
+                entry.update(status="queued", order_id=order_id, account_count=len(job["items"]))
+            self.save()
 
     async def refresh(self, sample_stats=True):
         async with self.lock:
@@ -1198,6 +1229,7 @@ class Monitor:
                         analyses_started = True
                 if analyses_started:
                     self.save()
+                await self.queue_giveaways()
                 await self.dispatch_actions()
             except asyncio.CancelledError:
                 raise
@@ -1434,7 +1466,7 @@ class Monitor:
             subscribers = None
             for post in self.state['posts']:
                 settings = self.post_settings(post)
-                if not within_window(post, now) or post.get('missing') or not settings['execute_plan']:
+                if not within_window(post, now) or post.get('missing') or post.get('giveaway') or not settings['execute_plan']:
                     continue
                 reactions_open = within_window(post, now, MONITOR_HOURS)
                 votes_open = poll_open(post, now)
@@ -1692,6 +1724,9 @@ class Monitor:
             raise web.HTTPBadRequest(text=json.dumps({'error': 'Некорректное значение «Только подписчики»'}, ensure_ascii=False), content_type='application/json')
         if max_views < 0 or not 0 <= max_reactions <= count or (not subscribers_only and max_views > count):
             raise web.HTTPBadRequest(text=json.dumps({'error': 'Лимиты должны быть неотрицательными и учитывать доступные аккаунты'}, ensure_ascii=False), content_type='application/json')
+        giveaway_entries = payload.get('giveaway_entries', self.state['giveaway_entries'])
+        if type(giveaway_entries) is not bool:
+            raise web.HTTPBadRequest(text=json.dumps({'error':'Некорректный режим розыгрышей'}, ensure_ascii=False), content_type='application/json')
         execute = payload.get('execute_plan', self.state['execute_plan'])
         if not isinstance(execute, bool):
             raise web.HTTPBadRequest(text=json.dumps({'error': 'execute_plan должен быть true или false'}, ensure_ascii=False), content_type='application/json')
@@ -1708,7 +1743,7 @@ class Monitor:
                            'max_views': max_views, 'max_reactions': max_reactions,
                            'execute_plan': execute, 'views_enabled': views_enabled,
                            'subscribers_only': subscribers_only, 'allowed_reactions': allowed,
-                           'reaction_prompt': prompt})
+                           'reaction_prompt': prompt, 'giveaway_entries': giveaway_entries})
         self.save()
         return web.json_response(self.snapshot())
 

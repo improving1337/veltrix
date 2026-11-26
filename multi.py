@@ -38,15 +38,28 @@ async def click_first_button(client, channel, mid, extra=None):
         if not msg:
             return "err", "пост не найден или недоступен"
         if not msg.buttons:
+            if (extra or {}).get("giveaway_deadline"):
+                return "err", "кнопка розыгрыша больше недоступна"
             return "ok", "у поста нет кнопок, пропущено"
         if await plan_options.wait_before_action(extra):
             return "skip", "остановлено"
-        res = await msg.click(0, 0)
+        row, col = 0, 0
+        if (extra or {}).get("giveaway_heart"):
+            positions = [(r, c) for r, buttons in enumerate(msg.buttons)
+                         for c, button in enumerate(buttons) if "❤" in button.text]
+            if len(positions) != 1:
+                return "err", "кнопка ❤️ больше не определяется однозначно"
+            row, col = positions[0]
+        elif (extra or {}).get("giveaway_deadline") and sum(map(len, msg.buttons)) != 1:
+            return "err", "кнопка больше не определяется однозначно"
+        res = await msg.click(row, col)
     except BotResponseTimeoutError:
         return "ok", "кнопка нажата, бот не ответил"
     except Exception as e:
         return explain(e)
     if isinstance(res, str):
+        if (extra or {}).get("giveaway_deadline"):
+            return "err", "кнопка розыгрыша ведёт по внешней ссылке"
         return "ok", "кнопка-ссылка: " + res
     text = getattr(res, "message", None)
     return "ok", "кнопка нажата" + (f": {text}" if text else "")
@@ -175,11 +188,54 @@ class MultiJoiner(ChannelJoiner):
         plan = self.plans.get(plan_id)
         if plan:
             extra = plan["extra"]
-            extra["reaction_accounts"] = reaction_accounts(plan["items"], extra["reaction_percent"])
+            percent = extra["reaction_percent"]
+            if extra.get("giveaway_deadline"):
+                extra["reaction_accounts"] = [
+                    item["account"] for item in plan["items"] if random.randrange(100) < percent
+                ]
+            else:
+                extra["reaction_accounts"] = reaction_accounts(plan["items"], percent)
         return await super().start(plan_id)
+
+    async def start_giveaway(self, order_id, link, channels, deadline, heart):
+        if order_id in self.jobs:
+            return self.jobs[order_id]
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            raise ValueError("Срок розыгрыша истёк")
+        finish = deadline - min(600, remaining * .1)
+        public_filter = {"field": "flag", "op": "=", "value": "public"}
+        result = await self.make_plan(link, max(1, len(self._alive())), 0, 0, {
+            "channels": channels, "reaction_percent": 50, "emoji": "❤️",
+            "account_filters": [public_filter], "finish_at": finish,
+            "realistic": {"minutes": 60, "boost": 70},
+        })
+        plan = self.plans.pop(result["id"])
+        if order_id in self.jobs:
+            return self.jobs[order_id]
+        plan["id"] = order_id
+        plan["extra"].update(giveaway_deadline=deadline, giveaway_heart=heart)
+        self.plans[order_id] = plan
+        await self.start(order_id)
+        return self.jobs[order_id]
+
+    def _action_extra(self, job, item):
+        extra = super()._action_extra(job, item)
+        deadline = (extra or {}).get("giveaway_deadline")
+        if deadline is None:
+            return extra
+        async def wait_before_action():
+            return (time.time() >= deadline
+                    or self.account_metadata(item["account"]).get("flag") != "public"
+                    or await plan_options.wait_before_action(extra)
+                    or time.time() >= deadline
+                    or self.account_metadata(item["account"]).get("flag") != "public")
+        return {**extra, "wait_before_action": wait_before_action}
 
     async def _perform(self, job, item, client, kind, key):
         try:
+            if await plan_options.wait_before_action(self._action_extra(job, item)):
+                return "skip", "срок истёк или аккаунт больше не подходит"
             return await self._account(job, item, client, key)
         except Exception as exc:
             return "err", f"{type(exc).__name__}: {exc}"[:200]
@@ -245,6 +301,8 @@ class MultiJoiner(ChannelJoiner):
                 break
         if chans and joined == len(chans):
             log(("ok", f"подписка {joined}/{len(chans)}"))
+        if extra.get("giveaway_deadline") and joined < len(chans):
+            return "err", " · ".join(notes + ["условия подписки не выполнены"])
 
         # Handle each post in order, completing its actions before the next one.
         posts = extra.get("posts")
@@ -254,9 +312,14 @@ class MultiJoiner(ChannelJoiner):
             react = (random.randrange(100) < extra["reaction_percent"] if posts
                      else chosen is None or it["account"] in chosen)
             steps = [("смотрит пост…", lambda: ViewsJoiner._join(client, "post", target, extra))]
+            button = ("нажимает кнопку…", lambda: click_first_button(client, channel, mid, extra))
+            giveaway_entry = extra.get("giveaway_deadline")
+            if giveaway_entry:
+                steps.append(button)
             if react:
                 steps.append(("ставит реакцию…", lambda: ReactionJoiner._join(client, "post", target, extra)))
-            steps.append(("нажимает кнопку…", lambda: click_first_button(client, channel, mid, extra)))
+            if not giveaway_entry:
+                steps.append(button)
             for label, fn in steps:
                 if stop_all or job["stop"].is_set() or await pause():
                     break
