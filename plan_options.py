@@ -1,5 +1,6 @@
 """Shared eligibility and absolute-deadline scheduling for all services."""
 import asyncio
+import operator
 import math
 import random
 import re
@@ -45,7 +46,73 @@ def after_quiet(timestamp, quiet):
     return end + random.uniform(1, min(600, available / 2))
 
 
-def schedule_order(items, start, finish, quiet):
+def account_filter(extra, metadata):
+    rules = (extra or {}).get('account_filters') or []
+    mode = (extra or {}).get('filter_mode', 'and')
+    ops = {'>': operator.gt, '>=': operator.ge, '=': operator.eq, '<': operator.lt, '<=': operator.le}
+    if mode not in ('and', 'or') or not isinstance(rules, list) or len(rules) > 12:
+        raise ValueError('Некорректные фильтры аккаунтов')
+    tests = []
+    for rule in rules:
+        if not isinstance(rule, dict) or not isinstance(rule.get('op'), str) or rule['op'] not in ops:
+            raise ValueError('Проверь оператор фильтра')
+        field, value, compare = rule.get('field'), rule.get('value'), ops[rule['op']]
+        if field == 'flag' and value in ('general', 'public') and rule['op'] == '=':
+            tests.append((field, compare, value))
+        elif field in ('avatar_count', 'music_count') and type(value) is int and value >= 0:
+            tests.append((field, compare, value))
+        else:
+            raise ValueError('Проверь условие отбора аккаунтов')
+    def matches(name):
+        if not tests:
+            return True
+        values = metadata(name) or {}
+        results = (values.get(field) is not None and compare(values[field], value)
+                   for field, compare, value in tests)
+        return all(results) if mode == 'and' else any(results)
+    return matches
+
+
+def realistic_profile(extra):
+    profile = (extra or {}).get('realistic')
+    if profile is None:
+        return None
+    if not isinstance(profile, dict):
+        raise ValueError('Некорректный профиль «Реалистик»')
+    minutes, boost = profile.get('minutes'), profile.get('boost')
+    if type(minutes) is not int or not 1 <= minutes <= 2880 or type(boost) is not int or not 0 <= boost <= 100:
+        raise ValueError('Реалистик: от 1 до 2880 минут, сила старта от 0 до 100')
+    return minutes, boost
+
+
+def realistic_schedule(items, duration, at, profile):
+    from automatic import DEFAULT_VIEW_ACTIVITY
+    _, boost = profile
+    bins = 240
+    step = duration / bins
+    weights = []
+    for i in range(bins):
+        fraction = (i + .5) / bins
+        local = ((at(duration * fraction) + MOSCOW_OFFSET) % DAY) / 3600
+        hour = int(local)
+        fraction_hour = local - hour
+        activity = DEFAULT_VIEW_ACTIVITY[hour] * (1 - fraction_hour) + DEFAULT_VIEW_ACTIVITY[(hour + 1) % 24] * fraction_hour
+        weights.append(activity * (1 + boost / 20 * math.exp(-fraction * 6)))
+    total = sum(weights)
+    index, before, previous = 0, 0., 0.
+    for i, item in enumerate(items, 1):
+        quantile = total * (i - .5) / len(items)
+        while before + weights[index] < quantile:
+            before += weights[index]
+            index += 1
+        due = (index + (quantile - before) / weights[index]) * step
+        item.update(delay=due - previous, at=due)
+        previous = due
+
+
+def schedule_order(items, start, finish, quiet, profile=None):
+    if profile and finish is None:
+        finish = after_quiet(start + 60 * profile[0], quiet)
     if finish is None:
         previous = start
         for item in items:
@@ -53,8 +120,13 @@ def schedule_order(items, start, finish, quiet):
             item.update(delay=due - previous, at=due - start)
             previous = due
         return items[-1]['at']
+    if finish <= start:
+        raise ValueError('Время окончания должно быть позже начала')
     if quiet is None:
-        schedule(items, finish - start)
+        if profile:
+            realistic_schedule(items, finish - start, lambda offset: start + offset, profile)
+        else:
+            schedule(items, finish - start)
         return items[-1]['at']
     if quiet_end(finish, quiet) is not None:
         raise ValueError('Время «Закончить к» попадает в интервал пропуска (МСК)')
@@ -69,14 +141,22 @@ def schedule_order(items, start, finish, quiet):
     available = open_clock(finish) - start_open
     if available <= 0:
         raise ValueError('До срока нет доступного времени вне интервала пропуска')
-    schedule(items, available)
+    def to_timestamp(offset):
+        day, seconds = divmod(start_open + offset, open_seconds)
+        return origin + day * DAY + seconds
+
+    if profile:
+        realistic_schedule(items, available, to_timestamp, profile)
+    else:
+        schedule(items, available)
     previous = start
-    for item in items[:-1]:
+    for item in (items if profile else items[:-1]):
         day, seconds = divmod(start_open + item['at'], open_seconds)
         due = origin + day * DAY + seconds
         item.update(delay=due - previous, at=due - start)
         previous = due
-    items[-1].update(delay=finish - previous, at=finish - start)
+    if not profile:
+        items[-1].update(delay=finish - previous, at=finish - start)
     return items[-1]['at']
 
 

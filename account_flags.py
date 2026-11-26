@@ -5,7 +5,8 @@ from account_security import private_json, read_json
 
 GENERAL = "general"
 AUTOPILOT = "autopilot"
-FLAGS = (GENERAL, AUTOPILOT)
+PUBLIC = "public"
+FLAGS = (GENERAL, AUTOPILOT, PUBLIC)
 
 
 class AccountFlags:
@@ -40,7 +41,7 @@ class AccountFlags:
 
     def select(self, name, flag):
         if flag not in FLAGS:
-            raise ValueError("Выбери метку «Общий» или «Автопилот»")
+            raise ValueError("Выбери метку «Общий», «Автопилот» или «Публичный»")
         accounts = self.state["accounts"]
         record = accounts.get(name, {})
         identity = record.get("identity")

@@ -633,6 +633,15 @@ input,textarea,select{background:rgba(255,255,255,.07);border:1px solid rgba(255
 .auto-view-controls input{font-variant-numeric:tabular-nums}
 .auto-multi-range .auto-view-mode{margin-top:10px;flex-wrap:wrap}
 .auto-view-mode select{width:auto;max-width:100%;padding:4px 8px}
+.panel-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 12px}.panel-toolbar select{width:auto;margin:0;max-width:100%}.panel-toolbar button[aria-pressed=true]{border-color:#8698f2;background:#30355d}.panel-select{display:inline-flex;align-items:center;gap:6px}.panel-select input,.acc-name>input{width:auto;margin:0;flex:none}.acc-column-menu{position:relative}.acc-column-menu summary,.deploy-more summary,.vpn-history summary,.order-filters summary{cursor:pointer}.acc-column-menu>div{position:absolute;z-index:4;display:grid;gap:8px;width:max-content;max-width:72vw;padding:14px;background:#1a1b22;border:1px solid #343542;border-radius:10px}.acc-profile-link{display:flex;align-items:center;gap:10px;min-width:0;padding:0;background:none;border:0;color:inherit;text-align:left;cursor:pointer}.acc-name .acc-account-name{min-width:0}.acc-row{cursor:default!important}
+@media(min-width:751px){#v-accounts .acc-table-head,#v-accounts .acc-row{grid-template-columns:var(--account-grid)!important;min-width:var(--account-grid-min)!important}.acc-col-hidden{display:none!important}}
+.panel-confirm{color:var(--text,#eee);width:min(440px,calc(100% - 32px));padding:20px}.panel-confirm::backdrop{background:#050607cc}.panel-confirm h2{margin:0 0 12px;font-size:18px}.panel-confirm p{white-space:pre-wrap;line-height:1.55}.panel-confirm form{justify-content:flex-end;margin:16px 0 0}
+#v-messages #messages{margin:12px clamp(0px,1.3vw,20px);border:1px solid #2a2a34;border-radius:14px;overflow:hidden;height:calc(100dvh - 88px)}#messages .lhead{display:flex;flex-wrap:wrap;gap:8px}#messages .inbox-actions{display:flex;flex-wrap:wrap;gap:6px}.inbox-search{display:block;padding:8px 12px}.inbox-search input{width:100%}#messages .item{border-radius:10px}#messages .item.act{background:#242639}#messages .listcol{min-width:min(330px,100%)}
+@media(max-width:750px){#v-messages #messages{margin:0;border-radius:0;height:calc(100dvh - 58px)}#messages .lhead{align-items:flex-start}.acc-profile-link{gap:5px}}
+#v-scenarios .scenario-layout{grid-template-columns:1fr}.code-editor{display:grid;grid-template-columns:42px minmax(0,1fr);border:1px solid #343542;border-radius:8px;background:#101119;overflow:hidden}#scenario-code,#scenario-lines{font:13px/1.55 ui-monospace,monospace;white-space:pre;tab-size:4;margin:0;padding:10px}#scenario-code{border:0;border-radius:0;color:#d9dfff;resize:vertical;min-height:170px;overflow:auto}#scenario-lines{display:block;overflow:hidden;max-height:0;min-height:100%;text-align:right;color:#969bb0;border-right:1px solid #343542}.scenario-output{max-height:42vh;overflow:auto;background:#101119;padding:12px;border-radius:8px}
+.deploy-more,.vpn-history{margin-top:14px;padding:12px;border:1px solid #2c2d38;border-radius:10px}.vpn-history-list{margin-top:10px}.vpn-history-list input{min-width:0;flex:1 1 180px}.order-filter-row,.order-realistic{display:grid;grid-template-columns:2fr 1fr 2fr auto;gap:8px;align-items:center;margin:8px 0}.order-realistic{grid-template-columns:1fr 1fr}.order-filters{margin:10px 0}.order-filters summary{margin-bottom:8px}
+.code-editor{position:relative}.code-editor #scenario-code,.code-editor #scenario-highlight{grid-column:2;grid-row:1;margin:0;font:13px/1.55 ui-monospace,monospace;padding:10px;tab-size:4;white-space:pre;text-align:left;overflow:auto}.code-editor #scenario-code{position:relative;background:transparent;color:transparent;caret-color:#d9dfff;z-index:1}.code-editor #scenario-code::selection{color:transparent;background:#4567ae66}.code-editor #scenario-highlight{pointer-events:none;max-height:0;min-height:100%;color:#d9dfff;overflow:hidden;border:0}.syntax-keyword{color:#caa6ff}.syntax-comment{color:#949cb2}.syntax-string{color:#a3d6a0}.syntax-number{color:#ffd291}.syntax-function{color:#90b7ff}
+#v-upload .btcol{max-width:660px;border:1px solid #2e303d;border-radius:14px;padding:clamp(14px,3vw,28px);background:#171820}#v-upload #deploy-login{display:grid;gap:8px}#v-upload #deploy-login .btn{max-width:220px}#v-upload #deploy-login-status{min-height:18px}
 </style>
 <style id="veltrix-theme">
 /* VELTRIX UI — graphite dashboard treatment adapted from the supplied Ember
@@ -1036,30 +1045,34 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto!important}*{transition-duration:.01ms!important}}
 
 </style>
+<link rel="stylesheet" href="/assets/dashboard.css"><script defer src="/assets/dashboard.js"></script>
 </head>
 <body>
 <div id="app">
  <nav class="rail" aria-label="Основные разделы" id="veltrix-sidebar">
   <div class="v-side-top"><div class="v-brand-row"><a class="v-brand" href="#accounts" id="veltrix-home" aria-label="VELTRIX · Profiles"><svg class="v-mark" viewBox="0 0 36 36" aria-hidden="true"><path d="M4 8h8l6 18L26 8h7L21.5 31h-7Z" fill="currentColor"/><path d="M16 8h7l-5 12Z" fill="#090a0f"/></svg><span>VELTRIX</span></a><button id="veltrix-collapse" class="v-collapse" type="button" aria-label="Свернуть меню" title="Свернуть меню"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18"/></svg></button></div><button class="v-quick-search" id="veltrix-search" type="button" aria-label="Быстрый переход"><svg class="vicon v-search-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.8" cy="10.8" r="7.5"/><path d="m16.5 16.5 4.4 4.4"/></svg><span class="v-search-text">Quick search</span><kbd>Ctrl K</kbd></button></div>
   <div class="v-side-scroll"><div class="v-nav-group"><div class="v-nav-group-title">Navigation</div>
-<button type="button" id="t-accounts" class="v-nav-item on" title="Profiles"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="v-nav-label">Profiles</span></button>
-<button type="button" id="t-examples" class="v-nav-item" title="Identity"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><circle cx="12" cy="10" r="3"/><path d="M7.5 18a4.5 4.5 0 0 1 9 0"/></svg><span class="v-nav-label">Identity</span></button>
+<button type="button" id="t-overview" class="v-nav-item on"><span aria-hidden="true">◫</span><span class="v-nav-label">Overview</span></button>
+<button type="button" id="t-accounts" class="v-nav-item" title="Profiles"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="v-nav-label">Profiles</span></button>
+<button type="button" id="t-examples" hidden class="v-nav-item" title="Identity"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><circle cx="12" cy="10" r="3"/><path d="M7.5 18a4.5 4.5 0 0 1 9 0"/></svg><span class="v-nav-label">Identity</span></button>
 <button type="button" id="t-upload" class="v-nav-item" title="Deploy"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17v3h16v-3"/><path d="m12 16 0-13M7 8l5-5 5 5"/></svg><span class="v-nav-label">Deploy</span></button>
-<button type="button" id="t-twofa" class="v-nav-item" title="2FA"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/><path d="m8 12 3 3 5-6"/></svg><span class="v-nav-label">2FA</span></button>
+<button type="button" id="t-twofa" hidden class="v-nav-item" title="2FA"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/><path d="m8 12 3 3 5-6"/></svg><span class="v-nav-label">2FA</span></button>
 <button type="button" id="t-messages" class="v-nav-item" title="Inbox"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8Z"/></svg><span class="v-nav-label">Inbox</span><span id="ub" class="badge" hidden></span></button>
-<div class="veltrix-toolkit-parent"><button type="button" id="t-orders" class="v-nav-item" title="Toolkit"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18a2 2 0 0 0 3 3l5.3-5.3a5 5 0 0 0 6.4-6.4L14 13l-3-3 3.7-3.7Z"/></svg><span class="v-nav-label">Toolkit</span></button><button id="toolkit-expand" class="v-nav-expand" aria-label="Развернуть услуги" aria-expanded="false" aria-controls="toolkit-services"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button></div><div id="toolkit-services" class="v-submenu" hidden></div>
-<button type="button" id="t-miniapp" class="v-nav-item" title="Mini App"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="v-nav-label">Mini App</span></button>
-<button type="button" id="t-cs3bet" class="v-nav-item" title="CS3BET"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4m-2-2v4"/><circle cx="15.5" cy="11.5" r=".6"/><circle cx="18.5" cy="13.5" r=".6"/><path d="M5.1 6h13.8A4 4 0 0 1 23 10l-1.1 7a2.4 2.4 0 0 1-4.2 1.1l-2.2-2.7h-7L6.3 18A2.4 2.4 0 0 1 2 17l-1-7a4 4 0 0 1 4.1-4Z"/></svg><span class="v-nav-label">CS3BET</span></button>
+<div class="veltrix-toolkit-parent"><button type="button" id="t-orders" class="v-nav-item" title="Toolkit"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a5 5 0 0 0-6.4 6.4L3 18a2 2 0 0 0 3 3l5.3-5.3a5 5 0 0 0 6.4-6.4L14 13l-3-3 3.7-3.7Z"/></svg><span class="v-nav-label">Услуги</span></button><button id="toolkit-expand" class="v-nav-expand" aria-label="Развернуть услуги" aria-expanded="false" aria-controls="toolkit-services"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button></div><div id="toolkit-services" class="v-submenu" hidden></div>
+<button type="button" id="t-miniapp" hidden class="v-nav-item" title="Mini App"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span class="v-nav-label">Mini App</span></button>
 <button type="button" id="t-automatic" class="v-nav-item" title="Autopilot"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(35 12 12)"/><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(-35 12 12)"/><circle cx="12" cy="12" r="2"/></svg><span class="v-nav-label">Autopilot</span></button>
+<button type="button" id="t-cs3bet" class="v-nav-item" title="CS3BET"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 12h4m-2-2v4"/><circle cx="15.5" cy="11.5" r=".6"/><circle cx="18.5" cy="13.5" r=".6"/><path d="M5.1 6h13.8A4 4 0 0 1 23 10l-1.1 7a2.4 2.4 0 0 1-4.2 1.1l-2.2-2.7h-7L6.3 18A2.4 2.4 0 0 1 2 17l-1-7a4 4 0 0 1 4.1-4Z"/></svg><span class="v-nav-label">CS3BET</span></button>
 <button type="button" id="t-scenarios" class="v-nav-item" title="Сценарии"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-2-14-4 16"/></svg><span class="v-nav-label">Сценарии</span></button>
-<button type="button" id="t-vpn" class="v-nav-item" title="VPN"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3 5 6v6c0 4 3 7 7 9 4-2 7-5 7-9V6z"/><path d="m9 12 2 2 4-4"/></svg><span class="v-nav-label">VPN</span></button>
+<button type="button" id="t-vpn" class="v-nav-item" title="VPN и Mini App"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3 5 6v6c0 4 3 7 7 9 4-2 7-5 7-9V6z"/><path d="m9 12 2 2 4-4"/></svg><span class="v-nav-label">VPN и Mini App</span></button>
 <button type="button" id="t-settings" class="v-nav-item" title="Настройки"><span aria-hidden="true">⚙</span><span class="v-nav-label">Настройки</span></button>
 </div></div>
   <div class="v-side-bottom"><span class="v-connection"><i id="live" class="live" aria-label="Состояние соединения"></i><span>Server status</span></span><span class="v-version">Veltrix · Console</span></div>
  </nav>
  <div id="veltrix-mobile-backdrop" hidden></div><main id="veltrix-main">
-  <header class="v-topbar"><button type="button" id="veltrix-mobile-menu" class="v-mobile-menu" aria-label="Открыть меню"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="v-breadcrumb"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span id="veltrix-breadcrumb">Profiles</span></div><div class="v-top-right"><span class="v-top-indicator"><span class="v-status-dot"></span>Control platform</span><button id="veltrix-help" type="button" class="v-top-help" title="Помощь"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.4 9a2.6 2.6 0 0 1 5.1 0c0 1.8-2.5 2.2-2.5 4"/><path d="M12 17h.01"/></svg></button></div></header>
+  <header class="v-topbar"><button type="button" id="veltrix-mobile-menu" class="v-mobile-menu" aria-label="Открыть меню"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><div class="v-breadcrumb"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span id="veltrix-breadcrumb">Overview</span></div><div class="v-top-right"><span class="v-top-indicator"><span class="v-status-dot"></span>Control platform</span><button class="ui-btn" id="veltrix-logout" type="button">Выйти</button><button id="veltrix-help" type="button" class="v-top-help" title="Помощь"><svg class="vicon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.4 9a2.6 2.6 0 0 1 5.1 0c0 1.8-2.5 2.2-2.5 4"/><path d="M12 17h.01"/></svg></button></div></header>
+ <section id="v-overview" class="view on"><div id="overview-root"></div></section>
  <section id="v-automatic" class="view"><div class="accwrap"><div class="auto-wrap">
+  <div class="sectionhead"><div><h2>Autopilot</h2><p class="subline">Мониторинг каналов и выполнение планов публикаций</p></div></div><nav class="panel-toolbar auto-switch" id="auto-channel-switch" aria-label="Каналы"></nav>
   <div id="auto-multi-overview">
    <div class="sectionhead"><div><h2>Автоматическая · все каналы</h2><p class="subline">Добавляй ссылки: каждый канал отслеживается отдельно, новые публикации появляются в общей ленте</p></div></div>
    <div class="auto-panel">
@@ -1137,8 +1150,22 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
    <p class="auto-note">При включённом автовыполнении рекомендации DeepSeek определяют эмодзи и количество для функции «Реакции». Для репостов оценивается важность публикации. План ограничен 10% от целевых просмотров. Репосты сохраняются в «Избранное» аккаунтов.</p>
   </div>
   </div></div></div></section>
- <section id="v-accounts" class="view on">
-  <div class="accwrap"><div class="sectionhead"><div><h2>Список аккаунтов</h2><p class="subline">Выбери аккаунт, чтобы открыть настройки</p></div><div class="account-counters"><span id="acc-active" class="counter"></span><span id="acc-frozen" class="counter status err" hidden></span><span id="acc-count" class="counter"></span></div></div><div class="searchbar"><input id="acc-search" placeholder="Поиск по имени, username или файлу…" autocomplete="off"><button id="acc-add" class="btn" type="button">Добавить</button></div><div class="acc-table-wrap" aria-label="Таблица подключённых аккаунтов">
+ <section id="v-accounts" class="view">
+  <div class="accwrap"><div class="sectionhead"><div><h2>Список аккаунтов</h2><p class="subline">Выбери аккаунт, чтобы открыть настройки</p></div><div class="account-counters"><span id="acc-active" class="counter"></span><span id="acc-frozen" class="counter status err" hidden></span><span id="acc-count" class="counter"></span></div></div><div class="searchbar"><input id="acc-search" placeholder="Поиск по имени, username или файлу…" autocomplete="off"><button id="acc-add" class="btn" type="button">Добавить</button></div>
+   <div class="panel-toolbar">
+    <select id="acc-status-filter" aria-label="Статус аккаунта"><option value="all">Все статусы</option><option value="active">Активные</option><option value="frozen">Замороженные</option><option value="offline">Отключены</option></select>
+    <select id="acc-tag-filter" aria-label="Метка аккаунта"><option value="">Все метки</option></select>
+    <details class="acc-column-menu"><summary class="ui-btn">Столбцы</summary><div id="acc-columns"></div></details>
+    <button class="ui-btn" id="acc-export">Экспорт CSV</button>
+    <button class="ui-btn" id="acc-security">Безопасность и 2FA</button>
+   </div>
+   <div class="panel-toolbar">
+    <label class="panel-select"><input type="checkbox" id="acc-select-all"> Выбрать видимые</label><span id="acc-selected" class="status" aria-live="polite"></span>
+    <select id="acc-bulk-flag" aria-label="Метка для выбранных"></select><button id="acc-apply-flag" class="ui-btn" disabled>Применить метку</button>
+    <button id="acc-bulk-delete" class="ui-btn" disabled>Удалить выбранные</button>
+   </div>
+   <p id="acc-bulk-result" class="status" aria-live="polite" hidden></p>
+   <div class="acc-table-wrap" aria-label="Таблица подключённых аккаунтов">
      <div class="acc-table-head" role="row">
        <button class="ex-sort" data-acc-sort="name">Визуальное имя <span class="arrow">↑</span></button>
        <button class="ex-sort" data-acc-sort="username">Какой юз <span class="arrow"></span></button>
@@ -1157,7 +1184,7 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
  </section>
  <section id="v-scenarios" class="view">
   <div class="accwrap">
-   <div class="sectionhead"><h2>Сценарии</h2><div class="scenario-heading-actions">
+   <div class="sectionhead"><h2>Сценарии</h2><div class="scenario-heading-actions"><button id="scenario-run" class="ui-btn ui-primary" disabled title="Сначала постройте предпросмотр">▶ Запуск</button>
     <button type="button" id="scenario-preview" class="ui-btn">Предпросмотр</button>
     <button type="button" id="scenario-wiki-open" class="ui-btn">Вики</button>
    </div></div>
@@ -1170,11 +1197,11 @@ input:focus,textarea:focus,select:focus{border-color:#8c8c9b!important;box-shado
      <thead><tr><th scope="col">Шаг</th><th scope="col">Время</th><th scope="col">Аккаунт</th><th scope="col">Действие</th></tr></thead>
      <tbody id="scenario-plan-text"></tbody>
     </table></div>
-    <div class="scenario-actions"><button id="scenario-run" class="btn" disabled>Подтвердить запуск</button></div>
+
    </section>
    <dialog id="scenario-wiki" class="profile-card scenario-wiki" aria-labelledby="scenario-wiki-title">
     <div class="profile-card-title"><h3 id="scenario-wiki-title">Вики сценариев</h3><form method="dialog"><button class="ui-btn">Закрыть</button></form></div>
-    <h4>Пример</h4>
+    <h4>Быстрый старт</h4>
     <pre>accounts = all - [6632326105]
 
 for acc in accounts:
@@ -1182,9 +1209,12 @@ for acc in accounts:
     sub(acc, "@test", unique=True)
     wait(10, 15)</pre>
     <p>Внутри цикла шаги выполняются по порядку для каждого аккаунта. Ссылки и текст указывай в кавычках.</p>
+    <h4>Справочник команд</h4>
+    <label class="fld"><span>Найти команду</span><input id="scenario-wiki-search" type="search" placeholder="Например, views или подписка"></label>
+    <p id="scenario-wiki-empty" class="status" hidden>Команды не найдены.</p>
     <dl>
-     <dt><code>all</code>, <code>[123, 456]</code>, <code>group("Основные")</code></dt><dd>Выбор подключённых аккаунтов с меткой «Общий», списка Telegram ID или сохранённой группы. Можно указать один ID через <code>account=123</code>.</dd>
-     <dt><code>accounts(flag=autopilot)</code>, <code>accounts(flag=general)</code></dt><dd>Подключённые аккаунты с выбранной меткой. Например, <code>for acc in accounts(flag=autopilot):</code> и на следующей строке с отступом <code>sub(acc, "https://t.me/cs2lab", unique=True)</code>.</dd>
+     <dt><code>all</code>, <code>[123, 456]</code>, <code>group("Основные")</code></dt><dd>Выбор подключённых аккаунтов с метками «Общий» и «Публичный», списка Telegram ID или сохранённой группы. Можно указать один ID через <code>account=123</code>.</dd>
+     <dt><code>accounts(flag=autopilot)</code>, <code>accounts(flag=general)</code>, <code>accounts(flag=public)</code></dt><dd>Подключённые аккаунты с выбранной меткой. Например, <code>for acc in accounts(flag=autopilot):</code> и на следующей строке с отступом <code>sub(acc, "https://t.me/cs2lab", unique=True)</code>.</dd>
      <dt><code>param("post")</code></dt><dd>Значение из JSON-параметров, например <code>{"post": "https://t.me/test/1"}</code>.</dd>
      <dt><code>unique=True</code></dt><dd>Для подписок проверяет текущий статус в Telegram. Для других действий использует историю успешных шагов сценариев.</dd>
      <dt><code>views(acc, post)</code>, <code>repost(acc, post)</code>, <code>button(acc, post)</code></dt><dd>Просмотр, пересылка в «Избранное» и нажатие первой кнопки под постом.</dd>
@@ -1195,13 +1225,13 @@ for acc in accounts:
      <dt><code>send_photo(acc, "@bot", photo())</code>, <code>bot_button(acc, "@bot", 1, text="❤️")</code></dt><dd>Отправляет прикреплённое фото и нажимает кнопку №1 с указанным текстом в новом ответе. Фото можно вставить в редактор через Ctrl+V.</dd>
      <dt><code>online(acc, 60)</code>, <code>wait(10)</code>, <code>wait(10, 15)</code></dt><dd>Онлайн на заданное время, фиксированная пауза и случайная пауза из диапазона. Все значения в секундах.</dd>
     </dl>
-    <p>«Предпросмотр» строит имитацию без запросов в Telegram. «Подтвердить запуск» запускает сценарий.</p>
+    <p>«Предпросмотр» строит имитацию без запросов в Telegram. «Запуск» открывает подтверждение и выполняет утверждённый план.</p>
    </dialog>
    <div class="scenario-layout">
     <section class="profile-card">
-     <label class="fld"><span>Код</span><textarea id="scenario-code" rows="11" spellcheck="false">for acc in all:
+     <label class="fld"><span>Код</span><span class="code-editor"><span id="scenario-lines" aria-hidden="true">1</span><pre id="scenario-highlight" aria-hidden="true"></pre><textarea id="scenario-code" rows="11" spellcheck="false">for acc in all:
     views(acc, param("post"), unique=True)
-    wait(10, 15)</textarea></label>
+    wait(10, 15)</textarea></span></label>
      <input type="file" id="scenario-photo-file" accept="image/jpeg,image/png,image/webp" hidden>
      <button type="button" id="scenario-photo-pick" class="ui-btn">Прикрепить фото</button>
      <div id="scenario-photo-draft" class="photo-draft" hidden><img alt=""><span></span><button type="button" class="ui-btn">Убрать</button></div>
@@ -1234,7 +1264,10 @@ for acc in accounts:
   </div>
  </section>
  <section id="v-vpn" class="view">
-  <div id="vpn-root" class="vpn-root"></div>
+  <div class="accwrap"><div class="sectionhead"><h2>VPN и Mini App</h2></div>
+    <div class="panel-toolbar"><button class="ui-btn" id="tool-vpn" aria-pressed="true">VPN</button><button class="ui-btn" id="tool-miniapp" aria-pressed="false">Mini App</button></div>
+    <div id="vpn-root" class="vpn-root"></div><div id="miniapp-tool" hidden></div>
+  </div>
 </section>
  <section id="v-settings" class="view"><div class="accwrap"><div class="sectionhead"><h2>Настройки</h2></div><section id="panel-settings-form" class="profile-card"></section><section id="gmail-settings-form" class="profile-card" style="margin-top:16px"></section></div></section>
  <section id="v-examples" class="view">
@@ -1275,14 +1308,14 @@ for acc in accounts:
   <div class="accwrap"><div id="cb-root"></div></div>
  </section>
  <section id="v-twofa" class="view"><div class="accwrap"><div class="sessions-panel">
- <div class="sessions-toolbar"><div><h2>Безопасность и сессии</h2><p>Происхождение авторизации, пароли 2FA и перевыпуск</p></div><div class="ui-actions"><button id="twofa-reissue" class="ui-btn ui-primary">Перевыпустить внешние</button><button id="twofa-refresh" class="ui-btn">↻ Обновить</button></div></div>
+ <button id="profile-security-back" class="ui-btn">← Профили</button><div class="sessions-toolbar"><div><h2>Безопасность и сессии</h2><p>Происхождение авторизации, пароли 2FA и перевыпуск</p></div><div class="ui-actions"><button id="twofa-reissue" class="ui-btn ui-primary">Перевыпустить внешние</button><button id="twofa-refresh" class="ui-btn">↻ Обновить</button></div></div>
  <div class="session-legend"><span class="session-own">● Своя</span><span class="session-external">● Внешняя</span><span class="session-dead">● Нет подключения</span><span>Время по МСК</span></div>
  <div id="twofa-status" class="status" role="status"></div>
  <div class="sessions-scroll"><table class="sessions-table"><colgroup><col style="width:48px"><col style="width:135px"><col style="width:220px"><col style="width:140px"><col style="width:100px"><col style="width:140px"><col style="width:220px"></colgroup><thead><tr><th>Статус</th><th>Номер / аккаунт</th><th>Пароль 2FA</th><th>Дата авторизации</th><th>Происхождение</th><th>Когда получена</th><th>Действия</th></tr></thead><tbody id="twofa-rows"></tbody></table></div>
  </div></div></section>
  <section id="v-upload" class="view">
   <div class="accwrap"><div class="chcol btcol">
-   <h2>Загрузка</h2>
+   <h2>Подключение аккаунта</h2>
    <label class="deploy-flag"><input id="deploy-default-flag" type="checkbox" disabled> Ставить метку «Автопилот» новым аккаунтам</label>
    <div id="deploy-flag-status" class="status" role="status"></div>
    <h3>Вход по номеру</h3>
@@ -1294,26 +1327,26 @@ for acc in accounts:
     <button id="deploy-login-cancel" class="btn ghost" type="button" hidden>Отменить вход</button>
    </form>
    <div id="deploy-login-status" class="status" role="status"></div>
-   <h3>Загрузить .session</h3>
+   <details class="deploy-more"><summary>Импорт файла .session</summary>
    <label class="fld"><span>Файл сессии Telethon</span><input id="deploy-session" type="file" accept=".session"></label>
    <button id="deploy-session-go" class="btn">Добавить сессию</button>
-   <div id="deploy-session-status" class="status" role="status"></div>
+   <div id="deploy-session-status" class="status" role="status"></div></details>
    <h3>Защита аккаунтов</h3>
    <label><input id="deploy-security-enabled" type="checkbox" disabled> Автоматически включать 2FA и оставлять только текущую сессию</label>
    <div class="status">Защита включена по умолчанию для всех подключённых аккаунтов. Другие устройства будут отключены. Уже установленный пароль 2FA не меняется. Новые пароли хранятся только на сервере в security/passwords.json. Если Telegram запретит завершение сессий, повтор состоится через 24 часа. Пауза останавливает следующие проверки.</div>
    <div id="deploy-security-status" class="status" role="status"></div>
-   <h3>Загрузка по ссылкам</h3>
+   <details class="deploy-more"><summary>Импорт по ссылкам</summary>
    <label class="fld"><span>Ссылки на архивы (Google Drive и др.) — по одной в строке, можно вставить сразу много</span>
     <textarea id="up-links" rows="8" wrap="off" placeholder="https://drive.google.com/file/d/.../view"></textarea></label>
    <div class="status">Поддерживаются Google Drive (файлы и папки) и публичные ссылки MEGA на файлы. Архивы разбираются, из них (в том числе из вложенных папок и tdata) берутся файлы .session и .json, они попадают в Sorting, раскладываются и новые аккаунты сразу подключаются.</div>
    <button id="up-go" class="btn">Скачать и добавить аккаунты</button>
    <div id="up-st" class="status"></div>
-   <div id="up-job"></div>
+   <div id="up-job"></div></details>
   </div></div>
  </section>
  <section id="v-messages" class="view">
   <div id="messages" style="display:flex">
-   <div class="listcol"><div class="lhead"><span>Входящие</span><span style="display:flex;gap:6px"><button id="loaddlg" class="btn ghost">Загрузить</button><button id="newchat" class="btn ghost">+ Написать</button></span></div><div id="list"></div></div>
+   <div class="listcol"><div class="lhead"><span>Inbox</span><span class="inbox-actions"><button id="inbox-read-all" class="btn ghost">Прочитать всё</button><button id="loaddlg" class="btn ghost">Загрузить</button><button id="newchat" class="btn ghost">+ Написать</button></span></div><label class="inbox-search"><input id="inbox-search" type="search" placeholder="Поиск по диалогам" aria-label="Поиск по диалогам"></label><div id="list"></div></div>
    <div class="chatcol">
     <div id="none" class="empty">Выбери переписку слева</div>
     <div id="newbox" hidden>
@@ -1349,7 +1382,7 @@ for acc in accounts:
   <div class="v-command-footer">Enter — select <span>·</span> Esc — close</div>
 </div></div>
 <script>
-const S={accounts:[],inbox:[],unread:0,open:null,msgs:[],sel:null,tab:"accounts",accountSearch:""};
+const S={accounts:[],inbox:[],unread:0,open:null,msgs:[],sel:null,tab:"overview",accountSearch:""};
 const $=s=>document.querySelector(s),enc=encodeURIComponent;
 const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!==undefined)e.textContent=x;return e};
 const COL=["#e17076","#faa774","#a695e7","#7bc862","#6ec9cb","#65aadd","#ee7aae"];
@@ -1360,10 +1393,21 @@ const hm=t=>new Date(t*1000).toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"
 const when=t=>{const d=new Date(t*1000);return d.toDateString()===new Date().toDateString()?hm(t):d.toLocaleDateString("ru-RU",{day:"2-digit",month:"2-digit"})};
 const day=t=>new Date(t*1000).toLocaleDateString("ru-RU",{day:"numeric",month:"long"});
 
+function panelConfirm(message){
+  const dialog=$('#panel-confirm');
+  if(dialog.open)return Promise.resolve(false);
+  dialog.returnValue='';
+  $('#panel-confirm-text').textContent=message;
+  return new Promise(resolve=>{
+    dialog.addEventListener('close',()=>resolve(dialog.returnValue==='yes'),{once:true});
+    dialog.showModal();
+  });
+}
 async function api(path,o={}){
   const opt={method:"GET",...o,headers:{"X-Panel":"1",...(o.headers||{})}};
   if(o.json!==undefined){opt.body=JSON.stringify(o.json);opt.headers["Content-Type"]="application/json"}
   const r=await fetch(path,opt);let d=null;try{d=await r.json()}catch{}
+  if(r.status===401)location.replace('/login');
   if(!r.ok)throw new Error((d&&d.error)||r.statusText);return d;
 }
 function avatar(src,label,size=44){
@@ -1375,9 +1419,11 @@ function avatar(src,label,size=44){
 const avUrl=a=>`/api/accounts/${enc(a.name)}/avatar?v=${a.avatar_ver}`;
 const chatAv=(acc,id)=>`/api/accounts/${enc(acc)}/chats/${id}/avatar`;
 
-const VELTRIX_NAMES={accounts:'Profiles',examples:'Identity',upload:'Deploy',twofa:'2FA',messages:'Inbox',orders:'Toolkit',miniapp:'Mini App',cs3bet:'CS3BET',automatic:'Autopilot',vpn:'VPN',scenarios:'Сценарии',settings:'Настройки'};
+const VELTRIX_NAMES={overview:'Overview',accounts:'Profiles',upload:'Deploy',messages:'Inbox',orders:'Услуги',automatic:'Autopilot',cs3bet:'CS3BET',scenarios:'Сценарии',vpn:'VPN и Mini App',settings:'Настройки',twofa:'Безопасность'};
 function veltrixCloseMobile(){document.body.classList.remove('v-menu-open');$('#veltrix-mobile-backdrop').hidden=true}
+function clearBalance(){if(disposeBalance){disposeBalance();disposeBalance=null}}
 function showTab(t){
+  if(t!=='cs3bet')clearBalance();
   // A category always reopens at its home screen, never at a nested service.
   if(S.tab!==t){
     if(S.tab==='orders'){
@@ -1394,14 +1440,14 @@ function showTab(t){
   $('#veltrix-breadcrumb').textContent=VELTRIX_NAMES[t]||'VELTRIX';
   document.title=(VELTRIX_NAMES[t]||'Control')+' — VELTRIX';
   veltrixCloseMobile();
-  for(const n of["accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic","vpn","scenarios","settings"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
+  for(const n of["overview","accounts","messages","orders","miniapp","upload","twofa","examples","cs3bet","automatic","vpn","scenarios","settings"]){$("#v-"+n).classList.toggle("on",n===t);$("#t-"+n).classList.toggle("on",n===t)}
 }
 let PANEL_SETTINGS={hidden_tabs:[],view_spread:10,reaction_spread:20,search_workers:5,autopilot_for_new_accounts:false,profile_group:'https://t.me/minecraft_beseda764'};
 function applyPanelSettings(){
   for(const tab of Object.keys(VELTRIX_NAMES)){
     const button=$('#t-'+tab);
     const node=tab==='orders'?button.closest('.veltrix-toolkit-parent'):button;
-    node.hidden=PANEL_SETTINGS.hidden_tabs.includes(tab);
+    node.hidden=tab==='twofa'||PANEL_SETTINGS.hidden_tabs.includes(tab);
     if(tab==='orders'&&node.hidden)$('#toolkit-services').hidden=true;
   }
 }
@@ -1409,7 +1455,7 @@ function renderPanelSettings(){
   const root=$('#panel-settings-form'),tabs=el('div','profile-copy-fields');
   root.replaceChildren(el('h3','','Вкладки слева'));
   for(const [tab,label] of Object.entries(VELTRIX_NAMES)){
-    if(tab==='settings')continue;
+    if(['overview','settings','twofa'].includes(tab))continue;
     const input=el('input');input.type='checkbox';input.checked=!PANEL_SETTINGS.hidden_tabs.includes(tab);input.value=tab;
     const row=el('label','profile-copy-option');row.append(input,label);tabs.append(row);
   }
@@ -1563,7 +1609,7 @@ function vpnTable(root, records){
       const row=el('tr'),remove=el('button','ui-btn','✕'),actions=el('td'),cell=el('td'),identity=record.username?'@'+record.username:record.name;
       remove.setAttribute('aria-label','Исключить '+identity);
       remove.onclick=async()=>{
-        if(!confirm('Исключить '+identity+' из списка подписок?'))return;
+        if(!await panelConfirm('Исключить '+identity+' из списка подписок?'))return;
         remove.disabled=true;
         try{replace((await api('/api/vpn/records/'+enc(record.id),{method:'DELETE'})).records)}
         catch(e){errToast(e.message);remove.disabled=false}
@@ -1687,10 +1733,57 @@ function vpnRender(){
     }catch(e){status.className='status err';status.textContent=e.message}
     finally{settingsButton.disabled=getLink.disabled=false}
   };
-  actions.append(getLink,settingsButton);body.append(actions,status);
+  const history=el('details','vpn-history');history.append(el('summary','','Последние ссылки'));
+  const listing=el('div','vpn-history-list');history.append(listing);
+  history.ontoggle=async()=>{
+    if(!history.open)return;
+    listing.replaceChildren(el('p','status','Загрузка…'));
+    try{
+      const {items}=await api('/api/vpn/history');
+      listing.replaceChildren();
+      if(!items.length)listing.append(el('p','status','Ссылок пока нет'));
+      for(const item of items){
+        const row=el('div','panel-toolbar'),input=inp(item.url),copy=el('button','ui-btn','Копировать');
+        input.readOnly=true;input.setAttribute('aria-label','VPN-ссылка');
+        const stamp=new Date(item.issued_at*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'});
+        copy.onclick=async()=>{try{await navigator.clipboard.writeText(item.url);copy.textContent='Скопировано'}catch{input.select();document.execCommand('copy')}};
+        row.append(el('span','',stamp+' · '+(item.username?'@'+item.username:item.name)),input,copy);listing.append(row);
+      }
+    }catch(error){listing.replaceChildren(el('div','status err',error.message))}
+  };
+  actions.append(getLink,settingsButton);body.append(actions,status,history);
 }
 const SC={token:null,seed:null,image:null,photoRequest:0,photoUploading:false,busy:false,state:null,refreshing:false};
+const codeInput=$('#scenario-code'),lineGutter=$('#scenario-lines'),highlight=$('#scenario-highlight');
+const scriptToken=/#.*$|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\b(?:for|in|True|False|None)\b|\b[0-9]+(?:\.[0-9]+)?\b|\b[A-Za-z_][A-Za-z_0-9]*(?=\s*\()/gm;
+function scenarioLines(){
+  lineGutter.textContent=codeInput.value.split('\n').map((_,index)=>index+1).join('\n');
+  const text=codeInput.value,markup=document.createDocumentFragment();
+  let offset=0;
+  for(const token of text.matchAll(scriptToken)){
+    const value=token[0],first=value[0];
+    markup.append(text.slice(offset,token.index));
+    const type=first==='#'?'comment':first==='"'||first==="'"?'string':/^\d/.test(value)?'number':/^(for|in|True|False|None)$/.test(value)?'keyword':'function';
+    markup.append(el('span','syntax-'+type,value));
+    offset=token.index+value.length;
+  }
+  markup.append(text.slice(offset)+'\n');highlight.replaceChildren(markup);scenarioScroll();
+}
+function scenarioScroll(){
+  lineGutter.scrollTop=highlight.scrollTop=codeInput.scrollTop;
+  highlight.scrollLeft=codeInput.scrollLeft;
+}
+codeInput.addEventListener('scroll',scenarioScroll);
+codeInput.addEventListener('keydown',event=>{
+  if(event.key!=='Tab'||event.shiftKey)return;
+  if(codeInput.selectionStart!==codeInput.selectionEnd)return;
+  event.preventDefault();
+  codeInput.setRangeText('    ',codeInput.selectionStart,codeInput.selectionEnd,'end');
+  scenarioInvalidate();
+});
+scenarioLines();
 function scenarioInvalidate(){
+  scenarioLines();
   SC.token=null;SC.seed=null;
   $('#scenario-run').disabled=true;
   $('#scenario-plan').hidden=true;
@@ -1843,13 +1936,30 @@ $('#scenario-code').addEventListener('paste',event=>{
 });
 $('#t-scenarios').onclick=()=>{showTab('scenarios');scenarioRefresh()};
 for(const id of ['code','params','start','from','to','stop-error'])$('#scenario-'+id).oninput=scenarioInvalidate;
+const wikiSearch=$('#scenario-wiki-search');
+wikiSearch.oninput=()=>{
+  const query=wikiSearch.value.toLocaleLowerCase('ru').trim();
+  let found=false;
+  for(const term of $('#scenario-wiki').querySelectorAll('dt')){
+    const definition=term.nextElementSibling;
+    const visible=(term.textContent+' '+definition.textContent).toLocaleLowerCase('ru').includes(query);
+    term.hidden=definition.hidden=!visible;
+    found||=visible;
+  }
+  $('#scenario-wiki-empty').hidden=found;
+};
 $('#scenario-wiki-open').onclick=()=>$('#scenario-wiki').showModal();
 $('#scenario-preview').onclick=()=>{scenarioInvalidate();scenarioCommand('preview',scenarioPayload)};
-$('#scenario-run').onclick=()=>scenarioCommand('start',()=>({...scenarioPayload(),token:SC.token,seed:SC.seed}));
-$('#scenario-controls').onclick=event=>{
+$('#scenario-run').onclick=async()=>{
+  const token=SC.token;
+  if(await panelConfirm('Запустить действия из предпросмотра?')&&token&&SC.token===token){
+    scenarioCommand('start',()=>({...scenarioPayload(),token,seed:SC.seed}));
+  }
+};
+$('#scenario-controls').onclick=async event=>{
   const command=event.target.dataset.command;
   if(!command)return;
-  if(command==='resume'&&SC.state?.run?.status==='uncertain'&&!confirm('Повторить шаг, результат которого не подтверждён?'))return;
+  if(command==='resume'&&SC.state?.run?.status==='uncertain'&&!await panelConfirm('Повторить шаг, результат которого не подтверждён?'))return;
   scenarioCommand(command);
 };
 $('#scenario-groups').onchange=event=>{
@@ -1876,14 +1986,32 @@ for(const kind of ['group','template'])$('#scenario-'+kind+'-delete').onclick=()
   name:$('#scenario-'+kind+'-name').value.trim(),delete:true,
 }));
 setInterval(()=>{if(S.tab==='scenarios'&&document.visibilityState==='visible')scenarioRefresh();},1500);
-$('#t-vpn').onclick=()=>{showTab('vpn');VPN.result=null;VPN.error='';vpnRender()};
+function vpnTool(miniapp){
+  $('#vpn-root').hidden=miniapp;$('#miniapp-tool').hidden=!miniapp;
+  $('#tool-vpn').setAttribute('aria-pressed',!miniapp);$('#tool-miniapp').setAttribute('aria-pressed',miniapp);
+  if(!miniapp)vpnRender();
+}
+$('#miniapp-tool').append($('#v-miniapp .chcol'));
+$('#tool-vpn').onclick=()=>vpnTool(false);
+$('#tool-miniapp').onclick=()=>$('#t-miniapp').click();
+$('#t-vpn').onclick=()=>{showTab('vpn');VPN.result=null;VPN.error='';vpnTool(false)};
+$('#veltrix-logout').onclick=async()=>{try{await api('/api/logout',{method:'POST'});location.replace('/login')}catch(error){errToast(error.message)}};
 $('#t-settings').onclick=()=>{showTab('settings');renderPanelSettings();renderGmailSettings()};
 api('/api/panel-settings').then(data=>{
   if(Array.isArray(data?.hidden_tabs)){PANEL_SETTINGS=data;applyPanelSettings();showDeployFlag()}
 }).catch(()=>{});
+$("#t-overview").onclick=()=>showTab("overview");
 $("#t-accounts").onclick=()=>showTab("accounts");
+window.addEventListener('veltrix:navigate',event=>{
+  const {tab,filter}=event.detail;
+  document.getElementById('t-'+tab)?.click();
+  if(tab==='accounts'&&filter){
+    $('#acc-status-filter').value=filter;$('#acc-tag-filter').value='';
+    $('#acc-search').value=S.accountSearch='';renderAccounts();
+  }
+});
 $("#t-messages").onclick=()=>{showTab("messages");refreshInbox()};
-$("#t-miniapp").onclick=async()=>{showTab("miniapp");if(!S.accounts.length)await loadAccounts();
+$("#t-miniapp").onclick=async()=>{showTab("vpn");vpnTool(true);if(!S.accounts.length)await loadAccounts();
   const sel=$("#ma-acc"),prev=sel.value;sel.replaceChildren();
   for(const a of S.accounts.filter(x=>x.connected)){const o=el("option","",`${a.name}${fullName(a)?" · "+fullName(a):""}`);o.value=a.name;sel.append(o)}
   if(prev)sel.value=prev;
@@ -1931,7 +2059,9 @@ function cbTplText(){
   return CB.tpl.length>1?`${t} (экспресс)`:t;
 }
 async function cbLoadTpl(){try{CB.tpl=(await api("/api/cs3bet/template")).legs||[]}catch{CB.tpl=CB.tpl||[]}}
+let disposeBalance=null;
 function cbList(){
+  clearBalance();
   CB.acc=null;CB.mode="bet";const root=$("#cb-root");root.replaceChildren();
   const head=el("div","sectionhead"),hd=el("div");
   const sub=el("p","subline","Аккаунты и баланс в игре. Монеты виртуальные.");hd.append(el("h2","","CS3BET"),sub);
@@ -1950,7 +2080,11 @@ function cbList(){
   eye.onclick=()=>{CB.hideZero=!CB.hideZero;try{localStorage.setItem("cbHideZero",CB.hideZero?"1":"0")}catch{}
     for(const n of Object.keys(CB.rowEls))cbApplyHide(n);eyeSync()};
   CB.eyeSync=eyeSync;
-  act.append(sort,tp,pr,eye,rf);head.append(hd,act);root.append(head);
+  const hedge=el('button','ui-btn','Вилка');hedge.disabled=!cbAccounts().length;
+  hedge.onclick=()=>{CB.acc=cbAccounts()[0].name;cbBulkView()};
+  act.append(sort,tp,pr,hedge,eye,rf);head.append(hd,act);root.append(head);
+  const balance=el('div');root.append(balance);
+  disposeBalance=window.VeltrixDashboard?.mountBalance(balance);
   const tline=el("div","status");tline.id="cb-tline";root.append(tline);
   const setTline=()=>{tline.textContent=CB.tpl.length?`Шаблон: ${cbTplText()}`:"Шаблон не выбран — нажми «Шаблоны»"};
   setTline();cbLoadTpl().then(()=>{if(S.tab==="cs3bet"&&!CB.acc){setTline();for(const b of root.querySelectorAll(".cbtpl"))b.disabled=!CB.tpl.length}});
@@ -2032,6 +2166,7 @@ async function cbOpenMiniapp(account,button,status){
 const CB_BULK={plan:null,timer:null,quote:null};
 const CB_BULK_STATES={queue:'Очередь',checking:'Проверка',sending:'Отправка',ok:'Принято',unknown:'Нужно проверить',error:'Ошибка до отправки',not_run:'Не выполнено',skipped:'Пропущено',rejected:'Отклонено сервисом'};
 async function cbBulkView(){
+ clearBalance();
  CB.mode='bulk';clearTimeout(CB_BULK.timer);CB_BULK.plan=null;
  const root=$('#cb-root');root.replaceChildren();
  const header=el('div','sectionhead'),title=el('div');title.append(el('h2','','Массовая ставка · игровые монеты'),el('p','subline','Предпросмотр распределения, затем отдельное подтверждение запуска.'));
@@ -2059,6 +2194,7 @@ function cbBulkPreview(root,plan){
  root.replaceChildren();const box=el('div','profile-card');box.style.marginTop='16px';
  box.append(el('h3','','Распределение'),el('div','status',`Матчей в расчёте: ${plan.coverage_matches?.length||plan.selected_matches.length} · событий в купоне: ${Math.min(...plan.items.map(i=>i.legs.length))}–${Math.max(...plan.items.map(i=>i.legs.length))} · исходов: ${plan.variant_count} · аккаунтов: ${plan.account_count} · ставка всего: ${plan.total_stake} · остаток: ${plan.reserve}`));
  box.append(el('div','status',`Цель: ×30 · лучший найденный купон: ×${Number(plan.highest_possible_coefficient).toFixed(6)} · максимум в плане: ×${Number(plan.highest_planned_coefficient).toFixed(6)} · проверено сценариев: ${plan.outcome_count}`));
+ box.append(el('div','status',`Вариантов ровно ×30: ${plan.exact_target_candidates??'—'} · в плане: ${plan.exact_target_variants??'—'} · покрытие рассчитанных исходов: ${plan.complete_coverage?'100%':'частичное'}`));
  if(!plan.peak_preserved)box.append(el('div','status err','Пиковый купон не поместился вместе с покрытием. Увеличьте число вариантов или доступных аккаунтов. Текущий план имеет меньший максимум.'));
  box.append(el('div','status',`Крупнейший баланс в сценариях: ${plan.worst_largest_balance}–${plan.best_largest_balance}. Общий банк после расчёта: ${plan.worst_total_balance}–${plan.best_total_balance}; исходный банк: ${plan.initial_total}. Это расчёт для завершённых бинарных событий без отмен и изменения правил.`));
  if(Number(plan.worst_total_balance)<Number(plan.initial_total))box.append(el('div','status err','В худшем расчётном исходе общий банк уменьшается на '+(Number(plan.initial_total)-Number(plan.worst_total_balance)).toFixed(2)+' монет. Концентрация выигрыша не означает рост общей суммы.'));
@@ -2067,12 +2203,12 @@ function cbBulkPreview(root,plan){
  const scroll=el('div','sessions-scroll'),table=el('table','bulk-game-table'),head=el('tr');for(const text of ['Аккаунт / баланс проверен','Баланс','Ставка','Вариант / круг','Экспресс','Коэффициент','Выплата / баланс победителя'])head.append(el('th','',text));table.append(head);
  for(const item of plan.items){const row=el('tr');for(const value of [item.account+' · '+twofaDate(item.balance_ts),item.balance,item.stake,`${item.variant} / ${item.round}`,item.legs.map(leg=>(leg.side==='1'?leg.team_a:leg.team_b)||`${leg.match_id}:${leg.side}`).join(' + '),Number(item.coefficient).toFixed(4),`${item.potential} / ${item.winner_balance}`])row.append(el('td','',value));table.append(row);}scroll.append(table);box.append(scroll);
  const start=el('button','ui-btn ui-primary','Подтвердить и запустить план');start.id='bulk-game-start';start.style.marginTop='16px';
- start.onclick=async()=>{if(CB_BULK.plan?.id!==plan.id)return;if(!confirm(`Отправить ${plan.account_count} ставок на ${plan.total_stake} игровых монет? Полный проигрыш части аккаунтов возможен. Коэффициенты и баланс будут перепроверены. План нельзя запустить повторно.`))return;start.disabled=true;
+ start.onclick=async()=>{if(CB_BULK.plan?.id!==plan.id)return;if(!await panelConfirm(`Отправить ${plan.account_count} ставок на ${plan.total_stake} игровых монет? Полный проигрыш части аккаунтов возможен. Коэффициенты и баланс будут перепроверены. План нельзя запустить повторно.`))return;start.disabled=true;
   try{await api('/api/cs3bet/bulk/start',{method:'POST',json:{plan_id:plan.id}});CB_BULK.plan=null;cbBulkPoll();}catch(error){$('#bulk-game-status').textContent=error.message;start.disabled=false;cbBulkPoll();}};box.append(start);root.append(box);
 }
 async function cbBulkResume(job,quote){
  const changed=quote?' Пересчитанные коэффициенты и состав неотправленных купонов применятся после этого подтверждения.':'';
- if(!confirm('Продолжить только неотправленные строки сохранённой очереди? Принятые и неизвестные отправки повторяться не будут.'+changed))return;
+ if(!await panelConfirm('Продолжить только неотправленные строки сохранённой очереди? Принятые и неизвестные отправки повторяться не будут.'+changed))return;
  try{const body={job_id:job.id};if(quote)body.quote_id=quote.id;await api('/api/cs3bet/bulk/resume',{method:'POST',json:body});CB_BULK.quote=null;cbBulkPoll();}
  catch(error){$('#bulk-game-status').textContent=error.message;}
 }
@@ -2097,7 +2233,7 @@ async function cbBulkPoll(){
   if(job.interrupted||counts.unknown)box.append(el('div','status err','Есть прерывание или неподтверждённая отправка. Автоматических повторов нет; проверьте историю ставок в игре.'));
   for(const item of job.items){const line=el('div','status',`${item.account} · вариант ${item.variant} · ${CB_BULK_STATES[item.state]||item.state}${item.note?' · '+item.note:''}`);
    if(item.state==='unknown'&&!job.running){const manual=el('button','ui-btn','Ставка сделана вручную');manual.onclick=async()=>{
-    if(!confirm(`Подтверждаете по истории игры, что для ${item.account} есть ставка ${item.stake} на нужные исходы варианта ${item.variant}? Кнопка не отправляет ставку, а фиксирует только вашу проверку.`))return;
+    if(!await panelConfirm(`Подтверждаете по истории игры, что для ${item.account} есть ставка ${item.stake} на нужные исходы варианта ${item.variant}? Кнопка не отправляет ставку, а фиксирует только вашу проверку.`))return;
     manual.disabled=true;try{await api('/api/cs3bet/bulk/confirm-manual',{method:'POST',json:{job_id:job.id,account:item.account,confirmed:true}});cbBulkPoll();}catch(error){$('#bulk-game-status').textContent=error.message;manual.disabled=false;}};line.append(manual);}
    box.append(line);
   }
@@ -2215,7 +2351,7 @@ function cbPromo(){
 async function cbTplBet(name,num,btn,st){
   if(btn.disabled)return;
   const d=CB.bal[name],balTxt=d&&d.balance!=null?fmtBal(d.balance):"весь баланс";
-  if(!confirm(`Аккаунт ${num}: поставить ${balTxt} (не более 50 000 монет) на шаблон?\n\n${cbTplText()}`))return;
+  if(!await panelConfirm(`Аккаунт ${num}: поставить ${balTxt} (не более 50 000 монет) на шаблон?\n\n${cbTplText()}`))return;
   const all=[...document.querySelectorAll(".cbtpl")];
   btn.disabled=true;st.className="status";st.textContent="Делаю ставку…";
   try{
@@ -2252,6 +2388,7 @@ async function cbLoadMatches(){
   if(CB.mode==="tpl"&&dropped)cbSaveTpl();
 }
 function cbBetView(){
+  clearBalance();
   const tpl=CB.mode==="tpl",root=$("#cb-root");root.replaceChildren();
   const head=el("div","sectionhead"),hd=el("div");
   hd.append(el("h2","",tpl?"Шаблон":`Аккаунт ${CB.num}`),
@@ -2344,7 +2481,7 @@ setInterval(()=>{document.querySelectorAll('[data-retry-at]').forEach(e=>{
 })},1000);
 // Дата в списке берётся из Telegram (date объекта Photo). Пустые значения всегда в конце.
 const ACC_SORT={key:'name',direction:1};
-const ACCOUNT_FLAG_LABELS={general:'Общий',autopilot:'Автопилот'};
+const ACCOUNT_FLAG_LABELS={general:'Общий',autopilot:'Автопилот',public:'Публичный'};
 const accountFlagLabel=a=>ACCOUNT_FLAG_LABELS[a.flag]||ACCOUNT_FLAG_LABELS.general;
 const mobileAccountColumn=$('#acc-mobile-column');
 try{mobileAccountColumn.value=localStorage.getItem('veltrix-accounts-column')||'username'}catch{}
@@ -2388,6 +2525,76 @@ for(const b of document.querySelectorAll('[data-acc-sort]')){
     renderAccounts();
   };
 }
+const accColumns=[...document.querySelectorAll('[data-acc-sort]')].map(button=>({
+  key:button.dataset.accSort,label:button.firstChild.textContent.trim(),
+}));
+const accHiddenColumns=new Set();
+try{for(const key of JSON.parse(localStorage.getItem('veltrix.profileColumns')||'[]'))if(key!=='name')accHiddenColumns.add(key)}catch{}
+const accSelected=new Set();
+let accShown=[],accBulkBusy=false;
+for(const column of accColumns.slice(1)){
+  const control=el('input');control.type='checkbox';control.checked=!accHiddenColumns.has(column.key);
+  const label=el('label','panel-select');label.append(control,column.label);$('#acc-columns').append(label);
+  control.onchange=()=>{
+    if(control.checked)accHiddenColumns.delete(column.key);else accHiddenColumns.add(column.key);
+    try{localStorage.setItem('veltrix.profileColumns',JSON.stringify([...accHiddenColumns]))}catch{}
+    renderAccounts();
+  };
+}
+for(const [value,label] of Object.entries(ACCOUNT_FLAG_LABELS)){
+  $('#acc-tag-filter').append(new Option(label,value));$('#acc-bulk-flag').append(new Option(label,value));
+}
+$('#acc-status-filter').onchange=$('#acc-tag-filter').onchange=renderAccounts;
+$('#acc-security').onclick=()=>$('#t-twofa').click();
+$('#profile-security-back').onclick=()=>$('#t-accounts').click();
+$('#acc-select-all').onchange=event=>{
+  for(const account of accShown){
+    if(event.target.checked)accSelected.add(account.name);else accSelected.delete(account.name);
+  }
+  renderAccounts();
+};
+function updateAccSelection(){
+  const onPage=accShown.filter(account=>accSelected.has(account.name)).length;
+  const all=$('#acc-select-all');all.checked=!!onPage&&onPage===accShown.length;all.indeterminate=onPage>0&&onPage<accShown.length;
+  $('#acc-selected').textContent=accSelected.size?'Выбрано: '+accSelected.size:'';
+  $('#acc-apply-flag').disabled=$('#acc-bulk-delete').disabled=accBulkBusy||!accSelected.size;
+}
+async function applyAccountBulk(remove){
+  const names=[...accSelected],flag=$('#acc-bulk-flag').value;
+  if(!names.length||accBulkBusy)return;
+  const accepted=await panelConfirm(remove?('Удалить из панели выбранные аккаунты ('+names.length+') вместе с файлами сессий?'):('Назначить метку «'+ACCOUNT_FLAG_LABELS[flag]+'» выбранным аккаунтам ('+names.length+')?'));
+  if(!accepted)return;
+  accBulkBusy=true;updateAccSelection();
+  const result=$('#acc-bulk-result');result.hidden=false;result.textContent='Выполняю…';
+  const failures=[];
+  for(const name of names){
+    try{
+      const url='/api/accounts/'+enc(name);
+      if(remove)await api(url,{method:'DELETE'});
+      else await api(url+'/flag',{method:'POST',json:{flag}});
+      accSelected.delete(name);
+    }catch(error){failures.push(name+' · '+error.message)}
+  }
+  try{await loadAccounts()}catch(error){failures.push(error.message)}
+  if(remove)refreshInbox().catch(()=>{});
+  accBulkBusy=false;updateAccSelection();
+  result.textContent=failures.length?('Завершено с ошибками · '+failures.join(' · ')):'Готово · '+names.length;
+  result.className='status '+(failures.length?'err':'ok');
+}
+$('#acc-apply-flag').onclick=()=>applyAccountBulk(false);
+$('#acc-bulk-delete').onclick=()=>applyAccountBulk(true);
+$('#acc-export').onclick=()=>{
+  const columns=accColumns.filter(column=>!accHiddenColumns.has(column.key));
+  const accounts=accSelected.size?S.accounts.filter(account=>accSelected.has(account.name)):accShown;
+  const escape=value=>{
+    const text=String(value??'');
+    return '"'+(/^[=+@\t\r\n-]/.test(text)?"'":"")+text.replaceAll('"','""')+'"';
+  };
+  const get=(a,key)=>({name:fullName(a)||a.name,username:a.username,session_count:a.security?.session_count,birthday:a.profile_meta?.birthday,avatar_count:a.profile_meta?.avatar_count,music_count:a.profile_meta?.music_count,last_avatar_change:a.profile_meta?.last_avatar_change,spam_status:a.spam_status?.label,flag:accountFlagLabel(a)})[key];
+  const csv=[columns.map(column=>column.label),...accounts.map(a=>columns.map(column=>get(a,column.key)))].map(row=>row.map(escape).join(',')).join('\r\n');
+  const url=URL.createObjectURL(new Blob(['\uFEFF',csv],{type:'text/csv;charset=utf-8'}));
+  const link=el('a');link.href=url;link.download='veltrix-accounts.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
 function renderAccounts(){
   const g=$('#grid');g.replaceChildren();
   const bad=$('#acc-load-errors');if(bad){
@@ -2396,7 +2603,14 @@ function renderAccounts(){
       issues.forEach(entry=>bad.append(el('div','',`${entry.name}: ${entry.error}`)));}
   }
   const q=(S.accountSearch||'').trim().toLowerCase();
-  const shown=S.accounts.filter(a=>[a.name,a.first_name,a.last_name,a.username,a.phone,a.status,a.id,a.profile_meta?.bio,a.profile_meta?.birthday,accountFlagLabel(a)].filter(Boolean).join(' ').toLowerCase().includes(q));
+  const access=$('#acc-status-filter').value,tag=$('#acc-tag-filter').value;
+  const frozenIds=new Set(S.accounts.filter(a=>a.frozen).map(a=>a.id||a.name));
+  const names=new Set(S.accounts.map(a=>a.name));
+  for(const name of accSelected)if(!names.has(name))accSelected.delete(name);
+  const shown=S.accounts.filter(a=>{
+    const frozen=frozenIds.has(a.id||a.name);
+    return (!tag||(a.flag||'general')===tag)&&(access==='all'||(frozen?'frozen':a.connected?'active':'offline')===access);
+  }).filter(a=>[a.name,a.first_name,a.last_name,a.username,a.phone,a.status,a.id,a.profile_meta?.bio,a.profile_meta?.birthday,accountFlagLabel(a)].filter(Boolean).join(' ').toLowerCase().includes(q));
   shown.sort((a,b)=>{
     const x=accSortValue(a,ACC_SORT.key),y=accSortValue(b,ACC_SORT.key);
     if(x===null||x===undefined||x==='')return y===null||y===undefined||y===''?0:1;
@@ -2414,18 +2628,28 @@ function renderAccounts(){
   $('#acc-frozen').hidden=!frozen.size;
   $('#acc-frozen').textContent='Заморожено: '+frozen.size;
   const count=$('#acc-count');if(count)count.textContent=`${shown.length} из ${S.accounts.length}`;
+  accShown=shown;updateAccSelection();
+  const table=g.closest('.acc-table-wrap'),visible=accColumns.filter(column=>!accHiddenColumns.has(column.key)).length;
+  table.style.setProperty('--account-grid','minmax(190px,1.4fr) '+('minmax(120px,1fr) '.repeat(visible-1)));
+  table.style.setProperty('--account-grid-min',(190+(visible-1)*130)+'px');
+  for(const button of table.querySelectorAll('[data-acc-sort]'))button.classList.toggle('acc-col-hidden',accHiddenColumns.has(button.dataset.accSort));
   if(!shown.length)g.append(el('div','empty',S.accounts.length?'Ничего не найдено':'Нет аккаунтов'));
   for(const a of shown){
     const p=a.profile_meta||{};
-    const c=el('button','acc-row'+(S.sel===a.name?' sel':'')+(a.connected?'':' dead'));
-    c.type='button';c.title=a.connected?`Файл: ${a.name} · Telegram ID: ${a.id}`:`${a.name} · ${a.status}`;
+    const c=el('div','acc-row'+(S.sel===a.name?' sel':'')+(a.connected?'':' dead'));
+    c.title=a.connected?`Файл: ${a.name} · Telegram ID: ${a.id}`:`${a.name} · ${a.status}`;
     const name=el('span','acc-name');
     const label=el('span','acc-account-name');label.append(el('span','acc-cell',fullName(a)||a.name));
     if(!a.connected||a.frozen||a.freeze===null){
       const message=el('small','acc-error'+(a.error_kind==='temporary'||a.connecting||a.connected&&!a.frozen?' waiting':''),accountConnectionStatus(a));
       message.title=accountConnectionStatus(a);label.append(message);
     }
-    name.append(avatar(a.connected?avUrl(a):null,fullName(a)||a.name,32),label);
+    const pick=el('input');pick.type='checkbox';pick.checked=accSelected.has(a.name);
+    pick.setAttribute('aria-label','Выбрать '+(fullName(a)||a.name));
+    pick.onclick=event=>event.stopPropagation();
+    pick.onchange=()=>{if(pick.checked)accSelected.add(a.name);else accSelected.delete(a.name);updateAccSelection()};
+    const open=el('button','acc-profile-link');open.append(avatar(a.connected?avUrl(a):null,fullName(a)||a.name,32),label);
+    open.onclick=()=>{S.sel=a.name;renderAccounts();renderDetail()};name.append(pick,open);
     const vals=[name,
       el('span','acc-cell',a.username?'@'+a.username:'—'),
       sessionCountCell(a),
@@ -2439,9 +2663,9 @@ function renderAccounts(){
     vals[keys.indexOf(mobileAccountColumn.value||'username')]?.classList.add('acc-mobile-value');
     for(let i=0;i<vals.length;i++){
       if(i!==0)vals[i].title=vals[i].textContent;
-      c.append(vals[i]);
+      vals[i].classList.toggle('acc-col-hidden',accHiddenColumns.has(keys[i]));c.append(vals[i]);
     }
-    c.onclick=()=>{S.sel=a.name;renderAccounts();renderDetail()};g.append(c);
+    g.append(c);
   }
 }
 const fld=(l,i)=>{const w=el("label","fld");w.append(el("span","",l),i);return w};
@@ -2677,7 +2901,7 @@ function renderDetail(){
   const sessionCard=profileSessionCard(a);
   const del=el("button","btn danger","Удалить аккаунт"),dst=el("div","status");
   del.onclick=async()=>{
-    if(!confirm(`Удалить аккаунт ${a.name}?\nБудут удалены файлы сессии (.session) и .json. Это нельзя отменить.`))return;
+    if(!await panelConfirm(`Удалить аккаунт ${a.name}?\nБудут удалены файлы сессии (.session) и .json. Это нельзя отменить.`))return;
     del.disabled=true;dst.className="status";dst.textContent="Удаляю…";
     try{
       await api(`/api/accounts/${enc(a.name)}`,{method:"DELETE"});
@@ -2718,7 +2942,7 @@ function renderDetail(){
         const desc=el('div','ex-photo-desc');desc.append(el('strong','',`Аватарка ${index+1}`),el('small','',`Дата установки: ${accDateDisplay(photo.date)}`));
         const delPhoto=el('button','ex-photo-del','Удалить');delPhoto.type='button';
         delPhoto.onclick=async()=>{
-          if(!confirm(`Удалить аватарку ${index+1} из Telegram у аккаунта «${a.name}»? Это действие нельзя отменить.`))return;
+          if(!await panelConfirm(`Удалить аватарку ${index+1} из Telegram у аккаунта «${a.name}»? Это действие нельзя отменить.`))return;
           delPhoto.disabled=true;say('Удаляю аватарку…');
           try{
             await api(`/api/accounts/${enc(a.name)}/profile-photos/${enc(photo.id)}`,{method:'DELETE'});
@@ -2877,10 +3101,24 @@ async function refreshInbox(){
   document.title=(S.unread?`(${S.unread}) `:"")+(VELTRIX_NAMES[S.tab]||"Control")+" — VELTRIX";renderList();
 }
 const refreshInboxD=debounce(refreshInbox,300);
+$('#inbox-search').oninput=renderList;
+$('#inbox-read-all').onclick=async()=>{
+  if(!S.unread||!await panelConfirm('Отметить входящие сообщения как прочитанные во всех подключённых аккаунтах?'))return;
+  const button=$('#inbox-read-all');button.disabled=true;
+  try{
+    const result=await api('/api/inbox/read-all',{method:'POST'});
+    if(result.errors)errToast('Не удалось отметить диалоги · '+result.errors);
+    await refreshInbox();
+  }catch(error){errToast(error.message)}
+  finally{button.disabled=!S.unread}
+};
 function renderList(){
   const l=$("#list");l.replaceChildren();
-  if(!S.inbox.length){l.append(el("div","empty","Пока нет входящих.\nНовые сообщения появятся здесь."));l.firstChild.style.whiteSpace="pre-line";return}
-  for(const c of S.inbox){
+  const query=$("#inbox-search").value.trim().toLocaleLowerCase("ru");
+  const threads=S.inbox.filter(c=>[c.title,c.account,c.last_text].some(value=>String(value||"").toLocaleLowerCase("ru").includes(query)));
+  $("#inbox-read-all").disabled=!S.unread;
+  if(!threads.length){l.append(el("div","empty",query?"Диалоги не найдены":"Пока нет входящих.\nНовые сообщения появятся здесь."));l.firstChild.style.whiteSpace="pre-line";return}
+  for(const c of threads){
     const it=el("button","item"+(S.open&&S.open.account===c.account&&S.open.chat_id===c.chat_id?" act":""));
     it.append(avatar(chatAv(c.account,c.chat_id),c.title,48));
     const b=el("div","ib"),t=el("div","it"),m=el("div","ibt");
@@ -2897,7 +3135,7 @@ function setBlockBtn(){
 }
 $("#blockbtn").onclick=async()=>{
   if(!S.open)return;const {account,chat_id,title}=S.open,unblock=!!S.open.blocked,b=$("#blockbtn");
-  if(!unblock&&!confirm(`Заблокировать «${title}» на аккаунте ${account}?`))return;
+  if(!unblock&&!await panelConfirm(`Заблокировать «${title}» на аккаунте ${account}?`))return;
   b.disabled=true;
   try{
     const r=await api(`/api/accounts/${enc(account)}/chats/${chat_id}/block`,{method:"POST",json:{block:!unblock}});
@@ -3292,7 +3530,7 @@ function exAvatarManager(x){
     const del=el('button','ex-photo-del','Удалить');del.type='button';
     del.title='Удалить только локальную копию, не фотографию в Telegram';
     del.onclick=async()=>{
-      if(!confirm(`Удалить локальную аватарку ${i} у «${x.name}»? В Telegram фото не удаляется.`))return;
+      if(!await panelConfirm(`Удалить локальную аватарку ${i} у «${x.name}»? В Telegram фото не удаляется.`))return;
       del.disabled=true;
       try{const r=await api(`/api/template/photo/${x.id}/${i}`,{method:'DELETE'});exUpdateItem(r.item)}
       catch(e){del.disabled=false;alert('Не удалось удалить фото: '+e.message)}
@@ -3560,7 +3798,7 @@ function orRenderDetail(){
     sp.append(ico("bolt")," Ускорить");sp.disabled=!waiting;sp.title=waiting?"Сократить ожидание текущего аккаунта с учётом времени пропуска":"Сейчас нечего ускорять";
     sp.onclick=async()=>{sp.disabled=true;try{await api(`/api/${j.service}/skip`,{method:"POST",json:{job_id:j.id}})}catch(e){errToast(e.message)}ordersPoll()};
     st.append(ico("stop")," Остановить");
-    st.onclick=async()=>{if(!confirm("Остановить заказ? Оставшиеся аккаунты не будут запущены."))return;try{await api(`/api/${j.service}/stop`,{method:"POST",json:{job_id:j.id}})}catch(e){errToast(e.message)}ordersPoll()};
+    st.onclick=async()=>{if(!await panelConfirm("Остановить заказ? Оставшиеся аккаунты не будут запущены."))return;try{await api(`/api/${j.service}/stop`,{method:"POST",json:{job_id:j.id}})}catch(e){errToast(e.message)}ordersPoll()};
     bt.append(sp,st);wrap.append(bt);
   }
   root.replaceChildren(wrap);
@@ -3668,8 +3906,60 @@ function renderNew(){
     };
     renderChoices();
   }
+  const invalidate=()=>{if(F.plan){cancelPlan();renderPlanBox()}};
+  const pick=(choices,value)=>{
+    const select=el('select','oinp');
+    select.append(...choices.map(([key,label])=>new Option(label,key)));select.value=value;
+    return select;
+  };
+  const conditions=F.v.account_filters??=[];
+  const fields=[['avatar_count','Аватарки'],['music_count','Музыка'],['flag','Метка']];
+  const filter=el('details','profile-card order-filters');
+  filter.open=conditions.length>0;
+  filter.append(el('summary','','Фильтры аккаунтов'));
+  const join=pick([['and','Все условия (И)'],['or','Любое условие (ИЛИ)']],F.v.filter_mode||'and');
+  join.onchange=()=>{F.v.filter_mode=join.value;invalidate()};
+  const conditionsList=el('div');
+  const addRule=el('button','ui-btn','Добавить условие');addRule.type='button';
+  const displayRules=()=>{
+    conditionsList.replaceChildren();
+    conditions.forEach((rule,index)=>{
+      const line=el('div','order-filter-row');
+      const key=pick(fields,rule.field);
+      key.setAttribute('aria-label','Параметр аккаунта');
+      const op=pick((rule.field==='flag'?['=']:['>','>=','=','<','<=']).map(value=>[value,value]),rule.op);
+      op.setAttribute('aria-label','Сравнение');
+      const value=rule.field==='flag'?pick([['general','Общий'],['public','Публичный']],rule.value):el('input','oinp');
+      if(rule.field!=='flag'){value.type='number';value.min='0';value.step='1';value.value=rule.value}
+      value.setAttribute('aria-label','Значение условия');
+      key.onchange=()=>{rule.field=key.value;rule.op=rule.field==='flag'?'=':'>=';rule.value=rule.field==='flag'?'public':1;displayRules();invalidate()};
+      op.onchange=()=>{rule.op=op.value;invalidate()};
+      value.oninput=()=>{rule.value=rule.field==='flag'?value.value:(value.value===''?null:value.valueAsNumber);invalidate()};
+      const remove=el('button','ui-btn','×');remove.type='button';remove.setAttribute('aria-label','Удалить условие');
+      remove.onclick=()=>{conditions.splice(index,1);displayRules();invalidate()};
+      line.append(key,op,value,remove);conditionsList.append(line);
+    });
+    join.hidden=!conditions.length;addRule.disabled=conditions.length>=12;
+  };
+  addRule.onclick=()=>{conditions.push({field:'avatar_count',op:'>=',value:1});displayRules();invalidate()};
+  displayRules();filter.append(join,conditionsList,addRule);body.append(filter);
+  const style=pick([['linear','Интервалы'],['realistic','Реалистик']],F.v.realistic?'realistic':'linear');
+  field('clock','Режим расписания',style);
+  const realistic=el('div','order-realistic');
+  const minutes=inp('realistic_minutes',{type:'number',min:'1',max:'2880',placeholder:'120'});
+  const boost=inp('realistic_boost',{type:'number',min:'0',max:'100',placeholder:'70'});
+  realistic.append(fld('Длительность, минут',minutes),fld('Сила старта (0–100)',boost));
+  body.append(realistic);
+  style.onchange=()=>{F.v.realistic=style.value==='realistic';applyScheduleFields();invalidate()};
+  function applyScheduleFields(){
+    realistic.hidden=!F.v.realistic;
+    boost.disabled=!F.v.realistic;
+    minutes.disabled=!F.v.realistic||!!F.v.deadline;
+    row.hidden=!!(F.v.realistic||F.v.deadline);
+  }
   const extras=()=>{
-    const extra={freshness_days:F.v.freshness_days||0};
+    const extra={freshness_days:F.v.freshness_days||0,account_filters:conditions,filter_mode:F.v.filter_mode||'and'};
+    if(F.v.realistic)extra.realistic={minutes:F.v.deadline?120:(F.v.realistic_minutes===''||F.v.realistic_minutes==null?120:Number(F.v.realistic_minutes)),boost:F.v.realistic_boost===''||F.v.realistic_boost==null?70:Number(F.v.realistic_boost)};
     if(sv.emoji)extra.emoji=F.v.emoji;
     if(sv.chans)extra.channels=(F.v.chans||[]).flatMap(x=>String(x).split(/[\s,;]+/)).map(x=>x.trim()).filter(Boolean);
     if(sv.uniq)extra.unique=!!F.v.uniq;
@@ -3691,6 +3981,7 @@ function renderNew(){
   const w1=el("div","ofield"),w2=el("div","ofield");
   w1.append(lab("clock","Задержка от"),suf(inp("dmin",{type:"number",min:"0"})));w2.append(lab("clock","Задержка до"),suf(inp("dmax",{type:"number",min:"0"})));
   row.append(w1,w2);
+  applyScheduleFields();
   const finishToggle=el('label','otoggle'),finishCheck=el('input');finishCheck.type='checkbox';finishCheck.id='order-finish-enabled';finishCheck.checked=!!F.v.deadline;
   finishToggle.append(finishCheck,el('span','otsl'),el('span','ottx','Закончить к'));
   const finish=inp('finish_at',{type:'datetime-local'});finish.id='order-finish';
@@ -3713,7 +4004,7 @@ function renderNew(){
   }
   quietWrap.hidden=!F.v.quiet;
   quietCheck.onchange=()=>{F.v.quiet=quietCheck.checked;quietWrap.hidden=!F.v.quiet;if(F.plan){cancelPlan();renderPlanBox();}};
-  const updateMode=()=>{row.hidden=!!F.v.deadline;finishWrap.hidden=!F.v.deadline;};
+  const updateMode=()=>{applyScheduleFields();finishWrap.hidden=!F.v.deadline;};
   finishCheck.onchange=()=>{F.v.deadline=finishCheck.checked;updateMode();if(F.plan){cancelPlan();renderPlanBox();}};
   body.append(finishToggle,finishWrap,row,quietToggle,quietWrap);updateMode();form.append(body);card.append(form);wrap.append(card);
 
@@ -3735,7 +4026,7 @@ function renderNew(){
         if(!Number.isFinite(timestamp)||timestamp<=Date.now()/1000)throw new Error('Выберите будущее время последнего аккаунта (МСК)');
         extra.finish_at=timestamp;
       }
-      F.plan=await api(`/api/${F.svc}/plan`,{method:"POST",json:{link:F.v.link.trim(),count:F.v.count,delay_from:F.v.deadline?0:F.v.dmin,delay_to:F.v.deadline?0:F.v.dmax,extra:Object.keys(extra).length?extra:undefined}});
+      F.plan=await api(`/api/${F.svc}/plan`,{method:"POST",json:{link:F.v.link.trim(),count:F.v.count,delay_from:F.v.deadline||F.v.realistic?0:F.v.dmin,delay_to:F.v.deadline||F.v.realistic?0:F.v.dmax,extra:Object.keys(extra).length?extra:undefined}});
       st.textContent="";renderPlanBox();
     }catch(e){st.className="orst err";st.textContent=e.message;F.plan=null;renderPlanBox()}
     go.disabled=false;
@@ -3857,7 +4148,7 @@ function veltrixInitToolkit(){
  toggle.onclick=e=>{e.stopPropagation();menu.hidden=!menu.hidden;toggle.setAttribute('aria-expanded',String(!menu.hidden));};
 }
 veltrixInitToolkit();
-$('#veltrix-home').onclick=e=>{e.preventDefault();$('#t-accounts').click()};
+$('#veltrix-home').onclick=e=>{e.preventDefault();$('#t-overview').click()};
 $('#veltrix-mobile-menu').onclick=()=>{$('#veltrix-mobile-backdrop').hidden=false;document.body.classList.add('v-menu-open')};
 $('#veltrix-mobile-backdrop').onclick=veltrixCloseMobile;
 $('#veltrix-collapse').onclick=()=>{document.body.classList.toggle('v-sidebar-collapsed');if(document.body.classList.contains('v-sidebar-collapsed')){$('#toolkit-services').hidden=true;$('#toolkit-expand').setAttribute('aria-expanded','false');}};
@@ -3865,7 +4156,7 @@ const VELTRIX_CMD=$('#veltrix-command');
 function veltrixCloseSearch(){VELTRIX_CMD.hidden=true;$('#veltrix-command-input').value='';}
 function veltrixRenderSearch(){
  const q=$('#veltrix-command-input').value.trim().toLocaleLowerCase(),root=$('#veltrix-command-results');root.replaceChildren();
- const entries=[...Object.entries(VELTRIX_NAMES).map(([id,label])=>({id,label,category:'Navigation'})),
+ const entries=[...Object.entries(VELTRIX_NAMES).filter(([id])=>id!=='twofa').map(([id,label])=>({id,label,category:'Navigation'})),
    ...SERVICES.map(x=>({id:x.id,label:x.name,category:'Toolkit'}))];
  let matches=0;
  for(const item of entries){
@@ -3928,7 +4219,7 @@ function profileSessionCard(a){
   }catch(error){status.textContent='Не удалось обновить: '+error.message+' Предыдущее число не подтверждено заново.';}finally{refresh.disabled=reset.disabled=!a.connected;}
  };
  refresh.onclick=()=>inspect(false);
- reset.onclick=()=>{if(confirm('Отключить все другие сессии этого аккаунта?'))inspect(true)};
+ reset.onclick=async()=>{if(await panelConfirm('Отключить все другие сессии этого аккаунта?'))inspect(true)};
  return card;
 }
 const twofaDate=value=>value?new Date(typeof value==='number'?value*1000:value).toLocaleString('ru-RU',{timeZone:'Europe/Moscow',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).replace(',',''):'—';
@@ -3961,7 +4252,7 @@ $('#t-twofa').onclick=()=>{showTab('twofa');twofaLoad();};
 $('#twofa-refresh').onclick=twofaLoad;
 async function twofaStart(name,label){
  const target=name===undefined?'всех подключённых внешних аккаунтов':`только аккаунта ${label}`;
- if(!confirm(`Создать независимую сессию для ${target}? После проверки новой сессии исходные файлы будут убраны в закрытый архив на сервере, а фоновая защита попытается отозвать старые авторизации с учётом ограничений Telegram.`))return;
+ if(!await panelConfirm(`Создать независимую сессию для ${target}? После проверки новой сессии исходные файлы будут убраны в закрытый архив на сервере, а фоновая защита попытается отозвать старые авторизации с учётом ограничений Telegram.`))return;
  const buttons=[$('#twofa-reissue'),...$('#twofa-rows').querySelectorAll('button')];buttons.forEach(button=>button.disabled=true);
  try{await api(name===undefined?'/api/2fa/reissue':'/api/2fa/reissue-one',{method:'POST',json:name===undefined?{}:{name}});setTimeout(twofaLoad,300);}catch(error){await twofaLoad();$('#twofa-status').textContent=error.message;}
 }
@@ -4587,6 +4878,19 @@ function autoMultiCards(d){
 }
 function autoMultiOverview(d,full=false){
   autoMultiForms(d,full);autoMultiCards(d);
+  const switcher=$('#auto-channel-switch');
+  const control=(label,selected,click)=>{
+    const button=el('button','ui-btn',label);
+    button.setAttribute('aria-pressed',selected);button.onclick=click;
+    return button;
+  };
+  switcher.replaceChildren(control('Все каналы',!AUTO_MULTI.selectedChannelId,()=>{autoMultiBack();autoMultiOverview(d)}));
+  for(const channel of d.channels||[]){
+    switcher.append(control(autoMultiChannelName(channel.channel),AUTO_MULTI.selectedChannelId===channel.id,()=>{
+      autoMultiBack();AUTO_MULTI.selectedChannelId=channel.id;autoMultiRender(d,true);
+    }));
+  }
+  switcher.append(control('+ Новый',false,()=>{autoMultiBack();autoMultiOverview(d);$('#auto-multi-fields .add-row input')?.focus()}));
 }
 function autoMultiRender(d,full=false){
   AUTO_MULTI.raw=d;
@@ -4690,5 +4994,9 @@ function connect(){
 }
 loadAccounts().catch(e=>errToast(e.message));refreshInbox().catch(()=>{});exRestore().catch(()=>{});connect();
 </script>
+<dialog id="panel-confirm" class="profile-card panel-confirm" aria-labelledby="panel-confirm-title">
+  <h2 id="panel-confirm-title">Подтвердите действие</h2><p id="panel-confirm-text"></p>
+  <form method="dialog" class="panel-toolbar"><button class="ui-btn" value="cancel" autofocus>Отмена</button><button class="ui-btn ui-primary" value="yes">Подтвердить</button></form>
+</dialog>
 </body>
 </html>

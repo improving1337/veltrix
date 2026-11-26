@@ -24,6 +24,7 @@ import uuid
 from aiohttp import web
 from telethon import functions, types
 
+import dashboard
 import plan_options
 from template_library import atomic_json_save
 
@@ -75,6 +76,7 @@ _NEXT_SEQ = 1001
 ORDER_JOBS_DIRECTORY = web.AppKey("order_jobs_directory", Path)
 ORDER_ACCOUNT_CONNECTING = web.AppKey("order_account_connecting")
 ORDER_ACCOUNT_IDS = web.AppKey("order_account_ids")
+ORDER_ACCOUNT_METADATA = web.AppKey("order_account_metadata")
 ORDER_ACCOUNT_ALLOWED = web.AppKey("order_account_allowed")
 RUNTIME_JOB_FIELDS = {"task", "stop", "skip", "resumed"}
 
@@ -106,6 +108,8 @@ class ChannelJoiner:
         self.storage = None
         self.account_connecting = lambda name: False
         self.account_allowed = None
+        self.account_metadata = lambda name: {}
+        self.archive_job = lambda service, job: None
         self.account_ids = lambda: {}
 
     def save_jobs(self):
@@ -151,7 +155,8 @@ class ChannelJoiner:
         return {n: c for n, c in self.get_clients().items() if c and c.is_connected()}
 
     async def eligible(self, extra):
-        return await plan_options.eligible(self._alive(), extra)
+        matches = plan_options.account_filter(extra, self.account_metadata)
+        return await plan_options.eligible({name: client for name, client in self._alive().items() if matches(name)}, extra)
 
     def store_plan(self, plan, extra):
         if not plan["items"]:
@@ -161,7 +166,8 @@ class ChannelJoiner:
         for item in plan["items"]:
             item["base_delay"] = item["delay"]
         plan.update(finish_at=finish, quiet=quiet)
-        plan["total"] = plan_options.schedule_order(plan["items"], time.time(), finish, quiet)
+        plan["profile"] = plan_options.realistic_profile(extra)
+        plan["total"] = plan_options.schedule_order(plan["items"], time.time(), finish, quiet, plan["profile"])
         self.plans[plan["id"]] = plan
         return self._public_plan(plan)
 
@@ -282,16 +288,17 @@ class ChannelJoiner:
             raise ValueError("Метки аккаунтов изменились. Построй план заново.")
         finish = plan_options.deadline(plan["finish_at"])
         started = time.time()
-        plan["total"] = plan_options.schedule_order(plan["items"], started, finish, plan["quiet"])
+        plan["total"] = plan_options.schedule_order(plan["items"], started, finish, plan["quiet"], plan.get("profile"))
         previous_jobs = self.jobs.copy()
         ids = self.account_ids()
         # храним максимум 10 завершённых задач
         done = [k for k, v in self.jobs.items() if v["status"] != "running"]
-        for k in done[:-9] if len(done) > 9 else []:
-            self.jobs.pop(k, None)
+        for k in done[:-9]:
+            self.archive_job(self.service, self.jobs[k])
+            self.jobs.pop(k)
         job = {
             "id": plan["id"], "link": plan["link"], "title": plan["title"],
-            "status": "running", "total": plan["total"], "finish_at": plan.get("finish_at"), "extra": plan.get("extra"), "started": started, "quiet": plan["quiet"],
+            "status": "running", "total": plan["total"], "finish_at": plan.get("finish_at") or (started + plan["total"] if plan.get("profile") else None), "extra": plan.get("extra"), "started": started, "quiet": plan["quiet"],
             "items": [{"account": i["account"], "delay": i["delay"], "at": i["at"], "base_delay": i["base_delay"],
                        "telegram_id": ids.get(i["account"]),
                        "state": "queue", "note": "", "until": None} for i in plan["items"]],
@@ -484,7 +491,7 @@ class ChannelJoiner:
         if not items:
             raise ValueError("В плане должен остаться хотя бы один аккаунт — иначе нажми «Отмена»")
         finish = plan_options.deadline(plan["finish_at"])
-        total = plan_options.schedule_order(items, time.time(), finish, plan["quiet"])
+        total = plan_options.schedule_order(items, time.time(), finish, plan["quiet"], plan.get("profile"))
         plan["items"], plan["total"] = items, total
         return self._public_plan(plan)
 
@@ -522,7 +529,12 @@ def register(app, get_clients, prefix="channels", joiner_cls=None):
     """Добавляет роуты /api/channels/* в aiohttp-приложение (авторизация — ваша auth_mw)."""
     joiner = (joiner_cls or ChannelJoiner)(get_clients)
     joiner.service = prefix
+    if dashboard.ORDER_SERVICES in app:
+        app[dashboard.ORDER_SERVICES][prefix] = joiner
+    if dashboard.OVERVIEW in app:
+        joiner.archive_job = app[dashboard.OVERVIEW].archive_order
     joiner.account_allowed = app.get(ORDER_ACCOUNT_ALLOWED)
+    joiner.account_metadata = app.get(ORDER_ACCOUNT_METADATA, joiner.account_metadata)
     directory = app.get(ORDER_JOBS_DIRECTORY)
     if directory is not None:
         joiner.load_jobs(directory / (prefix + ".json"))

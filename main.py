@@ -29,6 +29,7 @@ from telethon.errors import (BotResponseTimeoutError, ChannelPrivateError, Flood
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.users import GetFullUserRequest
 
+import dashboard
 import channels
 import automatic_multi
 import cs3bet
@@ -305,7 +306,7 @@ def flag_for(name):
 
 
 def general_account(name):
-    return flag_for(name) == account_flags.GENERAL
+    return flag_for(name) in (account_flags.GENERAL, account_flags.PUBLIC)
 
 
 def is_frozen(acc):
@@ -975,7 +976,7 @@ def register_handler(acc):
                       f'"{f"{text} {media}".strip()}"', flush=True)
                 card = INBOX.setdefault(f"{acc.name}:{chat_id}", {"account": acc.name, "chat_id": chat_id, "unread": 0})
                 card.update(title=title, kind=kind, last_text=text or media or "Сообщение",
-                            last_sender=display_name(sender), date=m.date.timestamp())
+                            last_sender=display_name(sender), date=m.date.timestamp(), message_id=m.id)
                 card["unread"] += 1
                 payload["card"] = dict(card)
             payload["message"] = ser_message(m)
@@ -994,11 +995,69 @@ def register_handler(acc):
 
 
 # ---------- web ----------
+LOGIN_SESSIONS = web.AppKey("login_sessions", dict)
+LOGIN_ATTEMPTS = web.AppKey("login_attempts", dict)
+LOGIN_COOKIE = "veltrix_session"
+LOGIN_LIFETIME = 12 * 3600
+
+
+async def login_page(request):
+    return web.FileResponse(WEB_DIR / "login.html", headers={"Cache-Control": "no-store"})
+
+
+async def login_submit(request):
+    data = await request.json()
+    username, password = (data.get("username"), data.get("password")) if isinstance(data, dict) else (None, None)
+    now = time.monotonic()
+    attempts = request.app.get(LOGIN_ATTEMPTS, {})
+    for address, (_, until) in list(attempts.items()):
+        if until <= now:
+            attempts.pop(address, None)
+    remote = request.remote
+    count, until = attempts.get(remote, (0, now + 60))
+    if count >= 12:
+        return web.json_response({"error": "Слишком много попыток входа"}, status=429)
+    user_ok = isinstance(username, str) and secrets.compare_digest(username.encode(), PANEL_USER.encode())
+    password_ok = isinstance(password, str) and secrets.compare_digest(password.encode(), PANEL_PASSWORD.encode())
+    if not (user_ok and password_ok):
+        if remote not in attempts and len(attempts) >= 1024:
+            attempts.pop(next(iter(attempts)))
+        attempts[remote] = count + 1, until
+        return web.json_response({"error": "Неверный логин или пароль"}, status=401)
+    attempts.pop(remote, None)
+    sessions = request.app[LOGIN_SESSIONS]
+    for token, expiry in list(sessions.items()):
+        if expiry <= now:
+            sessions.pop(token, None)
+    if len(sessions) >= 512:
+        sessions.pop(next(iter(sessions)))
+    token = secrets.token_urlsafe(32)
+    sessions[token] = now + LOGIN_LIFETIME
+    response = web.json_response({"ok": True}, headers={"Cache-Control": "no-store"})
+    response.set_cookie(LOGIN_COOKIE, token, httponly=True, secure=request.secure,
+                        samesite="Strict", max_age=LOGIN_LIFETIME)
+    return response
+
+
+async def login_logout(request):
+    request.app[LOGIN_SESSIONS].pop(request.cookies.get(LOGIN_COOKIE), None)
+    response = web.json_response({"ok": True})
+    response.del_cookie(LOGIN_COOKIE)
+    return response
+
+
 @web.middleware
 async def auth_mw(request, handler):
-    ok = False
+    sessions = request.app.get(LOGIN_SESSIONS)
+    cookie_ok = sessions is not None and sessions.get(request.cookies.get(LOGIN_COOKIE), 0) > time.monotonic()
+    if sessions is not None:
+        if request.method in ("GET", "HEAD") and (request.path == "/login" or request.path.startswith("/assets/")):
+            return await handler(request)
+        if request.path == "/api/login" and request.method == "POST" and request.headers.get("X-Panel") == "1":
+            return await handler(request)
+    ok = cookie_ok
     h = request.headers.get("Authorization", "")
-    if h.startswith("Basic "):
+    if not ok and h.startswith("Basic "):
         try:
             u, _, p = base64.b64decode(h[6:]).decode().partition(":")
             ok = (secrets.compare_digest(u.encode(), PANEL_USER.encode())
@@ -1006,6 +1065,11 @@ async def auth_mw(request, handler):
         except Exception:
             pass
     if not ok:
+        if sessions is not None:
+            if request.path == "/":
+                raise web.HTTPFound("/login")
+            if not h:
+                return web.json_response({"error": "Войдите в панель"}, status=401)
         return web.Response(status=401, text="Нужен вход", headers={"WWW-Authenticate": 'Basic realm="Telegram Panel"'})
     if request.method != "GET" and request.headers.get("X-Panel") != "1":
         print(f"[AUTH] 403 {request.method} {request.path}: нет заголовка X-Panel: 1", flush=True)
@@ -1068,7 +1132,7 @@ async def index(request):
     page = WEB_DIR / "index.html"
     if not page.is_file():
         return web.Response(status=500, text=f"Не найден файл: {page}\nПоложи index.html именно сюда.")
-    return web.FileResponse(page)
+    return web.FileResponse(page, headers={"Cache-Control": "no-store"})
 
 
 async def api_accounts(request):
@@ -2335,6 +2399,29 @@ async def api_inbox(request):
     return web.json_response({"items": items, "unread": sum(c["unread"] for c in items)})
 
 
+async def api_inbox_read_all(request):
+    unread = [(key, card.copy()) for key, card in INBOX.items() if card['unread']]
+    sem = asyncio.Semaphore(4)
+
+    async def acknowledge(key, card):
+        acc = ACCOUNTS.get(card['account'])
+        if not acc or not acc.me or not acc.client.is_connected():
+            return False
+        async with sem:
+            try:
+                entity = await asyncio.wait_for(resolve(acc, card['chat_id']), 15)
+                await asyncio.wait_for(acc.client.send_read_acknowledge(entity, max_id=card.get('message_id')), 15)
+            except (RPCError, OSError, ValueError, asyncio.TimeoutError):
+                return False
+        current = INBOX.get(key)
+        if current and current.get('message_id') == card.get('message_id') and current['date'] <= card['date']:
+            current['unread'] = 0
+        return True
+
+    count = sum(await asyncio.gather(*(acknowledge(key, card) for key, card in unread)))
+    return web.json_response({'read': count, 'errors': len(unread) - count})
+
+
 async def load_recent_dialogs(acc, want):
     """Берёт последние диалоги аккаунта (личные, не боты) и добавляет/обновляет их карточки во «Входящих»."""
     added = 0
@@ -2350,7 +2437,7 @@ async def load_recent_dialogs(acc, want):
         card = INBOX.setdefault(f"{acc.name}:{cid}", {"account": acc.name, "chat_id": cid, "unread": 0})
         card.update(title=display_name(ent) or str(cid), kind="user", last_text=text,
                     last_sender="" if not msg or msg.out else (display_name(ent) or ""),
-                    date=msg.date.timestamp() if msg and msg.date else time.time())
+                    date=msg.date.timestamp() if msg and msg.date else time.time(), message_id=msg.id if msg else None)
         if msg and not msg.out:
             card["unread"] = d.unread_count or card["unread"]
         added += 1
@@ -2821,6 +2908,16 @@ async def main():
     PANEL_PASSWORD = load_password()
     PASSWORD_FILE.chmod(0o600)
     app = web.Application(middlewares=[auth_mw, error_mw], client_max_size=15 * 1024 * 1024)
+    app[dashboard.ORDER_SERVICES] = {}
+    overview = dashboard.Dashboard(BASE_DIR, lambda: ACCOUNTS, lambda: cs3bet.STATE)
+    app[dashboard.OVERVIEW] = overview
+    overview.register(app)
+    app[LOGIN_SESSIONS] = {}
+    app[LOGIN_ATTEMPTS] = {}
+    app.router.add_get('/login', login_page)
+    app.router.add_post('/api/login', login_submit)
+    app.router.add_post('/api/logout', login_logout)
+    app.router.add_static('/assets', WEB_DIR / 'assets')
     deploy = account_deploy.AccountDeploy(BASE_DIR, lambda: ACCOUNTS, connect_new_accounts)
     deploy.register(app)
     SECURITY.register(app)
@@ -2862,7 +2959,8 @@ async def main():
                 await deploy.cleanup()
                 await sessions.cleanup()
                 await asyncio.sleep(30)
-        tasks = [asyncio.create_task(SECURITY.run(), name="account-security"),
+        tasks = [asyncio.create_task(overview.run(app), name="overview-history"),
+                 asyncio.create_task(SECURITY.run(), name="account-security"),
                  asyncio.create_task(expire_logins(), name="login-cleanup"),
                  asyncio.create_task(copies.run(), name="profile-copies")]
         yield
@@ -2913,6 +3011,7 @@ async def main():
         web.get("/sound.mp3", sound),
         web.post("/api/accounts/{acc}/miniapp", api_miniapp),
         web.get("/api/inbox", api_inbox),
+        web.post("/api/inbox/read-all", api_inbox_read_all),
         web.post("/api/inbox/load-dialogs", api_inbox_load),
         web.get("/api/events", api_events),
         web.post("/api/buttons/check", api_buttons_check),
@@ -2935,6 +3034,8 @@ async def main():
         and ACCOUNTS[name].error_kind not in ("session", "other"))
     app[channels.ORDER_ACCOUNT_IDS] = lambda: {n: a.me.id for n, a in ACCOUNTS.items() if a.me is not None}
     app[channels.ORDER_ACCOUNT_ALLOWED] = general_account
+    app[channels.ORDER_ACCOUNT_METADATA] = lambda name: {
+        **(_cached_profile_meta(ACCOUNTS[name]) or {}), 'flag': flag_for(name)}
     channels.register(app, general_clients)
     multi.register_all(app, general_clients)
     unsub.register_all(app, general_clients)

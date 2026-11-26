@@ -17,6 +17,17 @@ umask 077
 
 Порт по умолчанию 8080; переопределение: `SERVER_PORT=8081`.
 Логин панели: `admin`, пароль находится в `panel_password.txt`.
+
+Готовая сборка интерфейса лежит в `web/assets`. Для локальной пересборки React-экранов:
+
+```sh
+npm --prefix frontend ci
+npm --prefix frontend run build
+```
+
+История Overview и балансов записывается каждые пять минут в
+`security/dashboard.json` после запуска обновлённой панели.
+
 Для облачной среды уже подготовлен `/workspace/veltrix-venv`.
 
 ## Deploy

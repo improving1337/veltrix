@@ -377,6 +377,11 @@ class VpnSubscriptions:
         async def read(request):
             return response(self.snapshot())
 
+        async def history(request):
+            rows = [{**row, 'url': self.records[row['id']]['url']}
+                    for row in self.snapshot()['records'] if self.records[row['id']].get('url') and row['issued_at']]
+            return response({'items': sorted(rows, key=lambda row: row['issued_at'], reverse=True)[:20]})
+
         async def configure(request):
             async def update():
                 data = await request.json()
@@ -419,7 +424,7 @@ class VpnSubscriptions:
             return await run(update)
 
         app.add_routes([
-            web.get('/api/vpn', read), web.post('/api/vpn/settings', configure),
+            web.get('/api/vpn', read), web.get('/api/vpn/history', history), web.post('/api/vpn/settings', configure),
             web.post('/api/vpn/issue', issue), web.post('/api/vpn/email', email),
             web.get('/api/vpn/gmail-settings', read_gmail), web.post('/api/vpn/gmail-settings', configure_gmail),
             web.patch(r'/api/vpn/records/{id:\d+}', edit), web.delete(r'/api/vpn/records/{id:\d+}', edit),

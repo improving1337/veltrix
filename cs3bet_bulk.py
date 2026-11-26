@@ -193,7 +193,11 @@ def build_plan(matches, accounts, max_variants=20):
                           'largest_balance':str(max(largest_reserve,max(g[2] for g in winning))),
                           'total_balance':str(reserve+sum((g[3] for g in winning),Decimal(0)))})
     selected_ids = {leg['match_id'] for item in items for leg in item['legs']}
+    target = Decimal(30)
+    exact_candidates = sum(coefficient == target for coefficient, _, _ in candidates)
+    exact_variants = sum(coefficient == target for coefficient, _, _ in variants)
     return {'items':items,'scenarios':scenarios,'variant_count':len(variants),
+            'exact_target_candidates':exact_candidates,'exact_target_variants':exact_variants,
             'strategy':'target_30','target_coefficient':'30',
             'highest_possible_coefficient':str(candidates[0][0]),
             'highest_planned_coefficient':str(variants[0][0]),

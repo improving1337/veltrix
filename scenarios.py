@@ -92,12 +92,12 @@ class Compiler:
                 return self.random.sample(choices, count)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "accounts":
             if node.args or len(node.keywords) != 1 or node.keywords[0].arg != "flag":
-                raise ValueError('Используй accounts(flag=general) или accounts(flag=autopilot)')
+                raise ValueError('Используй accounts(flag=general) accounts(flag=autopilot) или accounts(flag=public)')
             value = node.keywords[0].value
             flag = (value.id if isinstance(value, ast.Name) and value.id in account_flags.FLAGS
                     else self.value(value, scope))
             if flag not in account_flags.FLAGS:
-                raise ValueError('Метка должна быть general или autopilot')
+                raise ValueError('Метка должна быть general, autopilot или public')
             return self.with_flag(flag)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords and len(node.args) == 1:
             name = self.value(node.args[0], scope)
@@ -230,7 +230,8 @@ class Compiler:
             tree = ast.parse(code)
             if sum(1 for _ in ast.walk(tree)) > 4000:
                 raise ValueError("Слишком сложный сценарий")
-            self.statements(tree.body, {"all": self.with_flag(account_flags.GENERAL)})
+            self.statements(tree.body, {"all": [identity for identity in self.accounts
+                                                        if self.flags.get(identity) != account_flags.AUTOPILOT]})
         except SyntaxError as exc:
             raise ValueError(f"Строка {exc.lineno}. Проверь синтаксис и отступы") from None
         except RecursionError:

@@ -28,3 +28,5 @@ order_jobs/
 
 gmail-credentials.env
 client_secret_*.json
+
+frontend/node_modules/
