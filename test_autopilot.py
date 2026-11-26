@@ -108,7 +108,11 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         text = 'Условия розыгрыша:\nПодписаться на СПОНСОРА(https://t.me/test) и @second\nНажать кнопку ❤️\nИтоги 26.11 в 11:11'
         message = self.message(7,text)
         message.date = post_time
-        message.buttons = [[SimpleNamespace(text='❤️')]]
+        message.reply_markup = types.ReplyInlineMarkup([
+            types.KeyboardInlineButtonRow([
+                types.KeyboardInlineButton('❤️', types.InlineButtonTypeCallback(b'enter')),
+            ]),
+        ])
         post = mon.add_post(message,post_time.isoformat())
         mon.giveaway_order = AsyncMock(return_value={'items':[{'account':'public'}]})
         with patch('automatic.utc_now', return_value=post_time):
@@ -123,6 +127,65 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(datetime.fromtimestamp(deadline,timezone.utc).isoformat(),'2026-11-26T08:11:00+00:00')
         from giveaway import giveaway_deadline
         self.assertEqual(giveaway_deadline('Итоги через 3 дня',post_time).timestamp()-post_time.timestamp(),259200)
+
+    async def test_rich_article_reads_and_queues_from_one_random_connected_account(self):
+        import multi
+
+        published = self.now
+        plain = types.TextPlain
+        href = types.TextUrl(plain('СПОНСОР'), 'https://t.me/sponsor', 0)
+        label = types.TextCustomEmoji(123, '❤️')
+        result_time = published + timedelta(days=3)
+        action = types.InlineButtonTypeCallback(b'enter')
+        article = types.RichMessage([
+            types.PageBlockTitle(types.TextBold(plain('Условия розыгрыша'))),
+            types.PageBlockOrderedList([
+                types.PageListOrderedItemText(types.TextConcat([plain('Подписаться на '), href])),
+                types.PageListOrderedItemBlocks([
+                    types.PageBlockParagraph(plain('Нажать')),
+                    types.PageBlockParagraph(types.TextConcat([plain('кнопку '), label])),
+                ]),
+            ]),
+            types.PageBlockParagraph(types.TextConcat([
+                plain('Итоги '), types.TextDate(plain('дата'), result_time),
+            ])),
+            types.PageBlockButtonRow([types.PageButton(label, action)]),
+        ], [], [])
+        message = types.Message(7, types.PeerChannel(12), date=published, message='', post=True, rich_message=article)
+        disconnected = SimpleNamespace(is_connected=lambda: False)
+        other = SimpleNamespace(is_connected=lambda: True, get_entity=AsyncMock())
+        entity = types.InputPeerChannel(12, 34)
+        selected = AsyncMock()
+        selected.is_connected = lambda: True
+        selected.get_entity.return_value = entity
+        selected.get_messages.side_effect = [[message], message]
+        del selected.iter_messages
+        self.clients = {'offline': disconnected, 'other': other, 'chosen': selected}
+        mon = self.monitor
+        mon.state.update(active=True, channel='https://t.me/example', last_post_id=6,
+                         giveaway_entries=True, execute_plan=True)
+        mon.giveaway_order = AsyncMock(return_value={'items': [{'account': 'public'}]})
+        mon.request_analysis = lambda post_id: None
+        with (patch('automatic.utc_now', return_value=published),
+              patch('automatic.random.choice', return_value=selected) as choose):
+            await mon.refresh()
+        choose.assert_called_once_with((other, selected))
+        other.get_entity.assert_not_called()
+        selected.get_entity.assert_awaited_once_with('example')
+        selected.get_messages.assert_awaited_once_with(entity, min_id=6, limit=automatic.NEW_POST_BATCH)
+        post = mon.find_post(7)
+        self.assertIn('СПОНСОР(https://t.me/sponsor)', post['post_text'])
+        self.assertEqual(post['giveaway']['status'], 'queued')
+        _, link, channels, deadline, heart = mon.giveaway_order.await_args.args
+        self.assertEqual((link, channels, deadline, heart),
+                         ('https://t.me/example/7', ['https://t.me/sponsor'], result_time.timestamp(), True))
+
+        state, _ = await multi.click_first_button(selected, 'example', 7, {
+            'giveaway_deadline': deadline, 'giveaway_heart': True,
+        })
+        self.assertEqual(state, 'ok')
+        request, = selected.await_args.args
+        self.assertEqual((request.peer, request.msg_id, request.data), (entity, 7, b'enter'))
 
     async def test_text_url_entities_follow_telegram_utf16_offsets(self):
         message = self.message(7,'⚡ 🐱 Канал и текст')

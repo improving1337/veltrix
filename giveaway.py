@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 MOSCOW = timezone(timedelta(hours=3))
 GIVEAWAY = re.compile(r"\b(?:розыгрыш\w*|giveaway|разыгра\w*|конкурс\w*)\b", re.I)
 JOIN = re.compile(r"\b(?:подписат\w*|подпиш\w*|подписывай\w*|вступ\w*)\b", re.I)
-PRESS = re.compile(r"\b(?:наж\w*|жм\w*|клик\w*)\b.*?\bкноп\w*", re.I)
+PRESS = re.compile(r"\b(?:наж\w*|жм\w*|клик\w*)\b[^\n]{0,60}?(?:\n[ \t]*)?\bкноп\w*", re.I)
 DEADLINE = re.compile(r"\b(?:итог\w*|заверш\w*|оконч\w*|результат\w*|до)\b", re.I)
 DATE = re.compile(r"(?<!\d)(\d{1,2})[./](\d{1,2})(?:[./](\d{4}|\d{2})(?!\d))?(?![\d./])(?:[ \t]*(?:в[ \t]*)?(\d{1,2}):(\d{2}))?")
 RELATIVE = re.compile(r"\bчерез\s+(\d{1,3})\s*(день|дня|дней|сутки|суток|час\w*|минут\w*)\b", re.I)
@@ -45,17 +45,19 @@ def giveaway_deadline(text, published):
     return None
 
 
+def select_button(buttons, heart):
+    candidates = [button for button in buttons if not heart or "❤" in button.text]
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def read_giveaway(text, published, buttons):
+    text = text.translate({0x200b: None, 0x2060: None, 0xfeff: None})
     press = PRESS.search(text)
     if not (GIVEAWAY.search(text) and press):
         return None
     heart = "❤" in press.string[press.end():].split("\n", 1)[0]
-    callbacks = [button for row in (buttons or []) for button in row]
-    if heart:
-        if sum("❤" in str(getattr(button, "text", "")) for button in callbacks) != 1:
-            return {"status":"skipped", "note":"Не удалось однозначно определить кнопку ❤️"}
-    elif len(callbacks) != 1:
-        return {"status":"skipped", "note":"Не удалось однозначно определить кнопку"}
+    if select_button(buttons, heart) is None:
+        return {"status":"skipped", "note":"Не удалось однозначно определить кнопку" + (" ❤️" if heart else "")}
     channels = []
     collecting = False
     for line in text.splitlines():

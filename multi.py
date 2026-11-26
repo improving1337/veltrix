@@ -20,46 +20,47 @@ import time
 import uuid
 from urllib.parse import parse_qs, urlparse
 
+from telethon import functions
+
 import bot_lookup
 import channels
 import plan_options
 import presence
 from channels import ChannelJoiner, parse_link
+from giveaway import select_button
 from posts import REACTIONS, ReactionJoiner, ViewsJoiner, explain, parse_post_link
+from telegram_content import giveaway_buttons, rich_content
 
 
 # ======================= МУЛЬТИ =======================
 async def click_first_button(client, channel, mid, extra=None):
     """Нажимает первую кнопку [0, 0] под постом. -> (state, note)"""
     from telethon.errors import BotResponseTimeoutError
+    extra = extra or {}
     try:
         ent = await client.get_entity(channel)
         msg = await client.get_messages(ent, ids=mid)
         if not msg:
             return "err", "пост не найден или недоступен"
-        if not msg.buttons:
-            if (extra or {}).get("giveaway_deadline"):
-                return "err", "кнопка розыгрыша больше недоступна"
+        if extra.get("giveaway_deadline"):
+            _, article_buttons = rich_content(msg)
+            button = select_button(giveaway_buttons(msg, article_buttons), extra.get("giveaway_heart"))
+            if button is None:
+                return "err", "кнопка розыгрыша больше не определяется однозначно"
+            if await plan_options.wait_before_action(extra):
+                return "skip", "остановлено"
+            res = await client(functions.messages.GetBotCallbackAnswerRequest(ent, mid, data=button.type.data))
+        elif not msg.buttons:
             return "ok", "у поста нет кнопок, пропущено"
-        if await plan_options.wait_before_action(extra):
-            return "skip", "остановлено"
-        row, col = 0, 0
-        if (extra or {}).get("giveaway_heart"):
-            positions = [(r, c) for r, buttons in enumerate(msg.buttons)
-                         for c, button in enumerate(buttons) if "❤" in button.text]
-            if len(positions) != 1:
-                return "err", "кнопка ❤️ больше не определяется однозначно"
-            row, col = positions[0]
-        elif (extra or {}).get("giveaway_deadline") and sum(map(len, msg.buttons)) != 1:
-            return "err", "кнопка больше не определяется однозначно"
-        res = await msg.click(row, col)
+        else:
+            if await plan_options.wait_before_action(extra):
+                return "skip", "остановлено"
+            res = await msg.click(0, 0)
     except BotResponseTimeoutError:
         return "ok", "кнопка нажата, бот не ответил"
     except Exception as e:
         return explain(e)
     if isinstance(res, str):
-        if (extra or {}).get("giveaway_deadline"):
-            return "err", "кнопка розыгрыша ведёт по внешней ссылке"
         return "ok", "кнопка-ссылка: " + res
     text = getattr(res, "message", None)
     return "ok", "кнопка нажата" + (f": {text}" if text else "")
@@ -146,7 +147,13 @@ class MultiJoiner(ChannelJoiner):
             if not msg:
                 raise ValueError("Пост не найден или недоступен")
             title = f"{getattr(ent, 'title', None) or channel} · пост {mid}"
-            if msg.buttons:
+            if extra.get("giveaway_deadline"):
+                _, article_buttons = rich_content(msg)
+                entry_button = select_button(giveaway_buttons(msg, article_buttons), extra.get("giveaway_heart"))
+                if entry_button is None:
+                    raise ValueError("Кнопка розыгрыша больше не определяется однозначно")
+                button = entry_button.text
+            elif msg.buttons:
                 button = msg.buttons[0][0].text
 
         requested = count
@@ -209,6 +216,7 @@ class MultiJoiner(ChannelJoiner):
             "channels": channels, "reaction_percent": 50, "emoji": "❤️",
             "account_filters": [public_filter], "finish_at": finish,
             "realistic": {"minutes": 60, "boost": 70},
+            "giveaway_deadline": deadline, "giveaway_heart": heart,
         })
         plan = self.plans.pop(result["id"])
         if order_id in self.jobs:

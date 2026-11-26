@@ -25,6 +25,7 @@ from giveaway import read_giveaway
 from telethon import functions, types
 from telethon.helpers import add_surrogate, del_surrogate
 from telethon.errors import ChannelPrivateError, FloodPremiumWaitError, FloodWaitError, UserNotParticipantError
+from telegram_content import giveaway_buttons, rich_content
 
 # Activity at 00:00 through 23:00 Moscow time, on a relative scale.
 DEFAULT_VIEW_ACTIVITY = [43, 29, 20, 13, 12, 15, 26, 47, 73, 80, 75, 67,
@@ -142,7 +143,7 @@ def reaction_system_prompt(allowed, max_reactions, guidance, needs_vote_analysis
 
 def text_with_links(text, entities):
     """Expand Telegram text links, whose entity offsets are UTF-16 code units."""
-    visible = add_surrogate(text[:2500])
+    visible = add_surrogate(text)
     length = len(visible)
     links = [entity for entity in (entities or ()) if isinstance(entity, types.MessageEntityTextUrl)]
     for entity in sorted(links, key=lambda entity: entity.offset, reverse=True):
@@ -1018,27 +1019,31 @@ class Monitor:
             st[key] = latest.get(key) if latest else None
         return st
 
-    def client(self):
-        values = self.clients()
+    def client(self, *, random_reader=False):
+        values = tuple(self.clients().values())
+        if random_reader:
+            values = tuple(client for client in values if getattr(client, 'is_connected', lambda: True)())
         if not values:
             raise RuntimeError('Нет подключённого аккаунта для чтения канала')
-        return next(iter(values.values()))
+        if random_reader:
+            return random.choice(values)
+        return values[0]
 
-    async def channel_entity(self, link):
-        return await self.client().get_entity(link.rsplit('/', 1)[-1])
+    async def channel_entity(self, link, client):
+        return await client.get_entity(link.rsplit('/', 1)[-1])
 
     async def latest_message(self, link):
-        entity = await self.channel_entity(link)
-        messages = await self.client().get_messages(entity, limit=1)
+        client = self.client(random_reader=True)
+        entity = await self.channel_entity(link, client)
+        messages = await client.get_messages(entity, limit=1)
         return messages[0] if messages else None
 
-    async def new_messages(self, entity, cursor):
+    async def new_messages(self, client, entity, cursor):
         """Fetch all visible messages after our cursor; handle bursts >100 posts.
 
         reverse=True fetches oldest first in Telethon. Limit per refresh is
         bounded to avoid an unexpected long API scan; next poll continues.
         """
-        client = self.client()
         if hasattr(client, 'iter_messages'):
             found = []
             async for message in client.iter_messages(entity, min_id=cursor, reverse=True, limit=NEW_POST_BATCH):
@@ -1049,9 +1054,8 @@ class Monitor:
         messages = await client.get_messages(entity, min_id=cursor, limit=NEW_POST_BATCH)
         return sorted((m for m in messages if m and m.id > cursor), key=lambda m: m.id)
 
-    async def sample_existing(self, entity, posts, now):
+    async def sample_existing(self, client, entity, posts, now):
         """Batch-read stats of every post still inside its monitoring window."""
-        client = self.client()
         for start in range(0, len(posts), NEW_POST_BATCH):
             batch = posts[start:start + NEW_POST_BATCH]
             ids = [post['post_id'] for post in batch]
@@ -1087,10 +1091,13 @@ class Monitor:
         post['samples'] = samples[-2400:]
 
     def add_post(self, message, now):
-        text = getattr(message, 'message', '') or ''
+        raw_text = getattr(message, 'message', '') or ''
+        article_text, article_buttons = rich_content(message)
+        text = article_text or raw_text
         settings = self.capture_settings()
         post = {
-            'post_id': int(message.id), 'post_text': text_with_links(text, getattr(message, 'entities', None)),
+            'post_id': int(message.id),
+            'post_text': article_text or text_with_links(raw_text, getattr(message, 'entities', None)),
             'reaction_context': post_reaction_context(text),
             'post_date': message.date.isoformat() if getattr(message, 'date', None) else now,
             'views': None, 'forwards': None, 'actual_reactions': None,
@@ -1099,13 +1106,14 @@ class Monitor:
             'settings': settings,
             'repost_pct': None if text.strip() else 0,
             'reaction_budget': random_reaction_target(int(settings['max_reactions']), settings['reaction_spread']),
-            'suggestion': (None if (getattr(message, 'message', '') or '') else
+            'suggestion': (None if text else
                            {'status': 'unavailable', 'message': 'Для анализа DeepSeek нужен текст новости'}),
             'samples': [], 'missing': False,
         }
         published = parse_timestamp(post['post_date'])
         if published and settings["giveaway_entries"] and settings["execute_plan"]:
-            entry = read_giveaway(post["post_text"], published, getattr(message, "buttons", None))
+            buttons = giveaway_buttons(message, article_buttons)
+            entry = read_giveaway(post["post_text"], published, buttons)
             if entry is not None:
                 post["giveaway"] = entry
         poll = native_poll(message, published)
@@ -1184,22 +1192,22 @@ class Monitor:
             if not self.state['active'] or not self.state['channel']:
                 return
             try:
-                entity = await self.channel_entity(self.state['channel'])
+                client = self.client(random_reader=True)
+                entity = await self.channel_entity(self.state['channel'], client)
                 now_dt = utc_now()
                 now = now_dt.isoformat()
                 cursor = self.state.get('last_post_id')
                 if cursor is None:
                     raise RuntimeError('Нет ID исходного поста. Нажми «Начать» ещё раз.')
-                newly_discovered = await self.new_messages(entity, cursor)
+                newly_discovered = await self.new_messages(client, entity, cursor)
                 known = {p['post_id'] for p in self.state['posts']}
                 ids_of_new_posts = []
                 for message in newly_discovered:
-                    self.state['last_post_id'] = max(self.state['last_post_id'], message.id)
-                    if getattr(message, 'action', None):
-                        continue  # Telegram service messages are not publications.
-                    if message.id in known:
+                    if getattr(message, 'action', None) or message.id in known:
+                        self.state['last_post_id'] = message.id
                         continue
                     post = self.add_post(message, now)
+                    self.state['last_post_id'] = message.id
                     known.add(message.id)
                     # A newly discovered historical message is archived, not tracked.
                     if post_age_seconds(post, now_dt) < MONITOR_HOURS * 3600 and (post['post_text'] or post.get('poll')):
@@ -1211,7 +1219,7 @@ class Monitor:
                             and within_window(p, now_dt)
                             and (not p['samples'] or parse_timestamp(p['samples'][-1].get('at')) is None or (now_dt - parse_timestamp(p['samples'][-1]['at'])).total_seconds() >= POLL_SECONDS)]
                 if eligible and sample_stats:
-                    await self.sample_existing(entity, eligible, now)
+                    await self.sample_existing(client, entity, eligible, now)
                 # Retain all still-active posts and recent finished ones.
                 if len(self.state['posts']) > MAX_STORED_POSTS:
                     active = [post for post in self.state['posts'] if within_window(post, now_dt)]

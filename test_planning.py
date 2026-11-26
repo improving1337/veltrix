@@ -331,6 +331,12 @@ class EligibilityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_giveaway_order_filters_to_public_and_enforces_deadline(self):
         clients = {'one':client(), 'two':client(), 'general':client()}
+        for connected in clients.values():
+            connected.get_messages.return_value = NS(reply_markup=types.ReplyInlineMarkup([
+                types.KeyboardInlineButtonRow([
+                    types.KeyboardInlineButton('❤️', types.InlineButtonTypeCallback(b'enter')),
+                ]),
+            ]))
         joiner = multi.MultiJoiner(lambda:clients)
         flags = {'one':'public','two':'public','general':'general'}
         joiner.account_metadata = lambda name: {'flag':flags[name]}
