@@ -894,7 +894,8 @@ class Monitor:
         targets = {
             'views': settings['max_views'] if settings['views_enabled'] else 0,
             'votes': bool(post['poll']['weights']) if votes_open and settings['views_enabled'] and settings['max_views'] else 0,
-            'reposts': int(post.get('repost_pct') or 0) if settings['views_enabled'] and settings['max_views'] else 0,
+            'reposts': (int(post.get('repost_pct') or 0)
+                        if settings['views_enabled'] and settings['max_views'] and not post.get('giveaway') else 0),
             'reactions': suggestion.get('total', 0) if reactions_open and suggestion.get('status') == 'ok' else 0,
         }
         for service, target in targets.items():
@@ -1474,10 +1475,11 @@ class Monitor:
             subscribers = None
             for post in self.state['posts']:
                 settings = self.post_settings(post)
-                if not within_window(post, now) or post.get('missing') or post.get('giveaway') or not settings['execute_plan']:
+                if not within_window(post, now) or post.get('missing') or not settings['execute_plan']:
                     continue
-                reactions_open = within_window(post, now, MONITOR_HOURS)
-                votes_open = poll_open(post, now)
+                giveaway = bool(post.get('giveaway'))
+                reactions_open = not giveaway and within_window(post, now, MONITOR_HOURS)
+                votes_open = not giveaway and poll_open(post, now)
                 pool = live
                 if settings['subscribers_only']:
                     if not self.needs_subscribers(post, settings, reactions_open, votes_open):
@@ -1500,7 +1502,7 @@ class Monitor:
                         options = list(zip(weights, apportion(target, weights.values())))
                         planned |= self.update_execution_plan(post, 'votes', target, options, now, voters)
                 percent = post.get('repost_pct')
-                if percent is not None:
+                if not giveaway and percent is not None:
                     target = repost_target(planned_views, percent)
                     if target:
                         planned |= self.update_execution_plan(post, 'reposts', target, [], now, pool)
@@ -1521,6 +1523,8 @@ class Monitor:
                     emojis = [(emoji, count) for emoji, count in allocation.items() if count]
                     planned |= self.update_execution_plan(post, 'reactions', target, emojis, now, pool)
                 for service, plan in post.get('execution', {}).items():
+                    if giveaway and service != 'views':
+                        continue
                     if service == 'votes' and not votes_open:
                         continue
                     if service == 'reactions' and (not reactions_open or recommendation.get('status') != 'ok'):

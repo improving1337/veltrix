@@ -187,6 +187,30 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         request, = selected.await_args.args
         self.assertEqual((request.peer, request.msg_id, request.data), (entity, 7, b'enter'))
 
+    async def test_queued_giveaway_still_dispatches_its_autopilot_view_plan(self):
+        mon = self.monitor
+        mon.state.update(active=True, channel='https://t.me/example', view_mode='realistic',
+                         execute_plan=True, max_views=2, max_reactions=4)
+        message = self.message(18, 'Условия розыгрыша: поставьте ❤️')
+        post = mon.add_post(message, self.now.isoformat())
+        post['giveaway'] = {'status': 'queued', 'order_id': 'existing-order'}
+        post['view_budget'] = {'base': 2, 'target': 2}
+        post['repost_pct'] = 10
+        post['suggestion'] = automatic.validated_reaction_plan(post['reaction_context'], 4)
+        with (patch('automatic.utc_now', return_value=self.now),
+              patch('automatic.timed_slots', return_value=[self.now.isoformat()] * 2),
+              patch('posts.ViewsJoiner._join', AsyncMock(return_value=('ok', 'просмотр'))) as send):
+            await mon.dispatch_actions()
+            await asyncio.gather(*mon.action_tasks.values())
+            await mon.dispatch_actions()
+        self.assertEqual(send.await_count, 2)
+        self.assertTrue(all(call.args[2] == ('example', 18) for call in send.await_args_list))
+        self.assertEqual(set(post['execution']), {'views'})
+        result = mon.snapshot_post(post, self.now)
+        self.assertEqual(result['execution_views']['done'], 2)
+        self.assertEqual(result['execution_views']['target'], 2)
+        self.assertEqual(result['giveaway']['order_id'], 'existing-order')
+
     async def test_text_url_entities_follow_telegram_utf16_offsets(self):
         message = self.message(7,'⚡ 🐱 Канал и текст')
         message.entities = [
