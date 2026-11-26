@@ -18,11 +18,15 @@ umask 077
 Порт по умолчанию 8080; переопределение: `SERVER_PORT=8081`.
 Логин панели: `admin`, пароль находится в `panel_password.txt`.
 
-Готовая сборка интерфейса лежит в `web/assets`. Для локальной пересборки React-экранов:
+Python раздаёт готовую React-сборку из `web/assets/classic`. Для запуска панели Node.js не требуется.
+
+Исходники интерфейса лежат в `frontend/classic`. Использован шаблон Dashral Classic из
+коммита `ff3fc7bfa8fe923d572f8b92d5eb5e21fed0d29a` и библиотека `@dashral/ui`.
+Для пересборки нужен Node.js 22.12+ или 24:
 
 ```sh
-npm --prefix frontend ci
-npm --prefix frontend run build
+npm --prefix frontend/classic ci
+npm --prefix frontend/classic run build
 ```
 
 История Overview и балансов записывается каждые пять минут в

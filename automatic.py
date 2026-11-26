@@ -1643,7 +1643,9 @@ class Monitor:
         try:
             if not isinstance(payload, dict):
                 raise ValueError('Укажи параметры предпросмотра')
-            mode = self.state['view_mode']
+            mode = payload.get('view_mode', self.state['view_mode'])
+            if mode not in VIEW_MODES:
+                raise ValueError('Выбери «Легаси» или «Реалистик»')
             activity = payload.get('view_activity', self.state['view_activity'])
             day2_pct = payload.get('view_day2_pct', self.state['view_day2_pct'])
             hours = payload.get('hours', self.state['hours'])

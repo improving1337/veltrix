@@ -1,1 +1,0 @@
-{"name":"veltrix-dashboard","version":"1.0.0","private":true,"scripts":{"build":"esbuild dashboard.jsx --bundle --minify --format=iife --outfile=../web/assets/dashboard.js"},"dependencies":{"react":"19.2.3","react-dom":"19.2.3"},"devDependencies":{"esbuild":"0.25.12"}}

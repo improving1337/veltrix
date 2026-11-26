@@ -1,0 +1,11 @@
+@import "@dashral/ui/globals.css";
+@import "@dashral/ui/themes.css";
+
+@custom-variant collapsed (&:where([data-sidebar="collapsed"] [data-sidebar-panel], [data-sidebar="collapsed"] [data-sidebar-panel] *));
+@theme inline {
+  --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--muted-foreground) 30%, transparent) transparent;
+}

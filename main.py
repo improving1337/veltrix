@@ -1002,7 +1002,7 @@ LOGIN_LIFETIME = 12 * 3600
 
 
 async def login_page(request):
-    return web.FileResponse(WEB_DIR / "login.html", headers={"Cache-Control": "no-store"})
+    return await index(request)
 
 
 async def login_submit(request):
@@ -1129,7 +1129,7 @@ async def cached_image(key, loader):
 
 
 async def index(request):
-    page = WEB_DIR / "index.html"
+    page = WEB_DIR / "assets" / "classic" / "index.html"
     if not page.is_file():
         return web.Response(status=500, text=f"Не найден файл: {page}\nПоложи index.html именно сюда.")
     return web.FileResponse(page, headers={"Cache-Control": "no-store"})
@@ -2419,6 +2419,8 @@ async def api_inbox_read_all(request):
         return True
 
     count = sum(await asyncio.gather(*(acknowledge(key, card) for key, card in unread)))
+    if count:
+        publish({"type": "read"})
     return web.json_response({'read': count, 'errors': len(unread) - count})
 
 
