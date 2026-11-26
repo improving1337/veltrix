@@ -471,6 +471,8 @@ class ChannelJoiner:
             if n == "UserAlreadyParticipantError":
                 return "ok", "уже в канале"
             if n == "InviteRequestSentError":
+                if (extra or {}).get("require_membership"):
+                    return "err", "заявка отправлена, подписка ещё не подтверждена"
                 return "ok", "заявка на вступление отправлена"
             if n == "FloodWaitError":
                 return "err", f"FloodWait: подождать {getattr(e, 'seconds', '?')} сек"

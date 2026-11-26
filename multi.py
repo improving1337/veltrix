@@ -4,7 +4,7 @@
 
 Уч: каждый аккаунт по очереди
     0. выходит в сеть
-    1. подписка на каналы из условий
+    1. подписка на канал поста, затем на остальные каналы из условий
     2. просмотр поста
     3. реакция на пост
     4. нажатие первой кнопки под постом (как во вкладке «Кнопки»)
@@ -80,6 +80,12 @@ def subscription_targets(raw_links):
     return channels_
 
 
+def with_source_channel(channel, targets):
+    source = {"link": f"https://t.me/{channel}", "kind": "public", "key": channel}
+    return [source] + [target for target in targets
+                       if target["kind"] != "public" or target["key"].lower() != channel.lower()]
+
+
 def reaction_accounts(items, percent):
     total = len(items)
     count = (total * percent + 50) // 100
@@ -100,7 +106,7 @@ class MultiJoiner(ChannelJoiner):
         emoji = extra.get("emoji") or REACTIONS[0]
         if emoji != "random" and emoji not in REACTIONS:
             raise ValueError("Неизвестная реакция")
-        chans = subscription_targets(extra.get("channels") or [])
+        chans = with_source_channel(channel, subscription_targets(extra.get("channels") or []))
         try:
             count, dmin, dmax = int(count), int(dmin), int(dmax)
         except (TypeError, ValueError):
@@ -121,8 +127,6 @@ class MultiJoiner(ChannelJoiner):
         unique = bool(extra.get("unique"))
         already, check_errors, pool = [], 0, alive
         if unique:
-            if not chans:
-                raise ValueError("Для режима «только уникальные аккаунты» укажи хотя бы один канал")
             common = None
             for c in chans:
                 sub, err = await self._subscribed(alive, c["kind"], c["key"])
@@ -165,9 +169,9 @@ class MultiJoiner(ChannelJoiner):
             at += d
             items.append({"account": n, "delay": d, "at": at})
 
-        steps = ["выход в сеть"]
-        if chans:
-            steps.append(f"подписка на каналы: {len(chans)}" + (" (только уникальные аккаунты)" if unique else ""))
+        steps = ["выход в сеть", f"обязательная подписка на канал поста @{channel}"]
+        if len(chans) > 1:
+            steps.append(f"подписка на дополнительные каналы: {len(chans) - 1}")
         steps.append("просмотр поста")
         if percent:
             steps.append(f"реакция {'случайная' if emoji == 'random' else emoji} · {percent}%")
@@ -293,12 +297,20 @@ class MultiJoiner(ChannelJoiner):
 
         # 1. подписка на каналы
         chans = extra.get("channels") or []
+        posts = extra.get("posts")
+        if not posts:
+            # Saved orders from older versions may lack the source channel.
+            chans = with_source_channel(key[0], chans)
         joined = 0
         for i, ch in enumerate(chans):
             if job["stop"].is_set():
                 break
             it["note"] = f"подписывается ({i + 1}/{len(chans)})…"
-            state, note = await ChannelJoiner._join(client, ch["kind"], ch["key"], extra)
+            required_source = not posts and i == 0
+            join_extra = {**extra, "require_membership": True} if required_source else extra
+            state, note = await ChannelJoiner._join(client, ch["kind"], ch["key"], join_extra)
+            if required_source and state != "ok":
+                return state, f"{ch['link']}: {note} · подписка на канал поста обязательна"
             if state == "ok":
                 joined += 1
             else:
@@ -313,7 +325,6 @@ class MultiJoiner(ChannelJoiner):
             return "err", " · ".join(notes + ["условия подписки не выполнены"])
 
         # Handle each post in order, completing its actions before the next one.
-        posts = extra.get("posts")
         chosen = extra.get("reaction_accounts")
         for target in posts or [key]:
             channel, mid = target

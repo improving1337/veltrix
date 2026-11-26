@@ -322,12 +322,38 @@ class EligibilityTests(unittest.IsolatedAsyncioTestCase):
             await job['task']
         self.assertEqual(job['extra']['reaction_accounts'], expected)
         for item in job['items']:
-            with patch.object(multi.ViewsJoiner, '_join', new=AsyncMock(return_value=('ok','просмотр'))), \
+            with patch.object(multi.ChannelJoiner, '_join', new=AsyncMock(return_value=('ok','подписка'))), \
+                 patch.object(multi.ViewsJoiner, '_join', new=AsyncMock(return_value=('ok','просмотр'))), \
                  patch.object(multi.ReactionJoiner, '_join', new=AsyncMock(return_value=('ok','реакция'))) as reaction, \
                  patch.object(multi, 'click_first_button', new=AsyncMock(return_value=('ok','кнопка'))), \
                  patch.object(multi.random, 'uniform', return_value=0):
                 await joiner._steps(job, item, clients[item['account']], job['key'])
                 self.assertEqual(reaction.await_count, int(item['account'] in expected))
+
+    async def test_multi_requires_the_source_channel_before_any_post_actions(self):
+        connected = client()
+        joiner = multi.MultiJoiner(lambda: {'one': connected})
+        plan = await joiner.make_plan('https://t.me/example/12', 1, 0, 0, {
+            'channels': ['@sponsor', 'https://t.me/EXAMPLE'], 'reaction_percent': 0,
+        })
+        self.assertIn('обязательная подписка на канал поста @example', plan['steps'])
+        with patch.object(joiner, '_run', new=AsyncMock()):
+            await joiner.start(plan['id'])
+            job = joiner.jobs[plan['id']]
+            await job['task']
+        self.assertEqual([target['key'] for target in job['extra']['channels']], ['example', 'sponsor'])
+        job['extra']['channels'] = job['extra']['channels'][1:]  # Saved before the update.
+        with (patch.object(multi.ChannelJoiner, '_join', AsyncMock(return_value=('err', 'ожидает подтверждения'))) as join,
+              patch.object(multi.ViewsJoiner, '_join', AsyncMock()) as view,
+              patch.object(multi, 'click_first_button', AsyncMock()) as click):
+            state, note = await joiner._steps(job, job['items'][0], connected, job['key'])
+        self.assertEqual(state, 'err')
+        self.assertIn('подписка на канал поста обязательна', note)
+        join.assert_awaited_once()
+        self.assertEqual(join.await_args.args[1:3], ('public', 'example'))
+        self.assertTrue(join.await_args.args[3]['require_membership'])
+        view.assert_not_awaited()
+        click.assert_not_awaited()
 
     async def test_giveaway_order_filters_to_public_and_enforces_deadline(self):
         clients = {'one':client(), 'two':client(), 'general':client()}
@@ -345,6 +371,7 @@ class EligibilityTests(unittest.IsolatedAsyncioTestCase):
             job = await joiner.start_giveaway('contest','https://t.me/example/12',['@second'],deadline,True)
             await job['task']
         self.assertCountEqual([item['account'] for item in job['items']],['one','two'])
+        self.assertEqual([target['key'] for target in job['extra']['channels']], ['example', 'second'])
         self.assertEqual(len(job['extra']['reaction_accounts']),1)
         self.assertLess(job['finish_at'],deadline)
         flags['one']='general'

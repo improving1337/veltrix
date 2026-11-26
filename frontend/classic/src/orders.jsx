@@ -193,7 +193,9 @@ function OrderForm({cancel,started}) {
           })}
           {subentry&&valueInput('reactionChance','Шанс реакции на каждый пост, %',{type:'number',min:0,max:100,step:1,required:true})}
         </div>}
-        {['multi','btn'].includes(service)&&<TextArea label="Каналы для подписки" rows={2} value={form.channels} onChange={event=>update('channels',event.target.value)} placeholder="@channel, https://t.me/another"/>}
+        {['multi','btn'].includes(service)&&<TextArea label={service==='multi'?'Дополнительные каналы для подписки':'Каналы для подписки'}
+          rows={2} value={form.channels} onChange={event=>update('channels',event.target.value)} placeholder="@channel, https://t.me/another"/>}
+        {service==='multi'&&<p className="text-sm text-muted-foreground">Подписка на канал публикации добавляется автоматически.</p>}
         {service==='multi'&&<Check checked={form.unique} onChange={value=>update('unique',value)}>Только уникальные аккаунты</Check>}
         <div className="grid gap-3 md:grid-cols-2">
           {valueInput('freshness','Минимум дней после смены аватарки',{type:'number',min:0,max:36500})}
