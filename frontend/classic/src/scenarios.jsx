@@ -3,7 +3,7 @@ import {BookOpen, ClipboardList, ImagePlus, Play, Terminal, X} from 'lucide-reac
 import {Badge} from '@dashral/ui/components/badge'
 import {Button} from '@dashral/ui/components/button'
 import {Card} from '@dashral/ui/components/card'
-import {DataTable} from '@dashral/ui/components/data-table'
+import SortableTable from './tables'
 import {Dialog} from '@dashral/ui/components/dialog'
 import {Input} from '@dashral/ui/components/input'
 import {moscow,post,upload,useAction,useData} from './api'
@@ -184,7 +184,7 @@ function PlanPreview({plan}) {
     {id:'action',header:'Действие',accessorFn:row=>[labels[row.step.action]||row.step.action,row.step.target,simulationStatus[row.simulation?.status]].filter(Boolean).join(' · ')},
   ]
   return <Card title="Имитация запуска" description={`${steps.length} шагов · ${moscow(plan.simulation.start)} → ${moscow(plan.simulation.finish)} МСК`}>
-    <DataTable columns={columns} data={steps} getRowId={row=>String(row.index)}/>
+    <SortableTable columns={columns} data={steps} getRowId={row=>String(row.index)}/>
   </Card>
 }
 

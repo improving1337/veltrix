@@ -3,7 +3,7 @@ import {ArrowLeft, CirclePlay, ClipboardList, Clock3, Plus, Trash2} from 'lucide
 import {Badge} from '@dashral/ui/components/badge'
 import {Button} from '@dashral/ui/components/button'
 import {Card} from '@dashral/ui/components/card'
-import {DataTable} from '@dashral/ui/components/data-table'
+import SortableTable from './tables'
 import {Input} from '@dashral/ui/components/input'
 import {LineChart} from '@dashral/ui/components/line-chart'
 import {Progress} from '@dashral/ui/components/progress'
@@ -18,7 +18,7 @@ const statusLabels={running:'В работе',done:'Готово',stopped:'Ос�
 const confirmed=job=>job.items.filter(item=>item.state==='ok').length
 const statusBadge=status=><Badge variant="soft" color={status==='done'||status==='ok'?'success':status==='err'?'destructive':status==='running'?'info':'neutral'}>{statusLabels[status]||status}</Badge>
 const orderKey=job=>job.service+':'+job.id
-const formDefaults={link:'',count:'1',delayFrom:'10',delayTo:'30',emoji:'❤️',channels:'',unique:false,freshness:'0',mode:'intervals',minutes:'120',boost:'70',finish:false,deadline:'',quiet:false,from:'',to:'',filters:[],join:'and'}
+const formDefaults={link:'',count:'1',delayFrom:'10',delayTo:'30',emoji:'❤️',reactionPercent:'100',channels:'',unique:false,freshness:'0',mode:'intervals',minutes:'120',boost:'70',finish:false,deadline:'',quiet:false,from:'',to:'',filters:[],join:'and'}
 
 function useOrders() {
   const [state,setState]=useState({data:[],loading:true,error:''})
@@ -62,7 +62,7 @@ export function Orders() {
     </PageHeader>
     <Problem message={orders.error}/>
     <Card title="Заказы" description={`В работе: ${orders.data.filter(job=>job.status==='running').length}`}>
-      {orders.loading?<Loading/>:<DataTable columns={columns} data={orders.data} getRowId={orderKey} autoResetPage={false} searchPlaceholder="Поиск заказов" emptyMessage="Заказов пока нет"/>}
+      {orders.loading?<Loading/>:<SortableTable columns={columns} data={orders.data} getRowId={orderKey} autoResetPage={false} searchPlaceholder="Поиск заказов" emptyMessage="Заказов пока нет"/>}
     </Card>
   </>
 }
@@ -81,7 +81,7 @@ function JobDetails({order,back,reload}) {
     {accessorKey:'account',header:'Аккаунт'},
     {accessorKey:'state',header:'Статус',cell:({getValue})=>statusBadge(getValue())},
     {accessorKey:'note',header:'Результат'},
-    {accessorKey:'until',header:'Ожидание до',cell:({getValue})=>moscow(getValue())},
+    {accessorKey:'wait_left',header:'Ожидание, с',cell:({getValue})=>getValue()||'—'},
     {accessorKey:'finished',header:'Завершён',cell:({getValue})=>moscow(getValue())},
   ]
   return <>
@@ -93,7 +93,7 @@ function JobDetails({order,back,reload}) {
       {running&&<div className="mt-4"><FormActions><Button variant="outline" disabled={action.busy} onClick={()=>command('skip')}>Ускорить текущий шаг</Button><Button variant="outline" color="destructive" disabled={action.busy} onClick={()=>command('stop')}>Остановить</Button></FormActions></div>}
     </Card>
     <Problem message={action.error}/>
-    <Card title="Аккаунты заказа"><DataTable columns={columns} data={order.items} getRowId={item=>item.account} autoResetPage={false}/></Card>
+    <Card title="Аккаунты заказа"><SortableTable columns={columns} data={order.items} getRowId={item=>item.account} autoResetPage={false}/></Card>
   </>
 }
 
@@ -131,7 +131,8 @@ function OrderForm({cancel,started}) {
   }
   function extras(forSchedule=false) {
     const extra={account_filters:form.filters.map(rule=>({...rule,value:rule.field==='flag'?rule.value:rule.value===''?null:Number(rule.value)})),filter_mode:form.join,freshness_days:form.freshness||0}
-    if(service==='reactions')extra.emoji=form.emoji
+    if(service==='reactions'||service==='multi')extra.emoji=form.emoji
+    if(service==='multi')extra.reaction_percent=Number(form.reactionPercent)
     if(service==='multi'||service==='btn')extra.channels=form.channels.split(/[\s,;]+/).filter(Boolean)
     if(service==='multi')extra.unique=form.unique
     if(service==='polls')extra.votes=votes
@@ -175,7 +176,13 @@ function OrderForm({cancel,started}) {
           <Picker label="Услуга" items={serviceChoices} value={service} onValueChange={next=>{discard();setPoll(null);setVotes({});setService(next)}}/>
           {valueInput('link','Ссылка Telegram',{placeholder:'https://t.me/channel/123',required:true})}
         </div>
-        {service==='reactions'&&<Picker label="Реакция" items={emojis.map(value=>[value,value==='random'?'Случайная':value])} value={form.emoji} onValueChange={value=>update('emoji',value)}/>}
+        {(service==='reactions'||service==='multi')&&<div className="grid gap-3 md:grid-cols-2">
+          <Picker label="Реакция" items={emojis.map(value=>[value,value==='random'?'Случайная':value])} value={form.emoji}
+            disabled={service==='multi'&&form.reactionPercent==='0'} onValueChange={value=>update('emoji',value)}/>
+          {service==='multi'&&valueInput('reactionPercent','Аккаунтов с реакцией, %',{
+            type:'number',min:0,max:100,step:1,required:true,description:'0% — без реакций. При 50% реакцию ставит примерно каждый второй аккаунт.',
+          })}
+        </div>}
         {['multi','btn'].includes(service)&&<TextArea label="Каналы для подписки" rows={2} value={form.channels} onChange={event=>update('channels',event.target.value)} placeholder="@channel, https://t.me/another"/>}
         {service==='multi'&&<Check checked={form.unique} onChange={value=>update('unique',value)}>Только уникальные аккаунты</Check>}
         <div className="grid gap-3 md:grid-cols-2">
@@ -252,10 +259,13 @@ function OrderPlan({plan,exclude,submit,cancel,disabled}) {
       return {label:moscow(plan.at+seconds,{hour:'2-digit',minute:'2-digit',second:duration<600?'2-digit':undefined}),count}
     })
   },[plan,duration])
+  const hasReactions = plan.reaction_count != null
   const columns=[
     {accessorKey:'account',header:'Аккаунт'},
     {accessorKey:'username',header:'Юзернейм'},
     {id:'time',accessorFn:item=>item.at,header:'Время (МСК)',cell:({getValue})=>moscow(plan.at+getValue())},
+    ...(!hasReactions?[]:[{id:'reaction',header:'Реакция',
+      accessorFn:item=>item.reaction_planned?'Да':'—'}]),
     {id:'remove',header:'',cell:({row})=><Button size="icon-sm" variant="ghost" aria-label="Исключить аккаунт" disabled={disabled||plan.items.length===1} onClick={()=>exclude(row.original.account)}><Trash2/></Button>},
   ]
   return <Card title="Предпросмотр расписания" description={`${plan.items.length} аккаунтов · до ${moscow(plan.at+duration)} МСК`}
@@ -265,9 +275,13 @@ function OrderPlan({plan,exclude,submit,cancel,disabled}) {
     <div className="grid gap-4">
       <label className="flex items-center gap-3 text-sm">Масштаб <input type="range" min={1} max={8} value={zoom} onChange={event=>setZoom(+event.target.value)}/></label>
       <div className="overflow-x-auto"><div style={{width:100*zoom+'%'}}><LineChart index="label" data={timeline} series={[{key:'count',label:'Аккаунтов',color:'var(--primary)'}]} height={260} curve="step" aria-label="Аккаунты по времени"/></div></div>
+      {hasReactions&&<p className="text-sm text-muted-foreground">
+        Реакция по плану у {plan.reaction_count} из {plan.items.length} аккаунтов · задано {plan.reaction_percent}%
+      </p>}
       {!!plan.already?.length&&<p className="text-sm text-muted-foreground">Уже выполнили действие: {plan.already.length}</p>}
-      {text&&<><div><DownloadButton filename="veltrix-plan.csv" rows={[[ 'Время МСК','Аккаунт','Юзернейм'],...plan.items.map(item=>[moscow(plan.at+item.at),item.account,item.username])]}/></div>
-        <DataTable columns={columns} data={plan.items} getRowId={item=>item.account}/></>}
+      {text&&<><div><DownloadButton filename="veltrix-plan.csv" rows={[[ 'Время МСК','Аккаунт','Юзернейм',...(hasReactions?['Реакция']:[])],
+        ...plan.items.map(item=>[moscow(plan.at+item.at),item.account,item.username,...(hasReactions?[item.reaction_planned?'Да':'—']:[])])]}/></div>
+        <SortableTable columns={columns} data={plan.items} getRowId={item=>item.account}/></>}
     </div>
   </Card>
 }

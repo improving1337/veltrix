@@ -52,6 +52,13 @@ async def click_first_button(client, channel, mid, extra=None):
     return "ok", "кнопка нажата" + (f": {text}" if text else "")
 
 
+def reaction_accounts(items, percent):
+    total = len(items)
+    count = (total * percent + 50) // 100
+    return [item["account"] for index, item in enumerate(items, 1)
+            if index * count // total != (index - 1) * count // total]
+
+
 class MultiJoiner(ChannelJoiner):
     parse = staticmethod(parse_post_link)
 
@@ -59,6 +66,9 @@ class MultiJoiner(ChannelJoiner):
         _, key = self.parse(link)
         channel, mid = key
         extra = extra or {}
+        percent = extra.get("reaction_percent", 100)
+        if type(percent) is not int or not 0 <= percent <= 100:
+            raise ValueError("Доля реакций должна быть целым числом от 0 до 100")
         emoji = extra.get("emoji") or REACTIONS[0]
         if emoji != "random" and emoji not in REACTIONS:
             raise ValueError("Неизвестная реакция")
@@ -133,7 +143,9 @@ class MultiJoiner(ChannelJoiner):
         steps = ["выход в сеть"]
         if chans:
             steps.append(f"подписка на каналы: {len(chans)}" + (" (только уникальные аккаунты)" if unique else ""))
-        steps += ["просмотр поста", f"реакция {'случайная' if emoji == 'random' else emoji}"]
+        steps.append("просмотр поста")
+        if percent:
+            steps.append(f"реакция {'случайная' if emoji == 'random' else emoji} · {percent}%")
         steps.append(f"кнопка «{button}»" if button else "кнопка (под постом кнопок нет — шаг будет пропущен)")
         steps.append("выход из сети")
 
@@ -141,14 +153,25 @@ class MultiJoiner(ChannelJoiner):
         plan = {"id": pid, "link": link.strip(), "kind": "post", "key": key, "title": title,
                 "items": items, "total": at, "created": time.time(), "alive": len(alive),
                 "requested": requested, "already": already, "check_errors": check_errors, "steps": steps,
-                "extra": {"emoji": emoji, "channels": chans, "unique": unique}}
+                "extra": {"emoji": emoji, "channels": chans, "unique": unique, "reaction_percent": percent}}
         return self.store_plan(plan, extra)
 
     @staticmethod
     def _public_plan(p):
         out = ChannelJoiner._public_plan(p)
-        out["steps"] = p.get("steps", [])
+        percent = p["extra"]["reaction_percent"]
+        chosen = set(reaction_accounts(p["items"], percent))
+        for item in out["items"]:
+            item["reaction_planned"] = item["account"] in chosen
+        out.update(steps=p.get("steps", []), reaction_count=len(chosen), reaction_percent=percent)
         return out
+
+    async def start(self, plan_id):
+        plan = self.plans.get(plan_id)
+        if plan:
+            extra = plan["extra"]
+            extra["reaction_accounts"] = reaction_accounts(plan["items"], extra["reaction_percent"])
+        return await super().start(plan_id)
 
     async def _perform(self, job, item, client, kind, key):
         try:
@@ -220,9 +243,11 @@ class MultiJoiner(ChannelJoiner):
             log(("ok", f"подписка {joined}/{len(chans)}"))
 
         # 2-4. просмотр, реакция, кнопка
-        steps = (("смотрит пост…", lambda: ViewsJoiner._join(client, "post", key, extra)),
-                 ("ставит реакцию…", lambda: ReactionJoiner._join(client, "post", key, extra)),
-                 ("нажимает кнопку…", lambda: click_first_button(client, channel, mid, extra)))
+        steps = [("смотрит пост…", lambda: ViewsJoiner._join(client, "post", key, extra))]
+        chosen = extra.get("reaction_accounts")
+        if chosen is None or it["account"] in chosen:
+            steps.append(("ставит реакцию…", lambda: ReactionJoiner._join(client, "post", key, extra)))
+        steps.append(("нажимает кнопку…", lambda: click_first_button(client, channel, mid, extra)))
         for label, fn in steps:
             if stop_all or job["stop"].is_set():
                 break

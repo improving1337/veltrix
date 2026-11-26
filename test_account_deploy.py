@@ -114,6 +114,17 @@ class DeployTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 409)
         self.assertEqual(list((self.root / 'Session').iterdir()), [])
 
+    async def test_phone_normalizes_spaces_parentheses_and_optional_plus(self):
+        for value in ('1 234567', '1 (234) 567', '+1\u00a0(234) 567'):
+            with self.subTest(value=value):
+                response, body = await self.post('phone', {'phone': value})
+                self.assertEqual(response.status, 200)
+                pending = self.deploy.pending[body['token']]
+                pending['client'].send_code_request.assert_awaited_once_with('+1234567')
+                duplicate, _ = await self.post('phone', {'phone': '+1234567'})
+                self.assertEqual(duplicate.status, 409)
+                await self.post('cancel', {'token': body['token']})
+
     async def test_invalid_phone_and_cancel(self):
         response, body = await self.post('phone', {'phone': '../../bad'})
         self.assertEqual(response.status, 400)

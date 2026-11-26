@@ -3,7 +3,7 @@ import {FileUp, Phone, Shield} from 'lucide-react'
 import {Button} from '@dashral/ui/components/button'
 import {Card} from '@dashral/ui/components/card'
 import {Input} from '@dashral/ui/components/input'
-import {DataTable} from '@dashral/ui/components/data-table'
+import SortableTable from './tables'
 import {post,upload,useAction,useData} from './api'
 import {Check,FormActions,Problem,TextArea,useConfirm} from './ui'
 import {PageHeader} from './page-header'
@@ -24,7 +24,7 @@ export function Deploy({settings,reloadSettings,reloadAccounts}) {
     action.run(async()=>{
       setMessage('')
       if(step==='phone'){
-        const response=await post('/api/deploy/phone',{phone:phone.trim()})
+        const response=await post('/api/deploy/phone',{phone})
         setToken(response.token);setStep('code');setMessage('Код запрошен. Проверьте Telegram или SMS.')
         return
       }
@@ -39,7 +39,7 @@ export function Deploy({settings,reloadSettings,reloadAccounts}) {
     <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
       <Card title={<span className="flex items-center gap-2"><Phone className="size-4"/>Вход по номеру</span>} description="Введите номер с кодом страны.">
         <form className="grid gap-4" onSubmit={signIn}>
-          <Input label="Телефон" type="tel" name="phone" autoComplete="tel" placeholder="+79991234567" value={phone} onChange={event=>setPhone(event.target.value)} required disabled={step!=='phone'}/>
+          <Input label="Телефон" type="tel" name="phone" autoComplete="tel" placeholder="+79991234567" value={phone} onChange={event=>setPhone(event.target.value.replace(/[\s()]/g,''))} required disabled={step!=='phone'}/>
           {step==='code'&&<Input label="Код из Telegram" value={code} onChange={event=>setCode(event.target.value)} autoComplete="one-time-code" inputMode="numeric" required autoFocus/>}
           {step==='password'&&<Input label="Пароль 2FA" value={password} onChange={event=>setPassword(event.target.value)} type="password" autoComplete="current-password" required autoFocus/>}
           <FormActions>
@@ -95,7 +95,7 @@ function DeployImport({reloadAccounts}) {
             <Button disabled={!links.trim()||running||action.busy} onClick={()=>action.run(async()=>{await post('/api/upload/start',{links});await job.reload()})}>Скачать и добавить</Button>
             {running&&<Button variant="outline" color="destructive" disabled={action.busy} onClick={()=>action.run(async()=>{await post('/api/upload/stop');await job.reload()})}>Остановить</Button>}
           </FormActions>
-          {state?.items?.length>0&&<DataTable columns={columns} data={state.items} getRowId={row=>row.url}/>}
+          {state?.items?.length>0&&<SortableTable columns={columns} data={state.items} getRowId={row=>row.url}/>}
         </div>
       </details>
       <Problem message={action.error}/>

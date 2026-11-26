@@ -3,11 +3,12 @@ import {ArrowLeft, Camera, Plus, RefreshCw, Shield, Trash2, UserRoundCheck, User
 import {Badge} from '@dashral/ui/components/badge'
 import {Button} from '@dashral/ui/components/button'
 import {Card} from '@dashral/ui/components/card'
-import {DataTable,dataTableSelectColumn} from '@dashral/ui/components/data-table'
+import {dataTableSelectColumn} from '@dashral/ui/components/data-table'
+import SortableTable from './tables'
 import {Dialog} from '@dashral/ui/components/dialog'
 import {Input} from '@dashral/ui/components/input'
 import {MetricCard} from '@dashral/ui/components/metric-card'
-import {accountPath,api,del,flags,fullName,moscow,post,upload,useAction,useData,url} from './api'
+import {accountPath,api,del,flags,fullName,moscow,post,timestamp,upload,useAction,useData,url} from './api'
 import {AccountAvatar,AccountState,Check,DownloadButton,Empty,FormActions,Loading,Picker,Problem,useConfirm} from './ui'
 import {PageHeader} from './page-header'
 
@@ -23,6 +24,16 @@ const columns = [
   ['spam_status','Спамбан',a=>a.spam_status?.label||'Не проверен'],
   ['last_avatar','Смена аватарки',a=>moscow(a.profile_meta?.last_avatar_change,{dateStyle:'short'})],
 ]
+function dateSort(column) {
+  return (left,right)=>{
+    const value = row=>{
+      if(column==='last_avatar')return timestamp(row.original.profile_meta?.last_avatar_change)?.getTime() ?? 0
+      const [day,month,year]=String(row.original.profile_meta?.birthday||'').split('.').map(Number)
+      return day&&month?(year||0)*10000+month*100+day:0
+    }
+    return value(left)-value(right)
+  }
+}
 const statuses=[['all','Все статусы'],['active','Активные'],['frozen','Замороженные'],['offline','Отключённые']]
 const accountFlags=Object.entries(flags)
 function useWide() {
@@ -39,7 +50,7 @@ function useWide() {
 function Bulk({table,reload}) {
   const rows=table.getSelectedRowModel().flatRows.map(row=>row.original)
   const exportRows=rows.length?rows:table.getSortedRowModel().flatRows.map(row=>row.original)
-  const visible=new Set(table.getVisibleLeafColumns().map(column=>column.id))
+  const visible=new Set(table.getVisibleLeafColumns().map(column=>column.columnDef.meta?.key||column.id))
   const selectedCols=columns.filter(([id])=>visible.has(id))
   const [flag,setFlag]=useState('public')
   const action=useAction()
@@ -99,6 +110,7 @@ export function Profiles({parameters,navigate,settings,query}) {
       </button>,
     },...optional.map(([id,header,accessorFn])=>({
       id,header,accessorFn,
+      ...(id==='birthday'||id==='last_avatar'?{sortingFn:dateSort(id)}:{}),
       cell:({row,getValue})=>id==='status'?<AccountState account={row.original}/>:id==='flag'?
         <Badge color={row.original.flag==='public'?'info':row.original.flag==='autopilot'?'primary':'neutral'} variant="soft">{getValue()}</Badge>:getValue()??'—',
     }))]
@@ -123,7 +135,7 @@ export function Profiles({parameters,navigate,settings,query}) {
         <Picker items={[[ 'all','Все метки'],...accountFlags]} value={tag} onValueChange={setTag} aria-label="Метка"/>
         {!wide&&<Picker items={columns.map(([id,label])=>[id,label])} value={mobile} onValueChange={value=>{setMobile(value);localStorage.setItem('veltrix-accounts-column',value)}} aria-label="Второй столбец"/>}
       </div>
-      {!query.data&&!query.error?<Loading/>:<DataTable columns={schema} data={data} getRowId={a=>a.name} autoResetPage={false}
+      {!query.data&&!query.error?<Loading/>:<SortableTable columns={schema} data={data} getRowId={a=>a.name} autoResetPage={false}
         searchPlaceholder="Поиск по аккаунтам…" emptyMessage="Аккаунты не найдены" toolbar={table=><Bulk table={table} reload={query.reload}/>}/>}
     </Card>
   </>
@@ -381,7 +393,7 @@ function SessionsInventory({close}) {
   return <>
     <PageHeader title="Безопасность и 2FA"><Button variant="outline" onClick={close}><ArrowLeft/>Профили</Button><Button disabled={action.busy} onClick={()=>reissue()}>Перевыпустить внешние</Button></PageHeader>
     <Problem message={data.error||action.error}/>
-    <Card title="Сессии" description={data.data?.job?.running?'Перевыпуск выполняется':undefined}>{data.data?<DataTable columns={columns} data={data.data.items||[]} getRowId={row=>row.name}/>:!data.error&&<Loading/>}</Card>
+    <Card title="Сессии" description={data.data?.job?.running?'Перевыпуск выполняется':undefined}>{data.data?<SortableTable columns={columns} data={data.data.items||[]} getRowId={row=>row.name}/>:!data.error&&<Loading/>}</Card>
     <Dialog open={!!pending} onOpenChange={open=>{if(!open&&!action.busy){setPending(null);setPassword('')}}}
       title="Пароль для перевыпуска" description={pending||undefined}
       form={{onSubmit:event=>{

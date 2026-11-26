@@ -1,5 +1,5 @@
 // Layout sourced from the Classic Overview in apps/demo/app/(dashboard)/page.tsx.
-import {useState} from 'react'
+import {lazy,Suspense,useState} from 'react'
 import {CircleCheck, ShieldAlert, UserRoundCheck, Users} from 'lucide-react'
 import {AreaChart} from '@dashral/ui/components/area-chart'
 import {BarChart} from '@dashral/ui/components/bar-chart'
@@ -11,10 +11,22 @@ import {Progress} from '@dashral/ui/components/progress'
 import {Sparkline} from '@dashral/ui/components/sparkline'
 import {Badge} from '@dashral/ui/components/badge'
 import {moscow,num,useData} from './api'
-import {Empty,Picker,Problem} from './ui'
+import {Empty,Loading,Picker,Problem} from './ui'
 import {PageHeader} from './page-header'
 
 export const services = {channels:'Подписки',views:'Просмотры',reactions:'Реакции',reposts:'Репосты',polls:'Опросы',multi:'Мульти',starts:'Запуск бота',btn:'Нажатие кнопки',unsub:'Отписки'}
+const SortableTable = lazy(()=>import('./tables'))
+const postColumns = [
+  {id:'post',header:'Публикация',accessorFn:post=>post.channel+' '+post.id,cell:({row})=>{
+    const post = row.original
+    return <>{post.channel.replace(/^https?:\/\/t\.me\//,'@')} · #{post.id}
+      <Badge className="ms-2" variant="soft" color="neutral">{post.mode==='realistic'?'Реалистик':'Легаси'}</Badge></>
+  }},
+  {accessorKey:'done',header:'Выполнено',cell:({row})=>num(row.original.done)+' / '+num(row.original.target)},
+  {accessorKey:'due',header:'По графику',cell:({getValue})=>num(getValue())},
+  {id:'next',header:'Следующий шаг',accessorFn:post=>post.next ? Date.parse(post.next) : undefined,
+    cell:({row})=>moscow(row.original.next),sortUndefined:'last'},
+]
 const accountSeries=[{key:'active',label:'Активные аккаунты',color:'var(--primary)'}]
 const balanceSeries=[{key:'balance',label:'Общий баланс',color:'var(--primary)'},{key:'largest',label:'Наибольший баланс',color:'var(--success)'}]
 
@@ -65,13 +77,10 @@ export function Overview({navigate}) {
     <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
       <Card title="Последние посты" description="Выполнение планов Автопилота" className="min-w-0 xl:col-span-2"
         action={<Button variant="outline" size="sm" onClick={()=>navigate('automatic')}>Автопилот</Button>}>
-        {data?.posts?.length ? <div className="overflow-auto"><table className="w-full whitespace-nowrap text-start text-sm">
-          <thead className="text-muted-foreground"><tr><th className="p-2 text-start">Публикация</th><th className="p-2 text-start">Выполнено</th><th className="p-2 text-start">По графику</th><th className="p-2 text-start">Следующий шаг</th></tr></thead>
-          <tbody>{data.posts.map(post=><tr key={post.channel+'/'+post.id} className="border-t border-divider">
-            <td className="p-2">{post.channel.replace(/^https?:\/\/t\.me\//,'@')} · #{post.id}<Badge className="ms-2" variant="soft" color="neutral">{post.mode==='realistic'?'Реалистик':'Легаси'}</Badge></td>
-            <td className="p-2 tabular-nums">{num(post.done)} / {num(post.target)}</td><td className="p-2">{num(post.due)}</td><td className="p-2">{moscow(post.next)}</td>
-          </tr>)}</tbody>
-        </table></div>:<Empty>Нет постов с графиком просмотров.</Empty>}
+        {data?.posts?.length ?
+          <Suspense fallback={<Loading/>}><SortableTable columns={postColumns} data={data.posts}
+            getRowId={post=>post.channel+'/'+post.id} autoResetPage={false}/></Suspense>:
+          <Empty>Нет постов с графиком просмотров.</Empty>}
       </Card>
       <Card title="Заказы в работе" action={<Button size="sm" variant="outline" onClick={()=>navigate('orders')}>Услуги</Button>}>
         {data?.running?.length ? <div className="grid gap-4">{data.running.map((order,index)=><div key={index} className="grid gap-1.5 text-sm">

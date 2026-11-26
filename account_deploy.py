@@ -73,8 +73,10 @@ class AccountDeploy:
 
     async def send_code(self, request):
         data = await request.json()
-        phone = str(data.get("phone", "")).strip()
-        if not re.fullmatch(r"\+[1-9]\d{6,14}", phone):
+        phone = re.sub(r"[\s()]", "", str(data.get("phone", "")))
+        if re.fullmatch(r"[1-9][0-9]{6,14}", phone):
+            phone = "+" + phone
+        if not re.fullmatch(r"\+[1-9][0-9]{6,14}", phone):
             return fail("Введите номер в международном формате: +79991234567")
         async with self.lock:
             if len(self.pending) >= 20:

@@ -3,7 +3,7 @@ import {ArrowDown, ArrowUp, Copy, ExternalLink, History, Mail, Plus, Shield, Sli
 import {Badge} from '@dashral/ui/components/badge'
 import {Button} from '@dashral/ui/components/button'
 import {Card} from '@dashral/ui/components/card'
-import {DataTable} from '@dashral/ui/components/data-table'
+import SortableTable from './tables'
 import {Dialog} from '@dashral/ui/components/dialog'
 import {Input} from '@dashral/ui/components/input'
 import {accountPath,connected,del,moscow,patch,post,useAction,useData,url} from './api'
@@ -130,7 +130,7 @@ function Vpn() {
       <Problem message={state.error}/>
       {state.data?<><VpnSettings settings={state.data.settings} refresh={state.reload}/>
         <Card title="Подписки аккаунтов" description="Срок считается от даты выдачи доступа.">
-          <DataTable columns={columns} data={state.data.records} getRowId={record=>record.id} autoResetPage={false} emptyMessage="Выданных подписок нет"/>
+          <SortableTable columns={columns} data={state.data.records} getRowId={record=>record.id} autoResetPage={false} emptyMessage="Выданных подписок нет"/>
         </Card></>:!state.error&&<Loading/>}
     </>}
     {record&&<EditDate key={record.id} record={record} close={()=>setRecord(null)} refresh={state.reload}/>}

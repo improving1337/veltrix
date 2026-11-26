@@ -296,6 +296,39 @@ class EligibilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(plan['finish_at'], finish, cls.__name__)
             self.assertGreater(plan['total'], 28790)
 
+    async def test_multi_reactions_are_evenly_spaced_and_match_started_job(self):
+        clients = {str(i): client() for i in range(10)}
+        for connected in clients.values():
+            connected.get_messages = AsyncMock(return_value=NS(buttons=[]))
+        joiner = multi.MultiJoiner(lambda: clients)
+        link = 'https://t.me/example/123'
+        for percent in (0, 30, 50, 70, 100):
+            with self.subTest(percent=percent):
+                plan = await joiner.make_plan(link, 10, 0, 0, {'reaction_percent': percent, 'emoji': '👍'})
+                self.assertEqual(plan['reaction_count'], percent // 10)
+                marked = [index for index, item in enumerate(plan['items'], 1) if item['reaction_planned']]
+                if percent == 50:
+                    self.assertEqual(marked, [2, 4, 6, 8, 10])
+                for index in range(1, 11):
+                    self.assertLess(abs(sum(position <= index for position in marked) - index*percent/100), 1)
+        plan = joiner.exclude(plan['id'], plan['items'][0]['account'])
+        self.assertEqual(plan['reaction_count'], 9)
+        plan = await joiner.make_plan(link, 10, 0, 0, {'reaction_percent': 50, 'emoji': '👍'})
+        plan = joiner.exclude(plan['id'], plan['items'][0]['account'])
+        expected = [item['account'] for item in plan['items'] if item['reaction_planned']]
+        with patch.object(joiner, '_run', new=AsyncMock()):
+            await joiner.start(plan['id'])
+            job = joiner.jobs[plan['id']]
+            await job['task']
+        self.assertEqual(job['extra']['reaction_accounts'], expected)
+        for item in job['items']:
+            with patch.object(multi.ViewsJoiner, '_join', new=AsyncMock(return_value=('ok','просмотр'))), \
+                 patch.object(multi.ReactionJoiner, '_join', new=AsyncMock(return_value=('ok','реакция'))) as reaction, \
+                 patch.object(multi, 'click_first_button', new=AsyncMock(return_value=('ok','кнопка'))), \
+                 patch.object(multi.random, 'uniform', return_value=0):
+                await joiner._steps(job, item, clients[item['account']], job['key'])
+                self.assertEqual(reaction.await_count, int(item['account'] in expected))
+
     async def test_reposts_forward_once_to_each_selected_accounts_saved_messages(self):
         clients = {'first': client(), 'second': client()}
         sources = {name: object() for name in clients}

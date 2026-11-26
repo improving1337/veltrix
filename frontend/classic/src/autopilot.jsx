@@ -5,7 +5,7 @@ import {Badge} from '@dashral/ui/components/badge'
 import {BarChart} from '@dashral/ui/components/bar-chart'
 import {Button} from '@dashral/ui/components/button'
 import {Card} from '@dashral/ui/components/card'
-import {DataTable} from '@dashral/ui/components/data-table'
+import SortableTable from './tables'
 import {Dialog} from '@dashral/ui/components/dialog'
 import {Input} from '@dashral/ui/components/input'
 import {MetricCard} from '@dashral/ui/components/metric-card'
@@ -83,7 +83,7 @@ export function Autopilot() {
         </div>
       </Card>}
       <Card title="Журнал публикаций" description="Откройте пост для просмотра графиков и списка действий.">
-        <DataTable columns={columns} data={posts} getRowId={row=>row.channelId+':'+row.post_id} autoResetPage={false} emptyMessage="Публикаций пока нет"/>
+        <SortableTable columns={columns} data={posts} getRowId={row=>row.channelId+':'+row.post_id} autoResetPage={false} emptyMessage="Публикаций пока нет"/>
       </Card>
     </>}
     <Dialog open={added} onOpenChange={setAdded} title="Добавить Telegram-канал"

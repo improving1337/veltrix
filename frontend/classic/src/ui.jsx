@@ -3,6 +3,7 @@ import {AlertCircle, LoaderCircle} from 'lucide-react'
 import {AlertDialog} from '@dashral/ui/components/alert-dialog'
 import {Button} from '@dashral/ui/components/button'
 import {Badge} from '@dashral/ui/components/badge'
+import {Combobox} from '@dashral/ui/components/combobox'
 import {Input} from '@dashral/ui/components/input'
 import {Select} from '@dashral/ui/components/select'
 import {Avatar} from '@dashral/ui/components/avatar'
@@ -52,7 +53,18 @@ export function Check({children, checked, onChange, ...props}) {
   return <label className="flex items-center gap-2 py-1 text-sm"><input type="checkbox" className="size-4 accent-primary" checked={checked} onChange={event => onChange(event.target.checked)} {...props}/>{children}</label>
 }
 export function AccountPicker({items, value, onChange, label = 'Аккаунт'}) {
-  return <Picker label={label} placeholder="Выберите аккаунт" value={value} onValueChange={onChange} items={items.map(a => [a.name,fullName(a)])}/>
+  const names = new Map()
+  for (const account of items) {
+    const name = fullName(account)
+    names.set(name, (names.get(name) || 0) + 1)
+  }
+  return <Combobox label={label} placeholder="Выберите аккаунт" searchPlaceholder="Имя, username, номер или ID"
+    emptyText="Аккаунты не найдены" value={value} onValueChange={onChange}
+    options={items.map(account => {
+      const name = fullName(account)
+      return {value:account.name, label:names.get(name)>1 ? name+' · '+account.name : name,
+        description:[account.username&&'@'+account.username,account.phone,account.id,account.name].filter(Boolean).join(' · ')}
+    })}/>
 }
 export function AccountAvatar({account, size = 'sm', ...props}) {
   return <Avatar src={account.connected ? accountPath(account.name)+'/avatar?v='+url(account.avatar_ver || 0) : undefined} alt={fullName(account)} fallback={fullName(account).slice(0,2).toUpperCase()} size={size} {...props}/>

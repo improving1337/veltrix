@@ -3,7 +3,7 @@ import {ArrowLeft, CircleDollarSign, Coins, ExternalLink, GitBranch, RefreshCw, 
 import {Badge} from '@dashral/ui/components/badge'
 import {Button} from '@dashral/ui/components/button'
 import {Card} from '@dashral/ui/components/card'
-import {DataTable,DataTableColumnHeader} from '@dashral/ui/components/data-table'
+import SortableTable from './tables'
 import {Dialog} from '@dashral/ui/components/dialog'
 import {Input} from '@dashral/ui/components/input'
 import {MetricCard} from '@dashral/ui/components/metric-card'
@@ -44,7 +44,7 @@ export function Cs3bet({accounts}) {
   const columns=[
     {id:'account',header:'Аккаунт',accessorFn:fullName,cell:({row})=><button className="flex cursor-pointer items-center gap-2 text-start font-medium hover:text-primary-text" onClick={()=>open('bet',row.original.name)}><AccountAvatar account={row.original}/>{fullName(row.original)}</button>},
     {id:'username',header:'Username',accessorFn:account=>account.username?'@'+account.username:'—'},
-    {id:'balance',header:({column})=><DataTableColumnHeader column={column} title="Баланс"/>,accessorFn:account=>account.game.balance==null?undefined:Number(account.game.balance),sortUndefined:'last',cell:({getValue})=>num(getValue())},
+    {id:'balance',header:'Баланс',accessorFn:account=>account.game.balance==null?undefined:Number(account.game.balance),sortUndefined:'last',cell:({getValue})=>num(getValue())},
     {id:'checked',header:'Проверено (МСК)',accessorFn:account=>account.game.ts,cell:({getValue})=>moscow(getValue())},
     {id:'actions',header:'Действия',cell:({row})=><FormActions><Button variant="outline" size="sm" onClick={()=>open('bet',row.original.name)}>Ставка</Button>
       <Button variant="outline" size="sm" disabled={action.busy} title="Открыть Mini App" onClick={()=>miniApp(row.original)}><ExternalLink/>Mini App</Button></FormActions>},
@@ -66,7 +66,7 @@ export function Cs3bet({accounts}) {
     <History data={overview.data} type="balance"/>
     <Card title="Аккаунты CS3BET" action={<Button variant="outline" size="sm" onClick={state.reload}><RefreshCw/>Обновить</Button>}>
       <div className="mb-3"><Check checked={hideEmpty} onChange={setHideEmpty}>Скрыть нулевой баланс</Check></div>
-      {state.data?<DataTable columns={columns} data={rows} getRowId={account=>account.name} autoResetPage={false} emptyMessage="Нет подключённых аккаунтов"/>:!state.error&&<Loading/>}
+      {state.data?<SortableTable columns={columns} data={rows} getRowId={account=>account.name} autoResetPage={false} emptyMessage="Нет подключённых аккаунтов"/>:!state.error&&<Loading/>}
     </Card>
     {promo&&<Promo users={users} close={()=>setPromo(false)}/>}
   </>
@@ -318,7 +318,7 @@ function BulkBets({users,selected,setSelected,back}) {
         <p>Наибольший выигравший коэффициент по исходам от ×{num(plan.worst_highest_coefficient)} до ×{num(plan.highest_planned_coefficient)} · ровно ×30 в плане {plan.exact_target_variants}</p>
         <p>Расчёт предполагает принятие ставок по показанным коэффициентам и победителя в каждом выбранном матче.</p>
       </div>
-      <DataTable data={plan.items} columns={planCols} getRowId={item=>item.account}/>
+      <SortableTable data={plan.items} columns={planCols} getRowId={item=>item.account}/>
     </Card>}
     {job&&<Card title="Очередь ставок" description={job.running?'Выполняется':job.interrupted?'Требуется проверка очереди':'Обработка завершена'}>
       <div className="mb-3"><FormActions>
@@ -337,7 +337,7 @@ function BulkBets({users,selected,setSelected,back}) {
         {quote.changes.map(change=><div key={change.index}>{change.account} · {change.error||`×${num(change.old_coefficient)} → ×${num(change.coefficient)}`}</div>)}
         <div><Button disabled={action.busy||quote.changes.some(change=>change.error)} onClick={()=>request('resume',{job_id:job.id,quote_id:quote.id})}>Принять пересчёт и продолжить</Button></div>
       </div>}
-      <DataTable data={job.items} columns={jobCols} getRowId={item=>item.account} autoResetPage={false}/>
+      <SortableTable data={job.items} columns={jobCols} getRowId={item=>item.account} autoResetPage={false}/>
     </Card>}
   </>
 }
