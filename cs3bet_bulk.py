@@ -13,6 +13,8 @@ MAX_STAKE = Decimal('50000')
 MAX_ODDS = Decimal('30')
 MIN_STAKE = Decimal('100')
 CENT = Decimal('.01')
+TIER_LIMITS = (MAX_STAKE, Decimal('32500'), Decimal('17500'))
+LENGTH_OPTIONS = {2, 3, 4, 6, 8}
 
 
 def amount(value):
@@ -29,9 +31,33 @@ def payout(value):
     return value.quantize(CENT, rounding=ROUND_DOWN)
 
 
-def build_plan(matches, accounts, max_variants=20):
-    if isinstance(max_variants, bool) or not isinstance(max_variants, int) or not 4 <= max_variants <= 64:
-        raise ValueError('Число вариантов: целое от 4 до 64')
+def stake_parts(balance, tiered):
+    parts = []
+    for limit in TIER_LIMITS if tiered else TIER_LIMITS[:1]:
+        stake = min(balance, limit)
+        if stake < MIN_STAKE:
+            break
+        parts.append(stake)
+        balance -= stake
+    return parts
+
+
+def build_plan(matches, accounts, max_variants=20, *, lengths=None, single=False,
+               tiered=False, allow_shorter=False, target_balance=1500000):
+    modern = lengths is not None or single
+    if any(type(value) is not bool for value in (single, tiered, allow_shorter)):
+        raise ValueError('Некорректные параметры плана')
+    if lengths is not None and (not isinstance(lengths, (list, tuple)) or not lengths or
+                                any(type(n) is not int or n not in LENGTH_OPTIONS for n in lengths)):
+        raise ValueError('Выберите длины экспресса: 2, 3, 4, 6 или 8')
+    minimum, maximum = (2, 256) if modern else (4, 64)
+    if type(max_variants) is not int or not minimum <= max_variants <= maximum:
+        raise ValueError(f'Число вариантов: целое от {minimum} до {maximum}')
+    target_balance = amount(target_balance)
+    if target_balance <= 0:
+        raise ValueError('Целевой баланс должен быть положительным')
+    allowed = {1} if single else set(lengths if lengths is not None else range(2, 13))
+    tiered = tiered and modern
     pool, skipped, seen_accounts = [], [], set()
     for account in accounts:
         name = str(account['name'])
@@ -48,10 +74,11 @@ def build_plan(matches, accounts, max_variants=20):
         if balance < MIN_STAKE:
             skipped.append({'account': name, 'reason': 'Меньше минимальной ставки 100'})
             continue
-        pool.append({**account, 'name': name, 'balance': balance, 'stake': min(balance, MAX_STAKE)})
+        parts = stake_parts(balance, tiered)
+        pool.append({**account, 'name': name, 'balance': balance, 'stake': sum(parts), 'parts': parts})
     pool.sort(key=lambda a: (-a['balance'], a['name']))
-    if len(pool) < 4:
-        raise ValueError('Для полного покрытия экспрессов нужны хотя бы 4 аккаунта с балансом от 100')
+    if len(pool) < (2 if single else 4):
+        raise ValueError('Для покрытия не хватает аккаунтов с балансом от 100')
     if len(pool) > 1000:
         raise ValueError('За один план поддерживается до 1000 аккаунтов')
     eligible, ignored, seen_matches = [], [], set()
@@ -69,8 +96,10 @@ def build_plan(matches, accounts, max_variants=20):
         eligible.append({**match, 'id': mid, 'odds': (a,b)})
     if len(eligible) > 12:
         raise ValueError('Выберите до 12 открытых матчей для точного перебора')
-    if len(eligible) < 2:
-        raise ValueError('Нужны хотя бы 2 открытых матча с двумя корректными коэффициентами')
+    if single and len(eligible) != 1:
+        raise ValueError('Выберите ровно один открытый матч с двумя корректными коэффициентами')
+    if not single and len(eligible) < min(allowed):
+        raise ValueError(f'Выберите не меньше {min(allowed)} открытых матчей')
     # Enumerate coupons with DIFFERENT match sets. Each coupon carries a bitmap
     # of complete outcomes in which it wins. This checks coverage despite overlap.
     n = len(eligible)
@@ -79,9 +108,13 @@ def build_plan(matches, accounts, max_variants=20):
     masks = [[sum(1 << outcome for outcome in range(outcome_count)
                   if ((outcome >> index) & 1) == side) for side in (0,1)] for index in range(n)]
     candidates = []
+    max_length = max(allowed)
+
     def enumerate_coupons(index, coefficient, legs, coverage):
-        if index == n:
-            if len(legs) >= 2:
+        if len(legs) + n - index < min(allowed):
+            return
+        if index == n or len(legs) == max_length:
+            if len(legs) in allowed:
                 candidates.append((coefficient, tuple(legs), coverage))
                 if len(candidates) > 100000:
                     raise ValueError('Более 100000 допустимых купонов: выберите меньше матчей')
@@ -121,6 +154,113 @@ def build_plan(matches, accounts, max_variants=20):
             covered |= candidates[best_index][2]
         return selected if covered == universe else None
 
+    if modern:
+        chosen = optimized_cover(candidates, capacity, universe, cover)
+    else:
+        chosen = legacy_cover(candidates, capacity, outcome_count, universe, cover)
+    variants = [candidates[i] for i in chosen]
+    items = []
+    allocation = list(range(len(variants)))
+    if single:
+        allocation.sort(key=lambda variant: variants[variant][1][0][1])
+    elif modern:
+        # Give the lowest-paying covering coupons the strongest initial balances.
+        allocation.sort(key=lambda variant: variants[variant][0])
+    for index, account in enumerate(pool):
+        variant = allocation[index % len(variants)] if index < len(variants) or single else index % len(variants)
+        coef, picks, _ = variants[variant]
+        legs = [{'match_id':eligible[i]['id'],'side':str(side+1),'odds':str(eligible[i]['odds'][side]),
+                 'team_a':eligible[i].get('team_a',''),'team_b':eligible[i].get('team_b','')} for i,side in picks]
+        win = sum(payout(part * coef) for part in account['parts'])
+        item = {'account':account['name'],'variant':variant+1,'round':index//len(variants)+1,
+                'balance':str(account['balance']),'balance_ts':account.get('balance_ts'),
+                'stake':str(account['stake']),'remaining':str(account['balance']-account['stake']),
+                'coefficient':str(coef),'potential':str(win),
+                'winner_balance':str(account['balance']-account['stake']+win),'legs':legs}
+        if modern:
+            item.update(allow_shorter=allow_shorter and not single, tranches=[str(part) for part in account['parts']])
+        items.append(item)
+    reserve = sum((amount(i['remaining']) for i in items), Decimal(0))
+    largest_reserve = max(amount(i['remaining']) for i in items)
+    groups = []
+    for index, (coef, picks, coverage) in enumerate(variants, 1):
+        group = [i for i in items if i['variant']==index]
+        groups.append((coverage,len(group),max(amount(i['winner_balance']) for i in group),
+                       sum((amount(i['potential']) for i in group),Decimal(0)),coef,
+                       sum(amount(i['winner_balance']) >= target_balance for i in group)))
+    scenarios = []
+    for outcome in range(outcome_count):
+        winning = [g for g in groups if (g[0] >> outcome) & 1]
+        if not winning:
+            raise ValueError('Обнаружен непокрытый исход; план не создан')
+        scenarios.append({'outcome':outcome,'accounts':sum(g[1] for g in winning),
+                          'largest_balance':str(max(largest_reserve,max(g[2] for g in winning))),
+                          'total_balance':str(reserve+sum((g[3] for g in winning),Decimal(0))),
+                          'highest_coefficient':str(max(g[4] for g in winning)),
+                          'accounts_at_target':sum(g[5] for g in winning)})
+    selected_ids = {leg['match_id'] for item in items for leg in item['legs']}
+    return {'items':items,'scenarios':scenarios,'variant_count':len(variants),
+            'exact_target_candidates':sum(coefficient == MAX_ODDS for coefficient, _, _ in candidates),
+            'exact_target_variants':sum(coefficient == MAX_ODDS for coefficient, _, _ in variants),
+            'strategy':'single' if single else 'balance_floor' if modern else 'target_30',
+            'target_coefficient':str(MAX_ODDS),'target_balance':str(target_balance),
+            'lengths':sorted({len(picks) for _,picks,_ in variants}),
+            'tiered':tiered,'allow_shorter':allow_shorter and not single,
+            'highest_possible_coefficient':str(candidates[0][0]),
+            'highest_planned_coefficient':str(variants[0][0]),
+            'worst_highest_coefficient':str(min(amount(i['highest_coefficient']) for i in scenarios)),
+            'minimum_accounts_at_target':min(i['accounts_at_target'] for i in scenarios),
+            'maximum_accounts_at_target':max(i['accounts_at_target'] for i in scenarios),
+            'peak_preserved':0 in chosen,'complete_coverage':True,'outcome_count':outcome_count,
+            'coverage_matches':[m['id'] for m in eligible],
+            'selected_matches':[m['id'] for m in eligible if m['id'] in selected_ids],
+            'unused_matches':[m['id'] for m in eligible if m['id'] not in selected_ids], 'ignored_matches':ignored,
+            'skipped_accounts':skipped,'account_count':len(items),
+            'initial_total':str(sum((amount(i['balance']) for i in items),Decimal(0))),
+            'total_stake':str(sum((amount(i['stake']) for i in items),Decimal(0))),
+            'reserve':str(reserve),
+            'worst_largest_balance':str(min(amount(i['largest_balance']) for i in scenarios)),
+            'best_largest_balance':str(max(amount(i['largest_balance']) for i in scenarios)),
+            'worst_total_balance':str(min(amount(i['total_balance']) for i in scenarios)),
+            'best_total_balance':str(max(amount(i['total_balance']) for i in scenarios))}
+
+
+def optimized_cover(candidates, capacity, universe, cover):
+    # Sorted coefficients supply an exact upper bound from the least favorable
+    # complete outcome. Searching for a small cover at that bound is bounded.
+    covered = 0
+    ceiling = None
+    for coefficient, _, mask in candidates:
+        covered |= mask
+        if covered == universe:
+            ceiling = coefficient
+            break
+    if ceiling is None:
+        raise ValueError('С выбранными длинами и лимитом ×30 есть исход без выигрышного купона. Измените матчи или длины.')
+    chosen = cover(ceiling, force_peak=False)
+    if chosen is None:
+        scores = sorted({coefficient for coefficient, _, _ in candidates if coefficient <= ceiling})
+        low, high = 0, len(scores)-2
+        while low <= high:
+            middle = (low+high)//2
+            proposal = cover(scores[middle], force_peak=False)
+            if proposal is None:
+                high = middle-1
+            else:
+                chosen = proposal
+                low = middle+1
+    if chosen is None:
+        raise ValueError('Не найдено полное покрытие. Увеличьте число вариантов или выберите другие матчи.')
+    used = set(chosen)
+    for index in range(len(candidates)):
+        if len(chosen) == capacity:
+            break
+        if index not in used:
+            chosen.append(index)
+    return sorted(chosen)
+
+
+def legacy_cover(candidates, capacity, outcome_count, universe, cover):
     chosen = None
     # Peak payout is the primary goal. Prefer high-coefficient coverage too;
     # greedy coverage is bounded and does not claim a globally optimal portfolio.
@@ -163,56 +303,7 @@ def build_plan(matches, accounts, max_variants=20):
             break
         if i not in used:
             chosen.append(i);used.add(i)
-    chosen.sort()  # Candidates are ordered by descending coefficient.
-    variants = [candidates[i] for i in chosen]
-    items = []
-    for index, account in enumerate(pool):
-        variant = index % len(variants)
-        coef, picks, _ = variants[variant]
-        legs = [{'match_id':eligible[i]['id'],'side':str(side+1),'odds':str(eligible[i]['odds'][side]),
-                 'team_a':eligible[i].get('team_a',''),'team_b':eligible[i].get('team_b','')} for i,side in picks]
-        win = payout(account['stake']*coef)
-        items.append({'account':account['name'],'variant':variant+1,'round':index//len(variants)+1,
-                      'balance':str(account['balance']),'balance_ts':account.get('balance_ts'),
-                      'stake':str(account['stake']),'remaining':str(account['balance']-account['stake']),
-                      'coefficient':str(coef),'potential':str(win),
-                      'winner_balance':str(account['balance']-account['stake']+win),'legs':legs})
-    reserve = sum((amount(i['remaining']) for i in items), Decimal(0))
-    largest_reserve = max(amount(i['remaining']) for i in items)
-    groups = []
-    for index, (coef, picks, coverage) in enumerate(variants, 1):
-        group = [i for i in items if i['variant']==index]
-        groups.append((coverage,len(group),max(amount(i['winner_balance']) for i in group),
-                       sum((amount(i['potential']) for i in group),Decimal(0))))
-    scenarios = []
-    for outcome in range(outcome_count):
-        winning = [g for g in groups if (g[0] >> outcome) & 1]
-        if not winning:
-            raise ValueError('Обнаружен непокрытый исход; план не создан')
-        scenarios.append({'outcome':outcome,'accounts':sum(g[1] for g in winning),
-                          'largest_balance':str(max(largest_reserve,max(g[2] for g in winning))),
-                          'total_balance':str(reserve+sum((g[3] for g in winning),Decimal(0)))})
-    selected_ids = {leg['match_id'] for item in items for leg in item['legs']}
-    target = Decimal(30)
-    exact_candidates = sum(coefficient == target for coefficient, _, _ in candidates)
-    exact_variants = sum(coefficient == target for coefficient, _, _ in variants)
-    return {'items':items,'scenarios':scenarios,'variant_count':len(variants),
-            'exact_target_candidates':exact_candidates,'exact_target_variants':exact_variants,
-            'strategy':'target_30','target_coefficient':'30',
-            'highest_possible_coefficient':str(candidates[0][0]),
-            'highest_planned_coefficient':str(variants[0][0]),
-            'peak_preserved':0 in chosen,'complete_coverage':True,'outcome_count':outcome_count,
-            'coverage_matches':[m['id'] for m in eligible],
-            'selected_matches':[m['id'] for m in eligible if m['id'] in selected_ids],
-            'unused_matches':[m['id'] for m in eligible if m['id'] not in selected_ids], 'ignored_matches':ignored,
-            'skipped_accounts':skipped,'account_count':len(items),
-            'initial_total':str(sum((amount(i['balance']) for i in items),Decimal(0))),
-            'total_stake':str(sum((amount(i['stake']) for i in items),Decimal(0))),
-            'reserve':str(reserve),
-            'worst_largest_balance':str(min(amount(i['largest_balance']) for i in scenarios)),
-            'best_largest_balance':str(max(amount(i['largest_balance']) for i in scenarios)),
-            'worst_total_balance':str(min(amount(i['total_balance']) for i in scenarios)),
-            'best_total_balance':str(max(amount(i['total_balance']) for i in scenarios))}
+    return sorted(chosen)
 
 RESUMABLE = {'error', 'not_run', 'skipped', 'rejected'}
 
@@ -238,17 +329,63 @@ def requote_item(item, matches):
         if odds <= 1 or odds > MAX_ODDS:continue
         available.append({**original,'odds':str(odds)})
     best = None
-    for size in range(2,len(available)+1):
+    strict = 'tranches' in item and not item.get('allow_shorter')
+    minimum = len(item['legs']) if strict else 2
+    for size in range(minimum,len(available)+1):
         for subset in itertools.combinations(available,size):
             coef = Decimal(1)
             for leg in subset:coef *= amount(leg['odds'])
             if coef <= MAX_ODDS and (best is None or coef > best[0]):best=(coef,list(subset))
-    if best is None:raise ValueError('Не осталось допустимого экспресса из хотя бы двух исходных событий')
+    if best is None:
+        raise ValueError('Исходный купон недоступен при текущих коэффициентах и выбранной длине')
     coef,legs=best
-    stake=amount(item['stake'])
-    if stake < MIN_STAKE or stake > MAX_STAKE:raise ValueError('Исходная сумма вне лимита 100–50000')
-    return {'legs':legs,'coefficient':str(coef),'potential':str(payout(stake*coef)),
-            'winner_balance':str(amount(item['remaining'])+payout(stake*coef))}
+    parts = [amount(part) for part in item.get('tranches', [item['stake']])]
+    if any(not MIN_STAKE <= part <= MAX_STAKE for part in parts):
+        raise ValueError('Сумма одной ставки вне лимита 100–50000')
+    win = sum(payout(part*coef) for part in parts)
+    return {'legs':legs,'coefficient':str(coef),'potential':str(win),
+            'winner_balance':str(amount(item['remaining'])+win)}
+
+
+def settled_coverage(job):
+    positions = {mid: index for index, mid in enumerate(job['coverage_matches'])}
+    count = 1 << len(positions)
+    target = amount(job['target_balance'])
+    prepared = []
+    for item in job['items']:
+        bets = item.get('accepted_bets')
+        if bets is None:
+            bets = [item] if item['state'] == 'ok' and not item.get('tranches') else []
+        accepted = []
+        remaining = amount(item['balance'])
+        pending = item.get('pending_bet')
+        if item['state'] == 'unknown' and pending:
+            remaining -= amount(pending['stake'])
+        for bet in bets:
+            stake = amount(bet['stake'])
+            remaining -= stake
+            mask, bits = 0, 0
+            for leg in bet['legs']:
+                bit = 1 << positions[leg['match_id']]
+                mask |= bit
+                if leg['side'] == '2':
+                    bits |= bit
+            accepted.append((mask, bits, payout(stake * amount(bet['coefficient']))))
+        if accepted:
+            prepared.append((remaining, accepted))
+    covered, minimum_count, floor = 0, len(prepared), None
+    for outcome in range(count):
+        winners = []
+        for remaining, bets in prepared:
+            win = sum(value for mask,bits,value in bets if outcome & mask == bits)
+            if win:
+                winners.append(remaining + win)
+        covered += bool(winners)
+        minimum_count = min(minimum_count, sum(balance >= target for balance in winners))
+        least = max(winners, default=Decimal(0))
+        floor = least if floor is None else min(floor, least)
+    return {'covered':covered,'total':count,'minimum_accounts_at_target':minimum_count,
+            'worst_winner_balance':str(floor),'target_balance':str(target)}
 
 
 class BulkGame:
@@ -268,7 +405,8 @@ class BulkGame:
             self.job['running']=False;self.job['interrupted']=True
             for item in self.job.get('items',[]):
                 if item['state']=='sending':item['state']='unknown'
-                elif item['state'] in ('checking','queue'):item['state']='not_run'
+                elif item['state'] in ('checking','queue'):
+                    item['state']='partial' if item.get('accepted_bets') else 'not_run'
             self.save()
         self.plans={};self.quotes={};self.task=None;self.lock=asyncio.Lock()
 
@@ -304,7 +442,10 @@ class BulkGame:
                 ids={int(mid) for mid in selected}
                 if not ids.issubset({m['id'] for m in matches}):raise ValueError('Матчи изменились; обновите список')
                 matches=[m for m in matches if m['id'] in ids]
-            plan=await asyncio.to_thread(build_plan,matches,accounts,data.get('max_variants',20))
+            plan=await asyncio.to_thread(build_plan,matches,accounts,data.get('max_variants',20),
+                                         lengths=data.get('lengths'),single=data.get('single',False),
+                                         tiered=data.get('tiered',False),allow_shorter=data.get('allow_shorter',False),
+                                         target_balance=data.get('target_balance',1500000))
         except (ValueError,RuntimeError) as exc:
             return web.json_response({'error':str(exc)},status=400)
         self.plans={k:p for k,p in self.plans.items() if time.time()<p['expires_at']}
@@ -321,6 +462,7 @@ class BulkGame:
                 return web.json_response({'error':'План устарел или уже запускался'},status=409)
             plan['used']=True
             self.job={'id':plan['id'],'running':True,'stop_requested':False,'created_at':time.time(),
+                      'coverage_matches':plan['coverage_matches'],'target_balance':plan['target_balance'],
                       'items':[{**i,'state':'queue','note':''} for i in plan['items']]}
             self.save();self.task=asyncio.create_task(self.run())
         return web.json_response(self.job)
@@ -336,43 +478,9 @@ class BulkGame:
                     item.update(state='skipped',note='Аккаунт отключён');self.save()
                     if not self.continue_on_error:halt.set()
                     continue
-                item['state']='checking';self.save()
-                state={'sent':False}
-                def on_send():
-                    item['state']='sending'
-                    if state.get('coefficient'):
-                        item.setdefault('planned_coefficient',item['coefficient'])
-                        item['coefficient']=state['coefficient']
-                        item['potential']=str(payout(amount(item['stake'])*amount(item['coefficient'])))
-                        item['winner_balance']=str(amount(item['remaining'])+amount(item['potential']))
-                        for leg in item['legs']:
-                            leg['odds']=state.get('quoted_odds',{}).get(leg['match_id'],leg['odds'])
-                    self.save()
-                state['on_send']=on_send
-                for attempt in range(2):
-                    try:
-                        result=await self.submit(item['account'],client,amount(item['stake']),
-                                                 [(l['match_id'],l['side'],amount(l['odds'])) for l in item['legs']],state)
-                        body=json.loads(result.text)
-                        raw=body.get('response') or {}
-                        if not isinstance(raw,dict):raw={}
-                        definite = (not body.get('ok') and isinstance(raw,dict) and
-                                    ((body.get('status') in (200,201) and raw.get('success') is False) or (body.get('status') in (400,401,403,404,405,409,422,429) and (raw.get('success') is False or raw.get('error') or raw.get('message')))))
-                        item.update(state='ok' if body.get('ok') else 'rejected' if definite else 'unknown',
-                                    note='Принято' if body.get('ok') else str(body.get('error') or raw.get('message') or raw.get('error') or 'Результат требует ручной проверки')[:600])
-                        break
-                    except asyncio.CancelledError:
-                        item['state']='unknown' if state['sent'] else 'not_run';raise
-                    except Exception as exc:
-                        # Retry only an operation known not to have submitted a bet.
-                        transient = not isinstance(exc,web.HTTPException) and not isinstance(exc,ValueError)
-                        if not state['sent'] and transient and attempt == 0 and self.continue_on_error:
-                            item['note']='Повтор проверки до отправки: '+error_message(exc);self.save()
-                            await asyncio.sleep(max(1,int(getattr(exc,'retry_after',0) or 1)))
-                            continue
-                        item.update(state='unknown' if state['sent'] else 'error',note=error_message(exc));break
-                self.save()
-                if item['state'] in ('unknown','error','rejected') and not self.continue_on_error:halt.set()
+                await self.run_item(item, client)
+                if item['state'] not in ('ok', 'partial') and not self.continue_on_error:
+                    halt.set()
         tasks=[asyncio.create_task(worker()) for _ in range(self.parallelism)]
         try:
             await asyncio.gather(*tasks)
@@ -384,6 +492,90 @@ class BulkGame:
                 if item['state']=='queue':item['state']='not_run'
             self.job['running']=False;self.save()
 
+    async def run_item(self, item, client):
+        parts = item.get('tranches')
+        accepted = item.get('accepted_bets', [])
+        stakes = parts if parts is not None else [item['stake']]
+        first_note = ''
+        for part in stakes[len(accepted):]:
+            if self.job['stop_requested']:
+                item.update(state='partial' if accepted else 'not_run', note='Остановка очереди')
+                break
+            item['state'] = 'checking'
+            self.save()
+            state, ticket = {'sent':False, 'allow_shorter':item.get('allow_shorter', False) and not accepted}, None
+
+            def on_send():
+                nonlocal ticket
+                coefficient = state.get('coefficient', item['coefficient'])
+                quoted = state.get('quoted_odds', {})
+                chosen = state.get('selected_matches')
+                legs = [{**leg, 'odds':quoted.get(leg['match_id'],leg['odds'])} for leg in item['legs']
+                        if chosen is None or leg['match_id'] in chosen]
+                ticket = {'stake':part, 'coefficient':coefficient, 'legs':legs}
+                item['state'] = 'sending'
+                item['pending_bet'] = ticket
+                self.save()
+
+            state['on_send'] = on_send
+            for attempt in range(2):
+                try:
+                    picks = [(leg['match_id'], leg['side'], amount(leg['odds'])) for leg in item['legs']]
+                    result = await self.submit(item['account'], client, amount(part), picks, state)
+                    body = json.loads(result.text)
+                    raw = body.get('response') or {}
+                    if not isinstance(raw, dict):
+                        raw = {}
+                    if body.get('ok'):
+                        if ticket is None:
+                            ticket = {'stake':part, 'coefficient':str(body.get('coefficient') or item['coefficient']),
+                                      'legs':item['legs']}
+                        if parts is not None:
+                            accepted.append(ticket)
+                            item['accepted_bets'] = accepted
+                        if len(ticket['legs']) < len(item['legs']):
+                            first_note = 'Купон укорочен: ' + str(len(ticket['legs'])) + ' исхода'
+                            item.setdefault('planned_legs', item['legs'])
+                        if ticket['coefficient'] != item['coefficient']:
+                            item.setdefault('planned_coefficient', item['coefficient'])
+                        item.update(coefficient=ticket['coefficient'], legs=ticket['legs'], state='ok',
+                                    note=first_note or 'Принято')
+                        if parts is not None:
+                            spent = sum(amount(bet['stake']) for bet in accepted)
+                            win = sum(payout(amount(bet['stake']) * amount(bet['coefficient'])) for bet in accepted)
+                            item.update(accepted_stake=str(spent), potential=str(win),
+                                        winner_balance=str(amount(item['balance'])-spent+win))
+                        break
+                    status = body.get('status')
+                    definite = ((status in (200,201) and raw.get('success') is False) or
+                                (status in (400,401,403,404,405,409,422,429) and
+                                 (raw.get('success') is False or raw.get('error') or raw.get('message'))))
+                    item.update(state=('partial' if accepted else 'rejected') if definite else 'unknown',
+                                note=str(body.get('error') or raw.get('message') or raw.get('error') or
+                                         'Результат требует ручной проверки')[:600])
+                    break
+                except asyncio.CancelledError:
+                    item['state'] = 'unknown' if state['sent'] else 'partial' if accepted else 'not_run'
+                    raise
+                except Exception as exc:
+                    transient = not isinstance(exc, (web.HTTPException, ValueError))
+                    if not state['sent'] and transient and attempt == 0 and self.continue_on_error:
+                        item['note'] = 'Повтор проверки до отправки: ' + error_message(exc)
+                        self.save()
+                        await asyncio.sleep(max(1,int(getattr(exc,'retry_after',0) or 1)))
+                        continue
+                    item.update(state='unknown' if state['sent'] else 'partial' if accepted else 'error',
+                                note=error_message(exc))
+                    break
+            if item['state'] != 'unknown':
+                item.pop('pending_bet', None)
+            if item['state'] == 'ok' and parts is not None and len(accepted) < len(stakes):
+                item['state'] = 'checking'
+                self.save()
+                continue
+            break
+        self.save()
+
     async def confirm_manual(self, request):
         data=await request.json()
         async with self.lock:
@@ -393,7 +585,15 @@ class BulkGame:
             item=next((i for i in self.job['items'] if i['account']==data.get('account')),None)
             if not item or item['state']!='unknown' or data.get('confirmed') is not True:
                 return web.json_response({'error':'Нужно явное подтверждение неизвестной отправки'},status=409)
-            item.update(state='ok',manual_verified=True,manual_verified_at=time.time(),
+            pending = item.pop('pending_bet', None)
+            if pending:
+                item.update(legs=pending['legs'], coefficient=pending['coefficient'])
+                if item.get('tranches'):
+                    accepted = item.setdefault('accepted_bets', [])
+                    accepted.append(pending)
+                    item['accepted_stake'] = str(sum(amount(bet['stake']) for bet in accepted))
+            item.update(state='partial' if len(item.get('accepted_bets', [])) < len(item.get('tranches', [])) else 'ok',
+                        manual_verified=True,manual_verified_at=time.time(),
                         note='Ставка подтверждена пользователем в истории игры, не API')
             if not any(i['state']=='unknown' and i['account']==item['account'] for i in self.job['items']):
                 self.unknown_accounts.discard(item['account'])
@@ -462,7 +662,11 @@ class BulkGame:
         if self.job:self.job['stop_requested']=True;self.save()
         return web.json_response({'ok':True})
 
-    async def status(self, request):return web.json_response({'job':self.job})
+    async def status(self, request):
+        metrics = None
+        if self.job and self.job.get('coverage_matches') and not self.job['running']:
+            metrics = settled_coverage(self.job)
+        return web.json_response({'job':self.job,'coverage':metrics})
 
     async def close(self, app=None):
         if self.task and not self.task.done():

@@ -10,7 +10,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, patch
 from aiohttp import web
 import cs3bet
-from cs3bet_bulk import build_plan, BulkGame, MAX_STAKE
+from cs3bet_bulk import build_plan, BulkGame, MAX_STAKE, requote_item, settled_coverage
 
 PAIRS=[(1.52,2.40),(1.40,2.80),(1.12,5.50),(1.65,2.15),(1.45,2.60),(1.70,2.05),(1.45,2.60),(1.70,2.05)]
 def matches():return [{'id':i+1,'team_a':f'A{i}','team_b':f'B{i}','odds_a':a,'odds_b':b,'status':'betting_open'} for i,(a,b) in enumerate(PAIRS)]
@@ -83,6 +83,38 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(len(plan['skipped_accounts']),3)
         self.assertNotIn('alias',[i['account'] for i in plan['items']])
 
+    def test_only_triples_split_200_accounts_into_eight_groups(self):
+        pool = [{'name':str(i),'balance':60000} for i in range(200)]
+        market = [{**match,'odds_a':a,'odds_b':b} for match,(a,b) in zip(matches(),[(3.6,1.28),(1.55,2.5),(2.25,1.65)])]
+        plan = build_plan(market, pool, 8, lengths=[3])
+        self.assertEqual(plan['variant_count'], 8)
+        self.assertEqual({len(row['legs']) for row in plan['items']}, {3})
+        self.assertEqual({scenario['accounts'] for scenario in plan['scenarios']}, {25})
+        self.assertEqual(plan['minimum_accounts_at_target'], 0)
+
+    def test_strict_triples_reject_an_uncovered_over_limit_result(self):
+        market = [{**match,'odds_a':2,'odds_b':4} for match in matches()[:3]]
+        with self.assertRaisesRegex(ValueError, 'исход без выигрышного купона'):
+            build_plan(market, accounts(), 8, lengths=[3])
+
+    def test_single_match_alternates_richest_and_plans_each_tranche(self):
+        plan = build_plan(matches()[:1], [{'name':'rich','balance':110000}, {'name':'second','balance':70000},
+                                         {'name':'third','balance':60000}, {'name':'fourth','balance':50000}],
+                          2, single=True, tiered=True)
+        self.assertEqual([row['legs'][0]['side'] for row in plan['items']], ['1','2','1','2'])
+        self.assertEqual([Decimal(stake) for stake in plan['items'][0]['tranches']], [50000,32500,17500])
+        self.assertEqual([Decimal(stake) for stake in plan['items'][2]['tranches']], [50000,10000])
+
+    def test_requote_strict_length_or_explicit_fallback(self):
+        initial = [{**match,'odds_a':2,'odds_b':2} for match in matches()[:3]]
+        item = build_plan(initial, accounts(), 8, lengths=[3])['items'][0]
+        updated = [{**match,'odds_a':4,'odds_b':4} for match in initial]
+        with self.assertRaises(ValueError):
+            requote_item(item, updated)
+        change = requote_item({**item,'allow_shorter':True}, updated)
+        self.assertEqual(len(change['legs']), 2)
+        self.assertEqual(Decimal(change['coefficient']), 16)
+
     def test_infeasible_and_bad_input_rejected(self):
         bad=[{**m,'odds_a':10,'odds_b':11} for m in matches()[:2]]
         with self.assertRaises(ValueError):build_plan(bad,accounts())
@@ -105,6 +137,25 @@ class BulkTests(unittest.IsolatedAsyncioTestCase):
         response=await self.bulk.preview(Request({'max_variants':20}))
         self.assertEqual(response.status,200,response.text)
         return json.loads(response.text)
+    async def test_partial_tier_is_persisted_and_not_restarted(self):
+        for row in self.state.values():
+            row['balance'] = 100000
+        self.fetch.return_value = [{**match,'odds_a':2,'odds_b':2} for match in matches()[:3]]
+        payload = {'match_ids':[1,2,3],'max_variants':8,'lengths':[3],'tiered':True}
+        preview = json.loads((await self.bulk.preview(Request(payload))).text)
+        async def submit(name, client, stake, picks, state):
+            if stake == 32500:
+                return web.json_response({'ok':False,'status':422,'response':{'success':False}})
+            state['on_send']()
+            return web.json_response({'ok':True})
+        self.bulk.submit=submit
+        await self.bulk.start(Request({'plan_id':preview['id']}))
+        await self.bulk.task
+        self.assertTrue(all(row['state']=='partial' for row in self.bulk.job['items']))
+        self.assertTrue(all(Decimal(row['accepted_stake'])==50000 for row in self.bulk.job['items']))
+        self.assertEqual(settled_coverage(self.bulk.job)['covered'], 8)
+        self.assertEqual((await self.bulk.resume(Request({'job_id':preview['id']}))).status, 409)
+
     async def test_preview_is_read_only_then_one_shot_start(self):
         plan=await self.plan();self.submit.assert_not_awaited()
         await self.bulk.start(Request({'plan_id':plan['id']}));await self.bulk.task
@@ -287,6 +338,38 @@ class LiveLimitValidationTests(unittest.IsolatedAsyncioTestCase):
                 response=await bet(Request({'stake':stake,'legs':[{'match_id':i,'side':'1','odds':seen} for i in [1,2]]}))
             except web.HTTPException as exc:response=exc
         return response,calls
+    async def test_promo_saves_success_and_skips_after_new_handlers(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(cs3bet, 'PROMO_FILE', Path(folder)/'promos.json'):
+            clients = lambda: {'test':object()}
+            handler = cs3bet.make_handlers(clients, account_ids=lambda:{'test':123})[6]
+            with patch.object(cs3bet,'call',new=AsyncMock(return_value=(200,{'success':True,'message':'OK'}))) as remote:
+                first = json.loads((await handler(Request({'code':'WIN'}))).text)
+                handler = cs3bet.make_handlers(clients, account_ids=lambda:{'test':123})[6]
+                second = json.loads((await handler(Request({'code':'WIN'}))).text)
+            self.assertTrue(first['ok'])
+            self.assertTrue(second['skipped'])
+            remote.assert_awaited_once()
+
+    async def test_bulk_refreshes_over_cap_before_shortening(self):
+        async def operation(name, client, method, path, payload=None):
+            if path == '/api/profile':
+                return 200, {'data':{'user':{'balance':100000}}}
+            if path == '/api/matches/active':
+                return 200, {'success':True,'data':{'matches':[{'id':i,'status':'betting_open'} for i in (1,2,3)]}}
+            return 200, {'success':True,'data':{}}
+
+        remote = AsyncMock(side_effect=operation)
+        with patch.object(cs3bet,'call',remote), patch.object(cs3bet,'extract_coefficients',return_value=(Decimal(4),Decimal(4))), \
+             patch.object(cs3bet,'login',new=AsyncMock()), patch.object(cs3bet,'set_balance'), patch.object(cs3bet,'BulkGame') as factory:
+            cs3bet.make_handlers(lambda:{'test':object()},web.Application())
+            submit = factory.call_args.args[4]
+            state = {'allow_shorter':True, 'sent':False}
+            result = await submit('test',object(),Decimal(50000),[(i,'1',Decimal(3)) for i in (1,2,3)],state)
+        self.assertTrue(json.loads(result.text)['ok'])
+        self.assertEqual(sum(call.args[3]=='/api/matches/active' for call in remote.await_args_list), 2)
+        self.assertEqual(len(remote.await_args.args[4]['legs']), 2)
+        self.assertEqual(Decimal(state['coefficient']), Decimal(16))
+
     async def test_server_limits_even_with_forged_ui_request(self):
         for stake,odds,balance in [('50001',2,100000),('NaN',2,100000),('10000',2,500),('100',6,100000)]:
             response,calls=await self.exercise(stake,odds,balance)

@@ -26,6 +26,9 @@
 import asyncio
 import collections
 import contextlib
+import hashlib
+import itertools
+import math
 import json
 import os
 import time
@@ -36,7 +39,7 @@ from urllib.parse import parse_qs, urlparse
 
 import aiohttp
 from aiohttp import web
-from cs3bet_bulk import BulkGame, MAX_STAKE, MAX_ODDS
+from cs3bet_bulk import BulkGame, MAX_STAKE, MAX_ODDS, error_message
 from account_security import private_json, read_json
 from bot_lookup import resolve_bot
 
@@ -53,6 +56,8 @@ RATE_MAX = int(os.getenv("CS3_RATE_MAX", "50"))     # макс. запросов
 RATE_WINDOW = 60.0
 REFERRAL_PARAM = 'ref_6J74EAKP'
 REFERRALS_FILE = Path(__file__).resolve().parent / 'cs3bet_referrals.json'
+PROMO_FILE = Path(__file__).resolve().parent / 'security' / 'cs3bet_promos.json'
+_promo_lock = asyncio.Lock()
 TOKEN_TTL = 20 * 60          # сек, потом логинимся заново
 STATE_FILE = Path(__file__).resolve().parent / "cs3bet_state.json"
 PAUSE_429 = 10               # сек паузы при 429 в фоновом обходе (повторяется, пока не пройдёт)
@@ -750,6 +755,7 @@ def make_handlers(get_clients, app=None, account_ids=None):
             current = {m["id"]: m for m in market}
             legs, combined = [], Decimal("1")
             quoted_odds = {}
+            quoted_odds_decimal = {}
             for mid, side, seen_odds in picks:
                 m = current.get(mid)
                 if not m or m["status"] != "betting_open":
@@ -762,10 +768,23 @@ def make_handlers(get_clients, app=None, account_ids=None):
                     fail(f"Коэффициент изменился: {m['team_a']} — {m['team_b']} (было {seen_odds}, стало {now}). Обнови список.")
                 combined *= now
                 quoted_odds[mid] = str(now)
+                quoted_odds_decimal[mid] = now
                 legs.append({"match_id": mid, "type_id": 1, "specifiers": {}, "outcome_external_id": side})
 
+            if combined > MAX_ODDS and state.get('allow_shorter'):
+                alternatives = (
+                    (math.prod(quoted_odds_decimal[leg['match_id']] for leg in subset), subset)
+                    for size in range(2, len(legs))
+                    for subset in itertools.combinations(legs, size)
+                )
+                best = max(((coefficient, subset) for coefficient, subset in alternatives if coefficient <= MAX_ODDS),
+                           key=lambda candidate: (candidate[0],len(candidate[1])), default=None)
+                if best:
+                    combined, selected = best
+                    legs = list(selected)
             if combined > MAX_ODDS:
                 fail(f"Общий коэффициент {combined} превышает максимум 30")
+            state['selected_matches'] = [leg['match_id'] for leg in legs]
             await login(name, client)        # токен/связь с Telegram — до отправки, ставка ещё не ушла
             state["coefficient"] = str(combined)
             state["quoted_odds"] = quoted_odds
@@ -826,19 +845,35 @@ def make_handlers(get_clients, app=None, account_ids=None):
         code = str(data.get("code", "")).strip()
         if not code or len(code) > 64:
             fail("Введи промокод (до 64 символов)")
-        try:
-            status, result = await call(name, client, "POST", "/api/promocodes/redeem", {"code": code})
-        except RateLimited as e:
-            return web.json_response({"ok": False, "rate_limited": True, "retry_after": e.retry_after, "message": "лимит запросов"})
-        except Exception as e:
-            return web.json_response({"ok": False, "message": str(e)[:200]})
-        if status == 429:
-            return web.json_response({"ok": False, "rate_limited": True, "retry_after": result.get("_retry_after", 0), "message": "лимит запросов"})
-        msg = result.get("message") or result.get("error") or result.get("detail") or nested(result, "data", "message")
-        if not isinstance(msg, str):
-            msg = json.dumps(msg if msg is not None else result.get("data", result), ensure_ascii=False)
-        ok = 200 <= status < 300 and result.get("success") is not False
-        return web.json_response({"ok": ok, "status": status, "message": msg[:300]})
+        identity = str((account_ids() if account_ids else {}).get(name) or name)
+        digest = hashlib.sha256(code.encode()).hexdigest()
+        async with _promo_lock:
+            records = read_json(PROMO_FILE)
+            used = records.setdefault(identity, [])
+            if digest in used:
+                return web.json_response({"ok": True, "skipped": True, "message": "Уже активирован, пропущен"})
+            try:
+                async with priority():
+                    status, result = await call(name, client, "POST", "/api/promocodes/redeem", {"code": code})
+            except RateLimited as e:
+                return web.json_response({"ok": False, "rate_limited": True, "retry_after": e.retry_after, "message": "лимит запросов"})
+            except Exception as e:
+                return web.json_response({"ok": False, "message": str(e)[:200]})
+            if status == 429:
+                return web.json_response({"ok": False, "rate_limited": True, "retry_after": result.get("_retry_after", 0), "message": "лимит запросов"})
+            msg = result.get("message") or result.get("error") or result.get("detail") or nested(result, "data", "message")
+            if not isinstance(msg, str):
+                msg = json.dumps(msg if msg is not None else result.get("data", result), ensure_ascii=False)
+            ok = 200 <= status < 300 and result.get("success") is not False
+            text = ' '.join((msg, str(result.get('code') or ''), str(result.get('error_code') or ''))).casefold()
+            used_here = ('already redeemed' in text or 'already activated' in text or
+                         'already_redeemed' in text or 'already_activated' in text or
+                         ('уже' in text and ('активирован' in text or 'использовал' in text)))
+            if ok or used_here:
+                used.append(digest)
+                private_json(PROMO_FILE, records)
+            return web.json_response({"ok": ok or used_here, "skipped": used_here, "status": status,
+                                      "message": "Уже активирован, пропущен" if used_here else msg[:300]})
 
     async def rewards_state(request):
         name, client = client_for(request)
@@ -899,15 +934,24 @@ def make_handlers(get_clients, app=None, account_ids=None):
                 return market_cache['items']
         async def bulk_submit(name, client, stake, picks, state):
             async with priority():
+                allow_shorter = state.get('allow_shorter', False)
                 for attempt in range(2):
-                    response = await place_bet(name, client, stake, picks, state, accept_odds=True, market_provider=bulk_market)
+                    state['allow_shorter'] = allow_shorter and attempt > 0
+                    try:
+                        response = await place_bet(name, client, stake, picks, state, accept_odds=True, market_provider=bulk_market)
+                    except web.HTTPBadRequest as exc:
+                        if attempt or state['sent'] or 'превышает максимум 30' not in error_message(exc):
+                            raise
+                        market_cache.update(at=0, items=None)
+                        continue
                     body = json.loads(response.text)
                     raw = body.get('response') or {}
                     text = str(body.get('error') or '').lower()
-                    odds_rejected = (not body.get('ok') and raw.get('success') is False and body.get('status') in (400,422)
+                    odds_rejected = (not body.get('ok') and isinstance(raw, dict) and raw.get('success') is False
+                                     and body.get('status') in (400,422)
                                      and any(word in text for word in ('odds','coefficient','коэффициент')))
                     if attempt == 0 and odds_rejected:
-                        # Explicit rejection confirms no accepted bet; refreshing is safe.
+                        # The server explicitly rejected the submission.
                         market_cache.update(at=0, items=None)
                         state['sent'] = False
                         continue
