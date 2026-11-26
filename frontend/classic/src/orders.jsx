@@ -18,7 +18,7 @@ const statusLabels={running:'В работе',done:'Готово',stopped:'Ос�
 const confirmed=job=>job.items.filter(item=>item.state==='ok').length
 const statusBadge=status=><Badge variant="soft" color={status==='done'||status==='ok'?'success':status==='err'?'destructive':status==='running'?'info':'neutral'}>{statusLabels[status]||status}</Badge>
 const orderKey=job=>job.service+':'+job.id
-const formDefaults={link:'',count:'1',delayFrom:'10',delayTo:'30',emoji:'❤️',reactionPercent:'100',channels:'',unique:false,freshness:'0',mode:'intervals',minutes:'120',boost:'70',finish:false,deadline:'',quiet:false,from:'',to:'',filters:[],join:'and'}
+const formDefaults={link:'',count:'1',delayFrom:'10',delayTo:'30',emoji:'❤️',reactionPercent:'100',reactionChance:'30',channels:'',postLinks:'',unique:false,freshness:'0',mode:'intervals',minutes:'120',boost:'70',finish:false,deadline:'',quiet:false,from:'',to:'',filters:[],join:'and'}
 
 function useOrders() {
   const [state,setState]=useState({data:[],loading:true,error:''})
@@ -109,6 +109,7 @@ function OrderForm({cancel,started}) {
   const [votes,setVotes]=useState({})
   const action=useAction()
   const confirm=useConfirm()
+  const subentry=service==='subentry'
   const endpoint='/api/'+service
   const activePlan=useRef(null)
   const alive=useRef(true)
@@ -131,9 +132,13 @@ function OrderForm({cancel,started}) {
   }
   function extras(forSchedule=false) {
     const extra={account_filters:form.filters.map(rule=>({...rule,value:rule.field==='flag'?rule.value:rule.value===''?null:Number(rule.value)})),filter_mode:form.join,freshness_days:form.freshness||0}
-    if(service==='reactions'||service==='multi')extra.emoji=form.emoji
+    if(service==='reactions'||service==='multi'||subentry)extra.emoji=form.emoji
     if(service==='multi')extra.reaction_percent=Number(form.reactionPercent)
-    if(service==='multi'||service==='btn')extra.channels=form.channels.split(/[\s,;]+/).filter(Boolean)
+    if(subentry){
+      extra.post_links=form.postLinks.split(/[\s,;]+/).filter(Boolean)
+      extra.reaction_percent=Number(form.reactionChance)
+    }
+    if(service==='multi'||service==='btn'||subentry)extra.channels=form.channels.split(/[\s,;]+/).filter(Boolean)
     if(service==='multi')extra.unique=form.unique
     if(service==='polls')extra.votes=votes
     if(!forSchedule)return extra
@@ -174,14 +179,19 @@ function OrderForm({cancel,started}) {
       <form className="grid gap-4" onSubmit={preview}>
         <div className="grid gap-3 md:grid-cols-2">
           <Picker label="Услуга" items={serviceChoices} value={service} onValueChange={next=>{discard();setPoll(null);setVotes({});setService(next)}}/>
-          {valueInput('link','Ссылка Telegram',{placeholder:'https://t.me/channel/123',required:true})}
+          {!subentry&&valueInput('link','Ссылка Telegram',{placeholder:'https://t.me/channel/123',required:true})}
         </div>
-        {(service==='reactions'||service==='multi')&&<div className="grid gap-3 md:grid-cols-2">
+        {subentry&&<div className="grid gap-3 md:grid-cols-2">
+          <TextArea label="Каналы для подписки" rows={4} required placeholder="По одной ссылке на строку" value={form.channels} onChange={event=>update('channels',event.target.value)}/>
+          <TextArea label="Посты с кнопками" rows={4} required placeholder="По одной ссылке на пост на строку" value={form.postLinks} onChange={event=>update('postLinks',event.target.value)}/>
+        </div>}
+        {(service==='reactions'||service==='multi'||subentry)&&<div className="grid gap-3 md:grid-cols-2">
           <Picker label="Реакция" items={emojis.map(value=>[value,value==='random'?'Случайная':value])} value={form.emoji}
-            disabled={service==='multi'&&form.reactionPercent==='0'} onValueChange={value=>update('emoji',value)}/>
+            disabled={(service==='multi'&&form.reactionPercent==='0')||(subentry&&form.reactionChance==='0')} onValueChange={value=>update('emoji',value)}/>
           {service==='multi'&&valueInput('reactionPercent','Аккаунтов с реакцией, %',{
             type:'number',min:0,max:100,step:1,required:true,description:'0% — без реакций. При 50% реакцию ставит примерно каждый второй аккаунт.',
           })}
+          {subentry&&valueInput('reactionChance','Шанс реакции на каждый пост, %',{type:'number',min:0,max:100,step:1,required:true})}
         </div>}
         {['multi','btn'].includes(service)&&<TextArea label="Каналы для подписки" rows={2} value={form.channels} onChange={event=>update('channels',event.target.value)} placeholder="@channel, https://t.me/another"/>}
         {service==='multi'&&<Check checked={form.unique} onChange={value=>update('unique',value)}>Только уникальные аккаунты</Check>}
@@ -189,7 +199,7 @@ function OrderForm({cancel,started}) {
           {valueInput('freshness','Минимум дней после смены аватарки',{type:'number',min:0,max:36500})}
           {service!=='polls'&&<div className="flex items-end gap-2">
             {valueInput('count','Количество аккаунтов',{type:'number',min:1,required:true,className:'w-full'})}
-            <Button type="button" variant="outline" disabled={action.busy||!form.link.trim()} onClick={()=>action.run(async()=>{
+            <Button type="button" variant="outline" disabled={action.busy||(subentry?!form.channels.trim()||!form.postLinks.trim():!form.link.trim())} onClick={()=>action.run(async()=>{
               const result=await post(endpoint+'/available',{link:form.link.trim(),extra:extras()});update('count',String(result.count))
             })}>Макс.</Button>
           </div>}
@@ -278,6 +288,10 @@ function OrderPlan({plan,exclude,submit,cancel,disabled}) {
       {hasReactions&&<p className="text-sm text-muted-foreground">
         Реакция по плану у {plan.reaction_count} из {plan.items.length} аккаунтов · задано {plan.reaction_percent}%
       </p>}
+      {plan.reaction_chance!=null&&<section className="grid gap-2 text-sm">
+        <p>Шанс реакции на каждый пост {plan.reaction_chance}%</p>
+        <ol className="list-decimal space-y-1 ps-5">{plan.steps.map((step,index)=><li key={index}>{step}</li>)}</ol>
+      </section>}
       {!!plan.already?.length&&<p className="text-sm text-muted-foreground">Уже выполнили действие: {plan.already.length}</p>}
       {text&&<><div><DownloadButton filename="veltrix-plan.csv" rows={[[ 'Время МСК','Аккаунт','Юзернейм',...(hasReactions?['Реакция']:[])],
         ...plan.items.map(item=>[moscow(plan.at+item.at),item.account,item.username,...(hasReactions?[item.reaction_planned?'Да':'—']:[])])]}/></div>

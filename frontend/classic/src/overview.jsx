@@ -14,7 +14,7 @@ import {moscow,num,useData} from './api'
 import {Empty,Loading,Picker,Problem} from './ui'
 import {PageHeader} from './page-header'
 
-export const services = {channels:'Подписки',views:'Просмотры',reactions:'Реакции',reposts:'Репосты',polls:'Опросы',multi:'Мульти',starts:'Запуск бота',btn:'Нажатие кнопки',unsub:'Отписки'}
+export const services = {channels:'Подписки',views:'Просмотры',reactions:'Реакции',reposts:'Репосты',polls:'Опросы',multi:'Уч',subentry:'Саб+Уч',starts:'Запуск бота',btn:'Нажатие кнопки',unsub:'Отписки'}
 const SortableTable = lazy(()=>import('./tables'))
 const postColumns = [
   {id:'post',header:'Публикация',accessorFn:post=>post.channel+' '+post.id,cell:({row})=>{

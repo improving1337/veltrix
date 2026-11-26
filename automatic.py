@@ -20,6 +20,7 @@ from weakref import WeakValueDictionary
 import aiohttp
 from aiohttp import web
 from telethon import functions, types
+from telethon.helpers import add_surrogate, del_surrogate
 from telethon.errors import ChannelPrivateError, FloodPremiumWaitError, FloodWaitError, UserNotParticipantError
 
 # Activity at 00:00 through 23:00 Moscow time, on a relative scale.
@@ -134,6 +135,18 @@ def reaction_system_prompt(allowed, max_reactions, guidance, needs_vote_analysis
             'Подбирай реакции также с учётом вопроса и описания.'
         )
     return prompt
+
+
+def text_with_links(text, entities):
+    """Expand Telegram text links, whose entity offsets are UTF-16 code units."""
+    visible = add_surrogate(text[:2500])
+    length = len(visible)
+    links = [entity for entity in (entities or ()) if isinstance(entity, types.MessageEntityTextUrl)]
+    for entity in sorted(links, key=lambda entity: entity.offset, reverse=True):
+        end = entity.offset + entity.length
+        if 0 <= entity.offset < end <= length and entity.url:
+            visible = visible[:end] + '(' + add_surrogate(entity.url) + ')' + visible[end:]
+    return del_surrogate(visible)
 
 
 def post_reaction_context(text):
@@ -1073,7 +1086,7 @@ class Monitor:
         text = getattr(message, 'message', '') or ''
         settings = self.capture_settings()
         post = {
-            'post_id': int(message.id), 'post_text': text[:2500],
+            'post_id': int(message.id), 'post_text': text_with_links(text, getattr(message, 'entities', None)),
             'reaction_context': post_reaction_context(text),
             'post_date': message.date.isoformat() if getattr(message, 'date', None) else now,
             'views': None, 'forwards': None, 'actual_reactions': None,

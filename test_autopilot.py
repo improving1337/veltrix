@@ -101,6 +101,15 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
     def message(self, ident, text):
         return SimpleNamespace(id=ident, message=text, date=self.now)
 
+    async def test_text_url_entities_follow_telegram_utf16_offsets(self):
+        message = self.message(7,'⚡ 🐱 Канал и текст')
+        message.entities = [
+            types.MessageEntityTextUrl(5,5,'https://t.me/channel'),
+            types.MessageEntityTextUrl(13,5,'https://example.org/новость'),
+        ]
+        post = self.monitor.add_post(message,self.now.isoformat())
+        self.assertEqual(post['post_text'],'⚡ 🐱 Канал(https://t.me/channel) и текст(https://example.org/новость)')
+
     async def test_discovery_settings_survive_changes_and_restart(self):
         mon = self.monitor
         mon.state.update(max_views=20, max_reactions=10, execute_plan=True)

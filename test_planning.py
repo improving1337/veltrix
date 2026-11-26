@@ -329,6 +329,46 @@ class EligibilityTests(unittest.IsolatedAsyncioTestCase):
                 await joiner._steps(job, item, clients[item['account']], job['key'])
                 self.assertEqual(reaction.await_count, int(item['account'] in expected))
 
+    async def test_subentry_subscribes_and_visits_posts_in_order(self):
+        accounts = {'a': client()}
+        joiner = multi.SubEntryJoiner(lambda: accounts)
+        plan = await joiner.make_plan(None, 1, 0, 0, {
+            'channels':['@second','@first'], 'post_links':['https://t.me/second/22','https://t.me/first/11'],
+            'emoji':'👍','reaction_percent':50,
+        })
+        self.assertEqual(plan['reaction_chance'], 50)
+        self.assertEqual(len(plan['steps']), 4)
+        calls = []
+
+        async def join(_, kind, target, extra):
+            calls.append(('sub',target))
+            return 'ok','подписка'
+
+        async def view(_, kind, target, extra):
+            calls.append(('view',tuple(target)))
+            return 'ok','просмотр'
+
+        async def react(_, kind, target, extra):
+            calls.append(('react',tuple(target),extra['emoji']))
+            return 'ok','реакция'
+
+        async def click(_, channel, mid, extra):
+            calls.append(('button',(channel,mid)))
+            return 'ok','кнопка'
+
+        with patch.object(joiner, '_run', new=AsyncMock()):
+            await joiner.start(plan['id'])
+            job = joiner.jobs[plan['id']]
+            await job['task']
+        with (patch.object(multi.ChannelJoiner,'_join',new=join), patch.object(multi.ViewsJoiner,'_join',new=view),
+              patch.object(multi.ReactionJoiner,'_join',new=react), patch.object(multi,'click_first_button',new=click),
+              patch.object(multi.random,'uniform',return_value=0), patch.object(multi.random,'randrange',side_effect=[49,50])):
+            outcome, _ = await joiner._steps(job,job['items'][0],accounts['a'],job['key'])
+        self.assertEqual(outcome,'ok')
+        self.assertEqual(calls,[('sub','second'),('sub','first'),('view',('second',22)),
+                                ('react',('second',22),'👍'),('button',('second',22)),
+                                ('view',('first',11)),('button',('first',11))])
+
     async def test_reposts_forward_once_to_each_selected_accounts_saved_messages(self):
         clients = {'first': client(), 'second': client()}
         sources = {name: object() for name in clients}
