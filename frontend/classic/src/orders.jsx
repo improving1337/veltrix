@@ -1,6 +1,7 @@
 import {useEffect,useMemo,useRef,useState} from 'react'
 import {ArrowLeft, CirclePlay, ClipboardList, Clock3, Plus, Trash2} from 'lucide-react'
 import {Badge} from '@dashral/ui/components/badge'
+import {BarChart} from '@dashral/ui/components/bar-chart'
 import {Button} from '@dashral/ui/components/button'
 import {Card} from '@dashral/ui/components/card'
 import SortableTable from './tables'
@@ -71,6 +72,24 @@ function JobDetails({order,back,reload}) {
   const action=useAction()
   const confirm=useConfirm()
   const total=order.items.length,done=confirmed(order),running=order.status==='running'
+  const hours=new Map()
+  const count=(time,key)=>{
+    if(!Number.isFinite(time))return
+    const hour=Math.floor(time/3600)*3600
+    if(!hours.has(hour))hours.set(hour,{planned:0,done:0})
+    hours.get(hour)[key]++
+  }
+  for(const item of order.items){
+    if(Number.isFinite(order.started)&&Number.isFinite(item.at))count(order.started+item.at,'planned')
+    if(item.state==='ok')count(item.finished,'done')
+  }
+  const buckets=Array.from(hours.keys()).sort((a,b)=>a-b)
+  const span=buckets.length?(buckets.at(-1)-buckets[0])/3600+1:0
+  const timestamps=span<=168?Array.from({length:span},(_,index)=>buckets[0]+index*3600):buckets
+  const timeline=timestamps.map(at=>({
+    planned:0,done:0,...hours.get(at),
+    label:moscow(at,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}),
+  }))
   function command(verb) {
     action.run(async()=>{
       if(verb==='stop'&&!await confirm({title:'Остановить заказ?',text:'Оставшиеся аккаунты будут сняты с очереди.',danger:true}))return
@@ -93,6 +112,11 @@ function JobDetails({order,back,reload}) {
       {running&&<div className="mt-4"><FormActions><Button variant="outline" disabled={action.busy} onClick={()=>command('skip')}>Ускорить текущий шаг</Button><Button variant="outline" color="destructive" disabled={action.busy} onClick={()=>command('stop')}>Остановить</Button></FormActions></div>}
     </Card>
     <Problem message={action.error}/>
+    {timeline.length>0&&<Card title="Выполнение по часам" description={span>168?
+      'Часы с запланированными или успешно выполненными действиями (МСК)':'Запланированные и успешно выполненные действия (МСК)'}>
+      <BarChart data={timeline} index="label" height={230} showLegend aria-label="План и выполнение заказа по часам"
+        series={[{key:'planned',label:'По плану',color:'var(--primary)'},{key:'done',label:'Выполнено',color:'var(--success)'}]}/>
+    </Card>}
     <Card title="Аккаунты заказа"><SortableTable columns={columns} data={order.items} getRowId={item=>item.account} autoResetPage={false}/></Card>
   </>
 }

@@ -32,13 +32,15 @@ def channel_key(link):
 
 
 class Hub:
-    def __init__(self, directory, clients, account_ids=None, preferences=None, giveaway_order=None):
+    def __init__(self, directory, clients, account_ids=None, preferences=None,
+                 giveaway_order=None, stop_giveaway_order=None):
         self.directory = Path(directory)
         self.registry_path = self.directory / 'automatic_channels.json'
         self.clients = clients
         self.account_ids = account_ids
         self.preferences = preferences
         self.giveaway_order = giveaway_order
+        self.stop_giveaway_order = stop_giveaway_order
         self.monitors = {}
         # Shared cross-channel limits, so adding channels does not multiply the
         # number of simultaneous Telegram actions / DeepSeek HTTP requests.
@@ -96,6 +98,7 @@ class Hub:
             mon.analysis_semaphore = self.analysis_semaphore
             mon.membership_requests = self.membership_requests
             mon.giveaway_order = self.giveaway_order
+            mon.stop_giveaway_order = self.stop_giveaway_order
             # A stored monitor for this channel may have been stopped and removed
             # from registry; the same JSON is recovered if it is later re-added.
             self.monitors[ident] = mon
@@ -243,8 +246,9 @@ class Hub:
         self.save()
 
 
-def register(app, clients, directory, account_ids=None, preferences=None, giveaway_order=None):
-    hub = Hub(directory, clients, account_ids, preferences, giveaway_order)
+def register(app, clients, directory, account_ids=None, preferences=None,
+             giveaway_order=None, stop_giveaway_order=None):
+    hub = Hub(directory, clients, account_ids, preferences, giveaway_order, stop_giveaway_order)
     app['automatic_hub'] = hub
     app.on_startup.append(hub.startup)
     app.on_cleanup.append(hub.shutdown)

@@ -1,5 +1,5 @@
 // Monitoring follows the Classic template's KPI row and log panels.
-import {useState} from 'react'
+import {useEffect,useState} from 'react'
 import {Activity, Bot, CirclePlay, CircleStop, Plus, Settings2, Users} from 'lucide-react'
 import {Badge} from '@dashral/ui/components/badge'
 import {BarChart} from '@dashral/ui/components/bar-chart'
@@ -15,6 +15,13 @@ import {Check,Empty,FormActions,Loading,Picker,Problem,TextArea,useConfirm} from
 import {PageHeader} from './page-header'
 
 const actions=[['views','Просмотры'],['reactions','Реакции'],['reposts','Репосты'],['votes','Голоса']]
+const statuses={active:['Активен','success'],completed:['Завершён','neutral'],deleted:['Удалён','destructive']}
+const targets={views:'view_target',reactions:'reaction_target',reposts:'repost_target'}
+const progress=(post,key)=>{
+  const execution=post['execution_'+key]
+  const target=key==='votes'?post.poll?.target:post[targets[key]]
+  return {done:0,pending:0,errors:0,...execution,target:execution?.target||target||0}
+}
 const emojis=['❤️','👍','👎','🔥','😭','🤬','😡','😍','💔','🤡','💩']
 const name=channel=>channel.replace(/^https?:\/\/(?:t\.me|telegram\.me)\//,'@')
 const activeBadge=active=><Badge color={active?'success':'neutral'} variant="soft">{active?'Работает':'Остановлен'}</Badge>
@@ -48,10 +55,10 @@ export function Autopilot() {
       </button>},
     {id:'date',header:'Дата (МСК)',accessorFn:item=>item.post_date,cell:({getValue})=>moscow(getValue())},
     {id:'mode',header:'График',accessorFn:item=>item.view_mode==='realistic'?'Реалистик':'Легаси'},
-    {id:'status',header:'Статус',accessorFn:item=>item.status==='active'?'Активен':'Завершён',cell:({row,getValue})=><Badge variant="soft" color={row.original.status==='active'?'success':'neutral'}>{getValue()}</Badge>},
-    ...actions.map(([key,label])=>({id:key,header:label,accessorFn:item=>item['execution_'+key]?.done||0,cell:({row})=>{
-      const result=row.original['execution_'+key]
-      return result?.target?<span className="tabular-nums">{num(result.done)} / {num(result.target)}</span>:'—'
+    {id:'status',header:'Статус',accessorFn:item=>statuses[item.status]?.[0],cell:({row,getValue})=><Badge variant="soft" color={statuses[row.original.status]?.[1]}>{getValue()}</Badge>},
+    ...actions.map(([key,label])=>({id:key,header:label,accessorFn:item=>progress(item,key).done,cell:({row})=>{
+      const result=progress(row.original,key)
+      return <span className="tabular-nums">{num(result.done)} / {num(result.target)}</span>
     }})),
   ]
   return <>
@@ -113,7 +120,7 @@ function ChannelSettings({channel,path,close,refresh,remove}) {
     giveaway_entries:!!channel.giveaway_entries,execute_plan:!!channel.execute_plan,views_enabled:!!channel.views_enabled,subscribers_only:!!channel.subscribers_only,
     allowed_reactions:channel.allowed_reactions||['❤️'],reaction_prompt:channel.reaction_prompt||'',
     view_day2_pct:channel.view_day2_pct??10,
-    hours:channel.hours?.join(', ')||'',view_activity:channel.view_activity?.join(', ')||'',
+    hours:channel.hours||Array(24).fill(0),view_activity:channel.view_activity||Array(24).fill(0),
   })
   const [testAt,setTestAt]=useState('')
   const [preview,setPreview]=useState(null)
@@ -132,7 +139,8 @@ function ChannelSettings({channel,path,close,refresh,remove}) {
   }
   const action=useAction()
   const payload=()=>({...form,max_views:Number(clampViews(form.max_views)),max_reactions:Number(form.max_reactions),view_day2_pct:Number(form.view_day2_pct),
-    hours:form.hours.split(',').map(Number),view_activity:form.view_activity.split(',').map(Number)})
+    hours:form.hours.map(Number),view_activity:form.view_activity.map(Number)})
+  const editHour=(key,index,value)=>update(key,form[key].map((current,hour)=>hour===index?value:current))
   function refreshSubscribers(){
     action.run(async()=>{
       const result=await post(path+'/subscribers')
@@ -169,10 +177,18 @@ function ChannelSettings({channel,path,close,refresh,remove}) {
         <div><Button type="button" variant="outline" size="sm" disabled={action.busy} onClick={refreshSubscribers}>Обновить список подписчиков</Button></div>
       </div>}
       <details className="rounded-lg border border-divider p-3">
-        <summary className="cursor-pointer text-sm font-medium">Почасовой профиль</summary>
+        <summary className="cursor-pointer text-sm font-medium">Прайм-тайм и распределение по часам</summary>
         <div className="mt-3 grid gap-3">
-          <TextArea label="Легаси · 24 значения через запятую" rows={2} value={form.hours} onChange={event=>update('hours',event.target.value)}/>
-          <TextArea label="Реалистик · активность по 24 часам МСК" rows={2} value={form.view_activity} onChange={event=>update('view_activity',event.target.value)}/>
+          <p className="text-sm text-muted-foreground">Реалистик использует активность по времени МСК. Легаси распределяет проценты по часам с момента публикации.</p>
+          <p className="text-sm">Сумма долей Легаси <b>{num(Math.round(form.hours.reduce((sum,value)=>sum+Number(value),0)*100)/100)}%</b> из 100%</p>
+          <div className="grid max-h-60 gap-2 overflow-y-auto pe-2">
+            {form.hours.map((value,hour)=><div className="grid grid-cols-2 gap-3" key={hour}>
+              <Input label={'Час '+(hour+1)+' · %'} type="number" min={0} max={100} step="any"
+                value={value} onChange={event=>editHour('hours',hour,event.target.value)}/>
+              <Input label={String(hour).padStart(2,'0')+':00 МСК · активность'} type="number" min={0} max={100} step="any"
+                value={form.view_activity[hour]} onChange={event=>editHour('view_activity',hour,event.target.value)}/>
+            </div>)}
+          </div>
           <div className="flex flex-wrap items-end gap-2">
             <Input type="datetime-local" label="Время тестовой публикации (МСК)" value={testAt} onChange={event=>setTestAt(event.target.value)}/>
             <Button type="button" variant="outline" disabled={action.busy||!testAt} onClick={()=>action.run(async()=>{
@@ -221,9 +237,15 @@ function Hourly({data,title,published,observed}) {
 }
 function PostDetail({post,close}) {
   const [metric,setMetric]=useState('views')
+  const [now,setNow]=useState(Date.now)
+  useEffect(()=>{
+    const timer=setInterval(()=>setNow(Date.now()),1000)
+    return ()=>clearInterval(timer)
+  },[])
   const chart=metric==='views'?['model_view_hours','observed_view_hours','План просмотров']:['model_reaction_hours','observed_reaction_hours','План реакций']
   return <Dialog open onOpenChange={open=>{if(!open)close()}} size="xl" title={name(post.channel)+' · #'+post.post_id} description={moscow(post.post_date)+' МСК'}>
     <div className="grid gap-4">
+      {post.status==='deleted'&&<div><Badge variant="soft" color="destructive">Удалён</Badge></div>}
       {post.giveaway&&<p className="text-sm text-muted-foreground">
         {post.giveaway.status==='queued'?'Розыгрыш · создан заказ «Уч» · аккаунтов: '+post.giveaway.account_count:
           post.giveaway.status==='pending'?'Розыгрыш · подготавливается заказ «Уч»':'Розыгрыш · '+post.giveaway.note}
@@ -232,11 +254,16 @@ function PostDetail({post,close}) {
       {post.post_text&&<p className="max-h-32 overflow-auto whitespace-pre-wrap text-sm">{post.post_text}</p>}
       <div className="grid gap-2 sm:grid-cols-2">
         {actions.map(([key,label])=>{
-          const action=post['execution_'+key]
+          const action=progress(post,key)
+          const seconds=action.next_due_at?Math.max(0,Math.ceil((Date.parse(action.next_due_at)-now)/1000)):null
+          const next=seconds>0?'Через '+(seconds>=3600?Math.floor(seconds/3600)+' ч ':'')+
+            (seconds>=60?Math.floor(seconds%3600/60)+' мин ':'')+seconds%60+' с':'В ближайшей очереди'
           return action?.target>0&&<div key={key} className="grid gap-2 rounded-lg border border-divider p-3 text-sm">
             <span className="flex justify-between gap-2">{label}<b>{action.done}/{action.target}</b></span>
             <Progress value={100*action.done/action.target} aria-label={label}/>
-            <span className="text-xs text-muted-foreground">{action.next_due_at?'Следующее: '+moscow(action.next_due_at):'В ожидании: '+action.pending} · ошибок: {action.errors}</span>
+            <span className="text-xs text-muted-foreground">{post.status==='deleted'?'Выполнение прекращено':
+              seconds!=null?next+' · '+moscow(action.next_due_at):action.running?'Выполняется':
+                key==='reactions'&&post.suggestion?.status==='pending'?'Готовится план реакций':'В ожидании: '+action.pending} · ошибок: {action.errors}</span>
           </div>
         })}
       </div>

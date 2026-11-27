@@ -14,10 +14,11 @@ ORDER_SERVICES = web.AppKey("dashboard_order_services", dict)
 
 
 class Dashboard:
-    def __init__(self, directory, accounts, balances):
+    def __init__(self, directory, accounts, balances, history_ready=None):
         self.path = Path(directory) / "security" / "dashboard.json"
         self.accounts = accounts
         self.balances = balances
+        self.history_ready = history_ready or (lambda: True)
         self.state = {"series": [], "completed": {}} | json_load(self.path)
 
     def archive_order(self, service, job):
@@ -73,7 +74,7 @@ class Dashboard:
                         if done:
                             recorded[key] = max(done, recorded.get(key, 0))
                     plan = plans.get('views', {})
-                    if not plan.get('target'):
+                    if not plan.get('target') or post.get('missing'):
                         continue
                     actions = plan['actions']
                     due = [action['due'] for action in actions if action['status'] == 'pending']
@@ -89,13 +90,16 @@ class Dashboard:
         for key, done in recorded.items():
             totals[key.split('/', 1)[0]] += done
         series = self.state["series"]
-        if save and (not series or point['at'] // 300 > series[-1]['at'] // 300):
+        ready = self.history_ready()
+        if save and ready and (not series or point['at'] // 300 > series[-1]['at'] // 300
+                               or point['active'] != series[-1]['active']):
             series.append(point)
             del series[:-4032]
         if save:
             atomic_json_save(self.path, self.state)
         return {"accounts": len(accounts), "active": len(active), "frozen": len(frozen),
                 "completed": sum(totals.values()), "services": dict(totals), "series": series,
+                "history_ready": ready,
                 "balance": point['balance'], "largest": point['largest'], "running": running,
                 "posts": sorted(posts, key=lambda row: row['date'], reverse=True)[:6]}
 

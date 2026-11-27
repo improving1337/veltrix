@@ -8,6 +8,19 @@ from plan_options import account_filter, quiet_end, schedule_order
 
 
 class DashboardTests(unittest.TestCase):
+    def test_history_waits_for_initial_connections_and_keeps_one_account_changes(self):
+        ready = False
+        accounts = {}
+        with tempfile.TemporaryDirectory() as directory:
+            dashboard = Dashboard(directory, lambda: accounts, lambda: {}, lambda: ready)
+            self.assertEqual(dashboard.snapshot({}, save=True)['series'], [])
+            ready = True
+            snapshot = dashboard.snapshot({}, save=True)
+            self.assertEqual(snapshot['series'][0]['active'], 0)
+            accounts['one'] = SimpleNamespace(me=SimpleNamespace(id=1),
+                                               client=SimpleNamespace(is_connected=lambda: True))
+            self.assertEqual([p['active'] for p in dashboard.snapshot({}, save=True)['series']], [0, 1])
+
     def test_completed_actions_and_history_survive_pruned_jobs(self):
         class Client:
             def is_connected(self):

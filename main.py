@@ -2911,7 +2911,8 @@ async def main():
     PASSWORD_FILE.chmod(0o600)
     app = web.Application(middlewares=[auth_mw, error_mw], client_max_size=15 * 1024 * 1024)
     app[dashboard.ORDER_SERVICES] = {}
-    overview = dashboard.Dashboard(BASE_DIR, lambda: ACCOUNTS, lambda: cs3bet.STATE)
+    history_ready = asyncio.Event()
+    overview = dashboard.Dashboard(BASE_DIR, lambda: ACCOUNTS, lambda: cs3bet.STATE, history_ready.is_set)
     app[dashboard.OVERVIEW] = overview
     overview.register(app)
     app[LOGIN_SESSIONS] = {}
@@ -3030,9 +3031,16 @@ async def main():
     async def giveaway_order(*args):
         return await app[dashboard.ORDER_SERVICES]["multi"].start_giveaway(*args)
 
+    def stop_giveaway_order(order_id):
+        service = app[dashboard.ORDER_SERVICES]["multi"]
+        job = service.jobs.get(order_id)
+        if job and job["status"] == "running":
+            service.stop(order_id)
+
     automatic_multi.register(app, service_clients, BASE_DIR,
                        account_ids=lambda: {n: a.me.id for n, a in ACCOUNTS.items()
-                                            if a.me is not None}, preferences=preferences.get, giveaway_order=giveaway_order)
+                                            if a.me is not None}, preferences=preferences.get, giveaway_order=giveaway_order,
+                       stop_giveaway_order=stop_giveaway_order)
     app[channels.ORDER_JOBS_DIRECTORY] = BASE_DIR / "order_jobs"
     app[channels.ORDER_ACCOUNT_CONNECTING] = (
         lambda name: name in ACCOUNTS and not is_frozen(ACCOUNTS[name])
@@ -3057,7 +3065,14 @@ async def main():
     print(f"    Логин: {PANEL_USER}. Пароль хранится в {PASSWORD_FILE.name}", flush=True)
     # Start Telegram connections only AFTER the HTTP socket is listening.
     # A slow/unreachable Telegram data centre cannot make the panel unavailable.
-    connect_task = asyncio.create_task(connect_initial_accounts(), name="telegram-initial-connect") if ACCOUNTS else None
+    async def connect_initial_and_enable_history():
+        await connect_initial_accounts()
+        history_ready.set()
+
+    connect_task = (asyncio.create_task(connect_initial_and_enable_history(), name="telegram-initial-connect")
+                    if ACCOUNTS else None)
+    if connect_task is None:
+        history_ready.set()
     retry_task = asyncio.create_task(reconnect_failed_accounts(), name="telegram-auto-reconnect")
     if connect_task:
         print("[TELEGRAM] Подключения запущены в фоне (не более 4 одновременно).", flush=True)

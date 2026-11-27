@@ -27,7 +27,7 @@ const postColumns = [
   {id:'next',header:'Следующий шаг',accessorFn:post=>post.next ? Date.parse(post.next) : undefined,
     cell:({row})=>moscow(row.original.next),sortUndefined:'last'},
 ]
-const accountSeries=[{key:'active',label:'Активные аккаунты',color:'var(--primary)'}]
+const accountSeries=[{key:'active',label:'Активных сверх минимума',color:'var(--primary)'}]
 const balanceSeries=[{key:'balance',label:'Общий баланс',color:'var(--primary)'},{key:'largest',label:'Наибольший баланс',color:'var(--success)'}]
 
 export function History({data, type = 'active'}) {
@@ -36,13 +36,28 @@ export function History({data, type = 'active'}) {
   const isBalance=type==='balance'
   const series=isBalance?balanceSeries:accountSeries
   const points=(data?.series||[]).filter(point=>point.at>=cutoff && series.some(item=>point[item.key]!=null))
-  const step=Math.max(1,Math.ceil(points.length/100))
+  const activeCounts=isBalance?[]:points.map(point=>point.active)
+  const minimum=activeCounts.length?Math.min(...activeCounts):0
+  const maximum=activeCounts.length?Math.max(...activeCounts):0
+  const changes=isBalance?[]:points.slice(1).map((point,index)=>({...point,previous:points[index].active}))
+    .filter(point=>point.active!==point.previous).slice(-5).reverse()
+  const step=isBalance?Math.max(1,Math.ceil(points.length/100)):1
   const chart=points.filter((_,index)=>index%step===0||index===points.length-1)
+    .map(point=>isBalance?point:{...point,active:point.active-minimum})
     .map(point=>({...point,label:moscow(point.at,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}))
   const Chart=isBalance?LineChart:AreaChart
-  return <Card title={isBalance?'История баланса':'Активные аккаунты'} description="Данные Veltrix по московскому времени" className="min-w-0 xl:col-span-2"
+  return <Card title={isBalance?'История баланса':'Активные аккаунты'}
+    description={!isBalance&&chart.length?`Минимум ${num(minimum)} · максимум ${num(maximum)} · последняя точка ${num(activeCounts.at(-1))}. Ноль на шкале соответствует минимуму.`:'Данные Veltrix по московскому времени'}
+    className="min-w-0 xl:col-span-2"
     action={<Picker items={[[1,'24 часа'],[7,'7 дней'],[14,'14 дней']]} aria-label="Период" size="sm" value={range} onValueChange={setRange}/>}>
-    {chart.length ? <Chart data={chart} index="label" series={series} height={288} locale="ru-RU" showLegend={isBalance} aria-label="История по времени"/> : <Empty>График появится после первого замера.</Empty>}
+    {chart.length ? <Chart data={chart} index="label" series={series} height={288} locale="ru-RU" showLegend={isBalance} aria-label="История по времени"/> :
+      <Empty>{data?.history_ready===false?'Ждём завершения первой проверки аккаунтов.':'График появится после первого замера.'}</Empty>}
+    {changes.length>0&&<ul className="mt-3 grid gap-1 border-t border-divider pt-3 text-sm" aria-label="Последние изменения числа аккаунтов">
+      {changes.map(point=><li key={point.at} className="flex justify-between gap-4">
+        <span className="text-muted-foreground">{moscow(point.at,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
+        <span className="tabular-nums">{num(point.previous)} → <b>{num(point.active)}</b></span>
+      </li>)}
+    </ul>}
   </Card>
 }
 

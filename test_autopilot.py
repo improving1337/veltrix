@@ -59,13 +59,13 @@ class RepostBudgetTests(unittest.TestCase):
             major = automatic.repost_percent('Команда объявила о закрытии состава.', {})
             giveaway = automatic.repost_percent('Запускаем розыгрыш трёх билетов.', {})
             ai = automatic.repost_percent('Вышло заявление организаторов.', {'repost_priority': 'major'})
-        self.assertEqual([routine, major, giveaway, ai], [3, 8, 10, 8])
-        self.assertEqual(automatic.repost_target(200, routine), 6)
-        self.assertEqual(automatic.repost_target(29, giveaway), 2)
-        self.assertEqual(automatic.repost_target(9, giveaway), 0)
+        self.assertEqual([routine, major, giveaway, ai], [1.5, 4, 5, 4])
+        self.assertEqual(automatic.repost_target(200, routine), 3)
+        self.assertEqual(automatic.repost_target(29, giveaway), 1)
+        self.assertEqual(automatic.repost_target(9, giveaway), 1)
         for views in range(200):
-            for percent in range(2, 11):
-                self.assertLessEqual(automatic.repost_target(views, percent) * 10, views)
+            for percent in range(1, 6):
+                self.assertLessEqual(automatic.repost_target(views, percent), max(1, views // 20))
 
 
 class AutopilotTests(unittest.IsolatedAsyncioTestCase):
@@ -262,6 +262,7 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         old = mon.add_post(self.message(2, 'Test'), self.now.isoformat())
         mon.state['view_mode'] = 'realistic'
         new = mon.add_post(self.message(1, 'Test'), self.now.isoformat())
+        new['repost_pct'] = 0
         split = self.now + timedelta(hours=24)
         mon.update_execution_plan(new, 'views', 100, [], self.now)
         mon.update_execution_plan(old, 'views', 100, [], self.now)
@@ -365,10 +366,10 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         restored = automatic.Monitor(mon.storage, lambda: self.clients, mon.account_ids)
         saved = restored.find_post(3)
         plan = saved['execution']['reposts']
-        self.assertEqual(saved['repost_pct'], 10)
-        self.assertEqual(plan['target'], 2)
+        self.assertEqual(saved['repost_pct'], 5)
+        self.assertEqual(plan['target'], 1)
         actions = plan['actions']
-        self.assertEqual(len({action['account_id'] for action in actions}), 2)
+        self.assertEqual(len({action['account_id'] for action in actions}), 1)
         self.assertLessEqual({action['account'] for action in actions}, subscribers.keys())
         with (patch('posts.RepostJoiner._join', AsyncMock(return_value=('ok', 'Переслано'))) as send,
               patch.object(restored, 'is_subscriber', AsyncMock(return_value=True))):
@@ -393,7 +394,7 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
             http.return_value.__aenter__.return_value = session
             await mon.analyze(4)
         reactions.assert_not_awaited()
-        self.assertEqual(post['repost_pct'], 8)
+        self.assertEqual(post['repost_pct'], 4)
         self.assertEqual(post['suggestion']['total'], 0)
 
     def poll_message(self, text='', close_period=25):
@@ -506,6 +507,7 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
                          subscribers_only=True, execute_plan=True)
         post = mon.add_post(self.message(1, 'Test'), self.now.isoformat())
         post['suggestion'] = automatic.validated_reaction_plan({'post_kind': 'ad'}, 3)
+        post['repost_pct'] = 0
         with patch('automatic.utc_now', return_value=self.now):
             await mon.dispatch_actions()
         for service in ('views', 'reactions'):
@@ -622,6 +624,7 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
         mon.state.update(active=True, channel='https://t.me/example', execute_plan=True,
                          subscribers_only=True, max_views=10)
         post = mon.add_post(self.message(1, 'Test'), self.now.isoformat())
+        post['repost_pct'] = 0
         post['execution']['views'] = {'target': 1, 'actions': [{'status': 'done'}]}
         with (patch('automatic.utc_now', return_value=self.now),
               patch.object(mon, 'subscriber_accounts', new_callable=AsyncMock) as scan):
@@ -677,6 +680,64 @@ class AutopilotTests(unittest.IsolatedAsyncioTestCase):
             result = automatic.validated_reaction_plan(context, 20, sorted(options | {'❤️'}))
             self.assertEqual({r['emoji']: r['count'] for r in result['reactions']}['❤️'], 8)
             self.assertEqual(automatic.reaction_allocation(6, result['proportions'])['❤️'], 3)
+
+    async def test_reaction_poll_keeps_model_preference_and_match_tears_are_filtered(self):
+        mon = self.monitor
+        mon.state['max_reactions'] = 20
+        mon.preferences = lambda: {'reaction_spread': 0}
+        post = mon.add_post(self.message(1, 'Стоит поменять капитана? 👍👎'), self.now.isoformat())
+        response = SimpleNamespace(status=200, json=AsyncMock(return_value={'choices': [
+            {'message': {'content': '{"reactions":[{"emoji":"👎","count":75},{"emoji":"👍","count":25}]}'}}
+        ]}))
+        session = MagicMock()
+        session.post.return_value.__aenter__.return_value = response
+        with (patch('automatic.env_value', return_value='test-key'),
+              patch('automatic.aiohttp.ClientSession') as http,
+              patch.object(mon, 'channel_reactions', AsyncMock(return_value={'❤️', '👍', '👎'}))):
+            http.return_value.__aenter__.return_value = session
+            await mon.analyze(1)
+        result = {item['emoji']: item['count'] for item in post['suggestion']['reactions']}
+        self.assertEqual(result['❤️'], 8)
+        self.assertGreater(result['👎'], result['👍'])
+        for text, allow in [
+            ('NAVI проиграли G2', False), ('Vitality 2–0 G2', False),
+            ('В матче победил Spirit', False), ('Falcons проиграли NAVI', True),
+            ('G2 обыграли BC.Game', True), ('Spirit 0:2 NAVI', True),
+        ]:
+            with self.subTest(text=text):
+                context = automatic.post_reaction_context(text)
+                result = automatic.validated_reaction_plan({**context, 'sentiment': 'sad'}, 20, ['❤️', '😭'])
+                self.assertEqual('😭' in result['proportions'], allow)
+
+    async def test_immediate_actions_then_deleted_message_cancels_remaining_plan(self):
+        mon = self.monitor
+        mon.state.update(active=True, channel='https://t.me/example', max_views=40,
+                         max_reactions=20, execute_plan=True)
+        post = mon.add_post(self.message(7, 'Публикация'), self.now.isoformat())
+        post['suggestion'] = automatic.validated_reaction_plan({}, 20)
+        post['repost_pct'] = 5.0
+        services = [patch('posts.'+name+'._join', AsyncMock(return_value=('ok', 'выполнено')))
+                    for name in ('ViewsJoiner', 'ReactionJoiner', 'RepostJoiner')]
+        with (patch('automatic.utc_now', return_value=self.now), services[0] as view,
+              services[1] as react, services[2] as repost):
+            await mon.dispatch_actions()
+            await asyncio.gather(*mon.action_tasks.values())
+            for send in (view, react, repost):
+                send.assert_awaited_once()
+            post['giveaway'] = {'status': 'queued', 'order_id': 'order'}
+            mon.stop_giveaway_order = MagicMock()
+            reader = SimpleNamespace(get_messages=AsyncMock(return_value=[types.MessageEmpty(7, types.PeerChannel(1))]))
+            await mon.sample_existing(reader, object(), [post], self.now.isoformat())
+            await mon.dispatch_actions()
+            for send in (view, react, repost):
+                send.assert_awaited_once()
+        mon.stop_giveaway_order.assert_called_once_with('order')
+        snapshot = mon.snapshot_post(post, self.now)
+        self.assertEqual(snapshot['status'], 'deleted')
+        self.assertEqual(snapshot['execution_views']['done'], 1)
+        self.assertEqual(snapshot['execution_views']['pending'], 0)
+        self.assertIsNone(snapshot['execution_reactions']['next_due_at'])
+        self.assertEqual(post['giveaway']['status'], 'skipped')
 
     async def test_random_reaction_budgets_vary_within_limit_and_survive_restart(self):
         mon = self.monitor
